@@ -81,9 +81,22 @@ class ApiService {
     }
 
     async crearFactura(facturaData) {
+        // Mapear los campos del frontend a los campos del backend
+        const facturaBackend = {
+            numero_factura: facturaData.numero,
+            cliente_id: facturaData.cliente?.id || null,
+            fecha_emision: facturaData.fecha,
+            fecha_vencimiento: facturaData.fechaVencimiento || null,
+            subtotal: facturaData.productos?.reduce((sum, p) => sum + p.subtotal, 0) || 0,
+            igic: facturaData.productos?.reduce((sum, p) => sum + p.impuesto, 0) || 0,
+            total: facturaData.productos?.reduce((sum, p) => sum + p.total, 0) || 0,
+            notas: facturaData.notas || null,
+            productos: facturaData.productos || []
+        };
+        
         return await this.makeRequest(this.endpoints.facturas, {
             method: 'POST',
-            body: JSON.stringify(facturaData)
+            body: JSON.stringify(facturaBackend)
         });
     }
 
