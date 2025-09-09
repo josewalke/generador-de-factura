@@ -532,7 +532,6 @@ function generarHTMLFactura(facturaData) {
                         <th>Cantidad</th>
                         <th>Descripción</th>
                         <th>Precio Unit.</th>
-                        <th>Subtotal</th>
                         <th>IGIC</th>
                         <th>Total</th>
                     </tr>
@@ -543,7 +542,6 @@ function generarHTMLFactura(facturaData) {
                             <td>${producto.cantidad}</td>
                             <td>${producto.descripcion}</td>
                             <td>${producto.precioUnitario.toFixed(2)} €</td>
-                            <td>${producto.subtotal.toFixed(2)} €</td>
                             <td>${producto.igic.toFixed(2)} €</td>
                             <td>${producto.total.toFixed(2)} €</td>
                         </tr>
