@@ -68,22 +68,19 @@ body {
     background: rgba(255, 255, 255, 0.95);
     padding: 25px;
     border-radius: 15px;
-    border: 1px solid rgba(0, 0, 0, 0.1);
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+    border: 1px solid rgba(255, 255, 255, 0.3);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
     backdrop-filter: blur(10px);
     margin-bottom: 20px;
 }
 
 .form-section h3 {
     margin-bottom: 20px;
-    font-size: 1.3rem;
+    font-size: 1.2rem;
     color: #2c3e50;
     border-bottom: 2px solid #e9ecef;
-    padding-bottom: 12px;
+    padding-bottom: 10px;
     font-weight: 600;
-    display: flex;
-    align-items: center;
-    gap: 10px;
 }
 
 .form-group {
@@ -96,8 +93,6 @@ body {
     font-weight: 600;
     color: #2c3e50;
     font-size: 0.95rem;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
 }
 
 .form-group input {
@@ -142,12 +137,24 @@ button {
     background: linear-gradient(135deg, #4facfe 0%, #00f2fe 100%);
     color: white;
     width: 100%;
-    height: 40px;
+    height: 45px;
+    border: none;
+    border-radius: 10px;
+    font-size: 1rem;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    box-shadow: 0 4px 15px rgba(79, 172, 254, 0.3);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 8px;
 }
 
 .btn-agregar:hover {
-    transform: translateY(-1px);
-    box-shadow: 0 3px 10px rgba(79, 172, 254, 0.4);
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(79, 172, 254, 0.4);
+    background: linear-gradient(135deg, #00f2fe 0%, #4facfe 100%);
 }
 
 .action-buttons {
@@ -165,6 +172,18 @@ button {
 .btn-generar {
     background: linear-gradient(135deg, #f093fb 0%, #f5576c 100%);
     color: white;
+    padding: 15px 30px;
+    font-size: 1.1rem;
+    font-weight: 600;
+    border-radius: 12px;
+    box-shadow: 0 6px 20px rgba(240, 147, 251, 0.3);
+    transition: all 0.3s ease;
+}
+
+.btn-generar:hover {
+    transform: translateY(-3px);
+    box-shadow: 0 8px 25px rgba(240, 147, 251, 0.4);
+    background: linear-gradient(135deg, #f5576c 0%, #f093fb 100%);
 }
 
 .btn-pdf {
@@ -440,6 +459,7 @@ input[type="number"]::-webkit-inner-spin-button {
 
 input[type="number"] {
     -moz-appearance: textfield;
+    appearance: textfield;
 }
 
 .impuesto-simbolo {
@@ -454,15 +474,15 @@ input[type="number"] {
     padding: 0 8px;
 }
 
-/* Productos Tabla - Estética blanca consistente */
+/* Productos Tabla */
 .productos-tabla {
     min-height: 100px;
     background: rgba(255, 255, 255, 0.95);
     border-radius: 12px;
     padding: 20px;
-    border: 1px solid rgba(0, 0, 0, 0.1);
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
     backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
 .productos-tabla table {
@@ -479,7 +499,7 @@ input[type="number"] {
 .productos-tabla td {
     padding: 12px 15px;
     text-align: left;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.1);
+    border-bottom: 1px solid rgba(0, 0, 0, 0.05);
     color: #333;
 }
 
@@ -502,32 +522,32 @@ input[type="number"] {
 }
 
 .btn-eliminar {
-    background: linear-gradient(135deg, #dc3545 0%, #c82333 100%);
+    background: linear-gradient(135deg, #ff6b6b 0%, #ee5a52 100%);
     color: white;
     border: none;
-    padding: 6px 12px;
+    padding: 8px 12px;
     border-radius: 6px;
     font-size: 0.8rem;
-    font-weight: 500;
+    font-weight: 600;
     cursor: pointer;
     transition: all 0.3s ease;
-    box-shadow: 0 2px 4px rgba(220, 53, 69, 0.3);
+    box-shadow: 0 2px 4px rgba(255, 107, 107, 0.3);
 }
 
 .btn-eliminar:hover {
-    background: linear-gradient(135deg, #c82333 0%, #a71e2a 100%);
+    background: linear-gradient(135deg, #ee5a52 0%, #d32f2f 100%);
     transform: translateY(-1px);
-    box-shadow: 0 4px 8px rgba(220, 53, 69, 0.4);
+    box-shadow: 0 4px 8px rgba(255, 107, 107, 0.4);
 }
 
-/* Totales - Estética blanca consistente */
+/* Totales */
 .totales-info {
     background: rgba(255, 255, 255, 0.95);
-    padding: 25px;
+    padding: 20px;
     border-radius: 12px;
-    border: 1px solid rgba(0, 0, 0, 0.1);
-    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.08);
+    box-shadow: 0 4px 15px rgba(0, 0, 0, 0.1);
     backdrop-filter: blur(10px);
+    border: 1px solid rgba(255, 255, 255, 0.3);
 }
 
 .total-item {
@@ -545,17 +565,15 @@ input[type="number"] {
 }
 
 .total-final {
-    font-weight: 700;
-    font-size: 1.3rem;
-    color: #2c3e50;
-    border-top: 2px solid #dee2e6;
-    padding-top: 15px;
+    font-weight: bold;
+    font-size: 1.2rem;
+    color: white;
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    padding: 15px 20px;
+    border-radius: 10px;
     margin-top: 15px;
-    background: linear-gradient(135deg, rgba(102, 126, 234, 0.05), rgba(118, 75, 162, 0.05));
-    padding: 15px;
-    border-radius: 8px;
-    text-align: center;
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.05);
+    box-shadow: 0 4px 15px rgba(102, 126, 234, 0.3);
+    border: 1px solid rgba(255, 255, 255, 0.2);
 }
 
 /* Vista Previa */
