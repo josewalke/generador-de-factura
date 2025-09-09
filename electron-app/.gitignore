@@ -1,0 +1,49 @@
+# Archivos y carpetas que no se deben incluir en el control de versiones
+node_modules/
+dist/
+build/
+.DS_Store
+Thumbs.db
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# Archivos de Electron
+out/
+app/
+packages/
+
+# Archivos temporales
+*.tmp
+*.temp
+.cache/
+
+# Archivos de IDE
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# Archivos de sistema macOS
+.DS_Store
+.AppleDouble
+.LSOverride
+
+# Archivos de sistema Windows
+ehthumbs.db
+Thumbs.db
+Desktop.ini
+
+# Archivos de sistema Linux
+*~
+.fuse_hidden*
+.directory
+.Trash-*
+.nfs*
