@@ -350,6 +350,19 @@ ipcMain.handle('api-verificar-conexion', async () => {
     }
 });
 
+// Manejador para obtener siguiente número de factura
+ipcMain.handle('api-obtener-siguiente-numero', async () => {
+    console.log('🔢 Obteniendo siguiente número de factura...');
+    try {
+        const resultado = await apiService.obtenerSiguienteNumeroFactura();
+        console.log('✅ Siguiente número obtenido:', resultado.data);
+        return resultado;
+    } catch (error) {
+        console.error('❌ Error al obtener siguiente número:', error);
+        return { success: false, error: error.message };
+    }
+});
+
 console.log('✅ Manejadores IPC registrados correctamente');
 console.log('📋 Handlers registrados:');
 console.log('- api-obtener-clientes');

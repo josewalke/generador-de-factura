@@ -312,6 +312,17 @@ class ApiService {
             method: 'DELETE'
         });
     }
+
+    // Facturas
+    async obtenerSiguienteNumeroFactura() {
+        try {
+            const response = await this.makeRequest('/api/facturas/siguiente-numero');
+            return response;
+        } catch (error) {
+            console.error('Error al obtener siguiente número de factura:', error);
+            throw error;
+        }
+    }
 }
 
 module.exports = ApiService;
