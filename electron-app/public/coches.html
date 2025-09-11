@@ -1,0 +1,158 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Gestión de Coches - Telwagen</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="clientes-container">
+        <!-- Header mejorado -->
+        <header class="clientes-header">
+            <div class="header-content">
+                <div class="header-left">
+                    <div class="header-icon">🚗</div>
+                    <div class="header-text">
+                        <h1>Gestión de Coches</h1>
+                        <p>Administra tu base de datos de coches</p>
+                    </div>
+                </div>
+                <div class="header-right">
+                    <button id="btn-home" class="btn-home-modern">
+                        <span class="btn-icon">🏠</span>
+                        <span class="btn-text">Home</span>
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Main Content -->
+        <main class="clientes-main">
+            <!-- Estadísticas mejoradas -->
+            <div class="stats-grid">
+                <div class="stat-card-modern">
+                    <div class="stat-icon-modern">📊</div>
+                    <div class="stat-content-modern">
+                        <div class="stat-number-modern" id="total-coches">-</div>
+                        <div class="stat-label-modern">Total Coches</div>
+                    </div>
+                    <div class="stat-progress"></div>
+                </div>
+            </div>
+
+            <!-- Panel principal de coches -->
+            <div class="clientes-panel">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        <span class="title-icon">📋</span>
+                        <h2>Lista de Coches</h2>
+                    </div>
+                    <div class="panel-actions">
+                        <div class="search-container">
+                            <span class="search-icon">🔍</span>
+                            <input type="text" id="buscar-coche" placeholder="Buscar coche..." class="search-input-modern">
+                        </div>
+                        <button id="btn-filtro-avanzado" class="btn-secondary-modern">
+                            <span class="btn-icon">🔧</span>
+                            <span class="btn-text">Filtros</span>
+                        </button>
+                        <button id="btn-nuevo-coche" class="btn-primary-modern">
+                            <span class="btn-icon">➕</span>
+                            <span class="btn-text">Nuevo Coche</span>
+                        </button>
+                        <button id="btn-refresh" class="btn-secondary-modern">
+                            <span class="btn-icon">🔄</span>
+                        </button>
+                    </div>
+                </div>
+                
+                <div class="clientes-content">
+                    <div class="clientes-list-modern" id="coches-list">
+                        <div class="loading-state">
+                            <div class="loading-spinner-modern"></div>
+                            <p>Cargando coches...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Panel de Filtros Avanzados -->
+    <div id="filtros-avanzados" class="filtros-panel" style="display: none;">
+        <div class="filtros-header">
+            <h3>🔧 Filtros Avanzados</h3>
+            <button id="btn-cerrar-filtros" class="btn-close-modern">✕</button>
+        </div>
+        <div class="filtros-content">
+            <div class="filtros-grid">
+                <div class="filtro-grupo">
+                    <label>🏷️ Modelo del Vehículo</label>
+                    <select id="filtro-modelo">
+                        <option value="">Todos los modelos</option>
+                        <!-- Las opciones se cargan dinámicamente desde la base de datos -->
+                    </select>
+                </div>
+            </div>
+            <div class="filtros-actions">
+                <button id="btn-aplicar-filtros" class="btn-primary-modern">
+                    <span class="btn-icon">✅</span>
+                    <span class="btn-text">Aplicar Filtros</span>
+                </button>
+                <button id="btn-limpiar-filtros" class="btn-secondary-modern">
+                    <span class="btn-icon">🗑️</span>
+                    <span class="btn-text">Limpiar Todo</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal mejorado -->
+    <div id="modal-coche" class="modal-modern" style="display: none;">
+        <div class="modal-content-modern">
+            <div class="modal-header-modern">
+                <div class="modal-title-section">
+                    <span class="modal-icon">🚗</span>
+                    <h3 id="modal-title">Nuevo Coche</h3>
+                </div>
+                <button id="btn-cerrar-modal" class="btn-close-modern">✕</button>
+            </div>
+            <div class="modal-body-modern">
+                <form id="form-coche" class="form-modern">
+                    <div class="form-row-modern">
+                        <div class="form-group-modern">
+                            <label for="matricula">Matrícula</label>
+                            <input type="text" id="matricula" name="matricula" required>
+                        </div>
+                        <div class="form-group-modern">
+                            <label for="chasis">Chasis</label>
+                            <input type="text" id="chasis" name="chasis" required>
+                        </div>
+                    </div>
+                    <div class="form-row-modern">
+                        <div class="form-group-modern">
+                            <label for="color">Color</label>
+                            <input type="text" id="color" name="color" required>
+                        </div>
+                        <div class="form-group-modern">
+                            <label for="kms">Kilómetros</label>
+                            <input type="number" id="kms" name="kms" required>
+                        </div>
+                    </div>
+                    <div class="form-group-modern">
+                        <label for="modelo">Modelo</label>
+                        <input type="text" id="modelo" name="modelo" required>
+                    </div>
+                </form>
+            </div>
+            <div class="modal-footer-modern">
+                <button id="btn-cancelar" class="btn-cancelar-modern">Cancelar</button>
+                <button id="btn-guardar" class="btn-save-modern">Guardar</button>
+            </div>
+        </div>
+    </div>
+
+    <script src="coches.js"></script>
+</body>
+</html>

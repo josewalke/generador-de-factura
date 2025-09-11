@@ -1,0 +1,243 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Generador de Facturas Telwagen</title>
+    <link rel="stylesheet" href="styles.css">
+</head>
+<body>
+    <div class="container">
+        <header class="header">
+            <h1>🧾 Generador de Facturas Telwagen</h1>
+            <button id="btn-home" class="btn-home">🏠 Home</button>
+        </header>
+        
+        <!-- Panel de Datos de Empresa -->
+        <div class="empresa-panel">
+            <div class="empresa-header">
+                <h3>🏢 Datos de la Empresa</h3>
+                <button id="btn-cambiar-empresa" class="btn-cambiar-empresa">🔄 Cambiar</button>
+            </div>
+            <div class="empresa-content">
+                <div class="empresa-info-grid">
+                    <div class="empresa-info-item">
+                        <label>Nombre:</label>
+                        <span id="empresa-nombre">Telwagen Car Ibérica, S.L.</span>
+                    </div>
+                    <div class="empresa-info-item">
+                        <label>CIF:</label>
+                        <span id="empresa-cif">B-93.289.585</span>
+                    </div>
+                    <div class="empresa-info-item">
+                        <label>Dirección:</label>
+                        <span id="empresa-direccion">C. / Tomás Miller N° 48 Local, 35007 Las Palmas de Gran Canaria</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="main-content">
+            <!-- Datos del Cliente -->
+            <div class="form-section">
+                <h3>👤 Datos del Cliente</h3>
+                
+                <!-- Opciones de cliente -->
+                <div class="cliente-options">
+                    <label class="radio-option">
+                        <input type="radio" name="cliente-tipo" value="existente" id="cliente-existente" checked>
+                        <span>Seleccionar cliente existente</span>
+                    </label>
+                    <label class="radio-option">
+                        <input type="radio" name="cliente-tipo" value="nuevo" id="cliente-nuevo">
+                        <span>Crear cliente nuevo</span>
+                    </label>
+                </div>
+
+                <!-- Selector de cliente existente -->
+                <div id="cliente-existente-section" class="cliente-section">
+                    <div class="form-group">
+                        <label for="select-cliente">Cliente:</label>
+                        <div class="cliente-search-container">
+                            <input type="text" id="cliente-search" class="form-control" placeholder="Buscar cliente por nombre..." autocomplete="off">
+                            <div id="cliente-dropdown" class="cliente-dropdown" style="display: none;">
+                                <!-- Los resultados se cargarán dinámicamente -->
+                            </div>
+                        </div>
+                    </div>
+                    <div id="cliente-info" class="cliente-info" style="display: none;">
+                        <h4>Información del Cliente:</h4>
+                        <p><strong>Nombre:</strong> <span id="cliente-nombre-info"></span></p>
+                        <p><strong>Dirección:</strong> <span id="cliente-direccion-info"></span></p>
+                        <p><strong>Identificación:</strong> <span id="cliente-identificacion-info"></span></p>
+                        <p><strong>Email:</strong> <span id="cliente-email-info"></span></p>
+                        <p><strong>Teléfono:</strong> <span id="cliente-telefono-info"></span></p>
+                    </div>
+                </div>
+
+                <!-- Formulario de cliente nuevo -->
+                <div id="cliente-nuevo-section" class="cliente-section" style="display: none;">
+                    <div class="form-group">
+                        <label for="nombre-cliente">Nombre:</label>
+                        <input type="text" id="nombre-cliente" class="form-control" placeholder="Nombre completo del cliente">
+                    </div>
+                    <div class="form-group">
+                        <label for="direccion-cliente">Dirección:</label>
+                        <input type="text" id="direccion-cliente" class="form-control" placeholder="Dirección completa">
+                    </div>
+                    <div class="form-group">
+                        <label for="identificacion-cliente">Identificación:</label>
+                        <input type="text" id="identificacion-cliente" class="form-control" placeholder="DNI/NIF">
+                    </div>
+                    <div class="form-group">
+                        <label for="email-cliente">Email:</label>
+                        <input type="email" id="email-cliente" class="form-control" placeholder="email@ejemplo.com">
+                    </div>
+                    <div class="form-group">
+                        <label for="telefono-cliente">Teléfono:</label>
+                        <input type="tel" id="telefono-cliente" class="form-control" placeholder="+34 600 123 456">
+                    </div>
+                </div>
+            </div>
+
+            <!-- Productos -->
+            <div class="form-section">
+                <h3>🚗 Seleccionar Coche</h3>
+                
+                <!-- Listado de coches -->
+                <div class="coches-list-container">
+                    <div class="coches-header">
+                        <div class="search-container">
+                            <span class="search-icon">🔍</span>
+                            <input type="text" id="buscar-coche-factura" placeholder="Buscar coche..." class="search-input">
+                        </div>
+                        <button id="btn-refresh-coches" class="btn-refresh" title="Actualizar">
+                            <span>🔄</span>
+                        </button>
+                    </div>
+                    
+                    <div id="coches-list-factura" class="coches-list">
+                        <div class="loading-state">
+                            <div class="loading-spinner"></div>
+                            <p>Cargando coches...</p>
+                        </div>
+                    </div>
+                </div>
+                
+                <!-- Campos de producto para el coche seleccionado -->
+                <div id="producto-form" class="producto-form" style="display: none;">
+                    <h4>📝 Detalles del Producto</h4>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Cantidad:</label>
+                            <input type="number" id="cantidad" min="1" value="1">
+                        </div>
+                        <div class="form-group">
+                            <label>Precio (€):</label>
+                            <input type="number" id="precio-unitario" step="0.01" placeholder="9589.04">
+                        </div>
+                    </div>
+                    <div class="form-group">
+                        <label>Descripción:</label>
+                        <input type="text" id="descripcion-producto" readonly>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <label>Tipo de Impuesto:</label>
+                            <select id="tipo-impuesto" class="form-control">
+                                <option value="igic">IGIC</option>
+                                <option value="iva">IVA</option>
+                            </select>
+                        </div>
+                        <div class="form-group">
+                            <label id="label-porcentaje">IGIC (%):</label>
+                            <input type="number" id="porcentaje-impuesto" step="0.1" value="9.5">
+                        </div>
+                    </div>
+                    <div class="form-row">
+                        <div class="form-group">
+                            <button type="button" id="btn-agregar-producto" class="btn-agregar">➕ Agregar</button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Lista de Productos -->
+            <div class="form-section">
+                <h3>📦 Productos Agregados</h3>
+                <div id="productos-tabla" class="productos-tabla"></div>
+            </div>
+
+            <!-- Totales -->
+            <div class="form-section">
+                <h3>💰 Totales</h3>
+                
+                <!-- Selector combinado de tipo de impuesto y porcentaje -->
+                <div class="form-group" style="margin-bottom: 15px;">
+                    <label class="impuesto-label">Impuesto:</label>
+                    <div class="impuesto-combinado">
+                        <!-- Select con caret personalizado -->
+                        <div class="impuesto-select-container">
+                            <select id="tipo-impuesto-totales" class="impuesto-select">
+                                <option value="igic">IGIC</option>
+                                <option value="iva">IVA</option>
+                            </select>
+                            <!-- Caret SVG -->
+                            <svg class="impuesto-caret" viewBox="0 0 20 20" fill="currentColor">
+                                <path d="M5.23 7.21a.75.75 0 0 1 1.06.02L10 11.085l3.71-3.855a.75.75 0 1 1 1.08 1.04l-4.24 4.4a.75.75 0 0 1-1.08 0l-4.24-4.4a.75.75 0 0 1 .02-1.06z"/>
+                            </svg>
+                        </div>
+                        
+                        <!-- Separador -->
+                        <div class="impuesto-separador"></div>
+                        
+                        <!-- Input numérico -->
+                        <input type="number" id="porcentaje-impuesto-totales" step="0.1" value="9.5" class="impuesto-porcentaje" placeholder="0,0" inputmode="decimal">
+                        
+                        <!-- Separador -->
+                        <div class="impuesto-separador"></div>
+                        
+                        <!-- Símbolo % -->
+                        <span class="impuesto-simbolo">%</span>
+                    </div>
+                    <p class="impuesto-ayuda">Introduce el tipo impositivo con un decimal.</p>
+                </div>
+                
+                <div class="totales-info">
+                    <div class="total-item">
+                        <span>Base Imponible:</span>
+                        <span id="base-imponible">0.00 €</span>
+                    </div>
+                    <div class="total-item">
+                        <span id="label-impuesto-total">IGIC:</span>
+                        <span id="impuesto-total">0.00 €</span>
+                    </div>
+                    <div class="total-item total-final">
+                        <span>TOTAL:</span>
+                        <span id="total-final">0.00 €</span>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Botones de Acción -->
+            <div class="action-buttons">
+                <button id="generar-factura" class="btn-generar">🧾 Generar Factura</button>
+                <button id="descargar-pdf" class="btn-descargar" style="display: none;">📄 Descargar PDF</button>
+            </div>
+        </div>
+
+        <!-- Vista Previa de la Factura -->
+        <div id="vista-previa" class="vista-previa" style="display: none;">
+            <div class="vista-previa-header">
+                <h2>📄 Vista Previa de la Factura</h2>
+                <button id="cerrar-vista-previa" class="btn-cerrar">✕</button>
+            </div>
+            <div id="factura-preview" class="factura-preview"></div>
+        </div>
+    </div>
+    
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js"></script>
+    <script src="renderer.js"></script>
+</body>
+</html>
