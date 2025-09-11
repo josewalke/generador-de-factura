@@ -1,0 +1,17 @@
+{
+  "watch": ["server.js", "modules/", "migrations/"],
+  "ignore": [
+    "node_modules/",
+    "backups/",
+    "*.log",
+    "*.db",
+    "*.db-journal",
+    "*.sqlite",
+    "*.sqlite3"
+  ],
+  "ext": "js,json",
+  "delay": 1000,
+  "env": {
+    "NODE_ENV": "development"
+  }
+}

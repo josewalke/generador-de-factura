@@ -228,6 +228,18 @@ ipcMain.handle('api-actualizar-empresa', async (event, id, empresaData) => {
     }
 });
 
+ipcMain.handle('api-eliminar-empresa', async (event, id) => {
+    console.log('🏢 Eliminando empresa:', id);
+    try {
+        const resultado = await apiService.eliminarEmpresa(id);
+        console.log('✅ Empresa eliminada');
+        return resultado;
+    } catch (error) {
+        console.error('❌ Error al eliminar empresa:', error);
+        return { success: false, error: error.message };
+    }
+});
+
 ipcMain.handle('api-desactivar-empresa', async (event, id) => {
     console.log('🏢 Desactivando empresa:', id);
     try {
@@ -351,10 +363,10 @@ ipcMain.handle('api-verificar-conexion', async () => {
 });
 
 // Manejador para obtener siguiente número de factura
-ipcMain.handle('api-obtener-siguiente-numero', async () => {
-    console.log('🔢 Obteniendo siguiente número de factura...');
+ipcMain.handle('api-obtener-siguiente-numero', async (event, empresaId) => {
+    console.log('🔢 Obteniendo siguiente número de factura para empresa:', empresaId);
     try {
-        const resultado = await apiService.obtenerSiguienteNumeroFactura();
+        const resultado = await apiService.obtenerSiguienteNumeroFactura(empresaId);
         console.log('✅ Siguiente número obtenido:', resultado.data);
         return resultado;
     } catch (error) {
@@ -370,6 +382,25 @@ console.log('- api-obtener-cliente');
 console.log('- api-crear-cliente');
 console.log('- api-actualizar-cliente');
 console.log('- api-desactivar-cliente');
+console.log('- api-obtener-coches');
+console.log('- api-obtener-coche');
+console.log('- api-crear-coche');
+console.log('- api-actualizar-coche');
+console.log('- api-obtener-productos');
+console.log('- api-obtener-producto');
+console.log('- api-crear-producto');
+console.log('- api-actualizar-producto');
+console.log('- api-obtener-empresas');
+console.log('- api-obtener-empresa');
+console.log('- api-crear-empresa');
+console.log('- api-actualizar-empresa');
+console.log('- api-eliminar-empresa');
+console.log('- api-desactivar-empresa');
+console.log('- api-obtener-facturas');
+console.log('- api-obtener-factura');
+console.log('- api-crear-factura');
+console.log('- api-obtener-siguiente-numero');
+console.log('- api-verificar-conexion');
 
 // Función para generar HTML de la factura
 function generarHTMLFactura(facturaData) {
@@ -509,6 +540,8 @@ function generarHTMLFactura(facturaData) {
                     <h2>${facturaData.empresa.nombre}</h2>
                     <p>CIF: ${facturaData.empresa.cif}</p>
                     <p>${facturaData.empresa.direccion}</p>
+                    <p>Tel: ${facturaData.empresa.telefono}</p>
+                    <p>Email: ${facturaData.empresa.email}</p>
                 </div>
                 <div class="factura-info">
                     <h1>FACTURA</h1>
@@ -596,7 +629,7 @@ function createWindow() {
             nodeIntegration: true,
             contextIsolation: false
         },
-        icon: path.join(__dirname, '../assets/icon.png')
+        icon: path.join(__dirname, '../public/LOGO.png')
     });
 
     // Cargar el archivo home.html de la aplicación

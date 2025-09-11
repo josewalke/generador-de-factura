@@ -81,10 +81,36 @@ class ApiService {
     }
 
     async crearFactura(facturaData) {
+        let clienteId = facturaData.cliente?.id || null;
+        
+        // Si no hay cliente_id pero hay datos del cliente, crear el cliente primero
+        if (!clienteId && facturaData.cliente?.identificacion) {
+            try {
+                console.log('🔄 Creando cliente nuevo:', facturaData.cliente.nombre);
+                const clienteCreado = await this.crearCliente({
+                    nombre: facturaData.cliente.nombre,
+                    direccion: facturaData.cliente.direccion,
+                    identificacion: facturaData.cliente.identificacion,
+                    email: facturaData.cliente.email || null,
+                    telefono: facturaData.cliente.telefono || null
+                });
+                
+                if (clienteCreado.success) {
+                    clienteId = clienteCreado.data.id;
+                    console.log('✅ Cliente creado con ID:', clienteId);
+                } else {
+                    console.warn('⚠️ No se pudo crear el cliente:', clienteCreado.error);
+                }
+            } catch (error) {
+                console.error('❌ Error al crear cliente:', error);
+            }
+        }
+        
         // Mapear los campos del frontend a los campos del backend
         const facturaBackend = {
             numero_factura: facturaData.numero,
-            cliente_id: facturaData.cliente?.id || null,
+            empresa_id: facturaData.empresa_id,
+            cliente_id: clienteId,
             fecha_emision: facturaData.fecha,
             fecha_vencimiento: facturaData.fechaVencimiento || null,
             subtotal: facturaData.productos?.reduce((sum, p) => sum + p.subtotal, 0) || 0,
@@ -320,6 +346,12 @@ class ApiService {
         });
     }
 
+    async eliminarEmpresa(id) {
+        return await this.makeRequest(`/api/empresas/${id}`, {
+            method: 'DELETE'
+        });
+    }
+
     async desactivarEmpresa(id) {
         return await this.makeRequest(`/api/empresas/${id}`, {
             method: 'DELETE'
@@ -327,9 +359,9 @@ class ApiService {
     }
 
     // Facturas
-    async obtenerSiguienteNumeroFactura() {
+    async obtenerSiguienteNumeroFactura(empresaId) {
         try {
-            const response = await this.makeRequest('/api/facturas/siguiente-numero');
+            const response = await this.makeRequest(`/api/facturas/siguiente-numero/${empresaId}`);
             return response;
         } catch (error) {
             console.error('Error al obtener siguiente número de factura:', error);

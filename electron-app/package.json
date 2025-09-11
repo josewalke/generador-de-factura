@@ -22,24 +22,39 @@
     "electron-builder": "^24.9.1"
   },
   "build": {
-    "appId": "com.tuempresa.electron-app",
-    "productName": "Electron App",
+    "appId": "com.telwagen.generador-facturas",
+    "productName": "Generador de Facturas Telwagen",
     "directories": {
       "output": "dist"
     },
     "files": [
       "src/**/*",
       "public/**/*",
+      "../backend/**/*",
       "node_modules/**/*"
     ],
+    "extraResources": [
+      {
+        "from": "../backend",
+        "to": "backend",
+        "filter": ["**/*", "!node_modules/**/*"]
+      }
+    ],
     "mac": {
-      "category": "public.app-category.utilities"
+      "category": "public.app-category.business",
+      "icon": "public/LOGO.png"
     },
     "win": {
-      "target": "nsis"
+      "target": "nsis",
+      "icon": "public/LOGO.png"
     },
     "linux": {
-      "target": "AppImage"
+      "target": "AppImage",
+      "icon": "public/LOGO.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true
     }
   },
   "dependencies": {
