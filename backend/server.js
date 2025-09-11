@@ -5,6 +5,7 @@ const bodyParser = require('body-parser');
 const helmet = require('helmet');
 const morgan = require('morgan');
 const path = require('path');
+const config = require('./config');
 
 // Módulos para cumplir con la Ley Antifraude
 const SistemaIntegridad = require('./modules/sistemaIntegridad');
@@ -27,16 +28,52 @@ app.use(cors());
 app.use(bodyParser.json());
 app.use(bodyParser.urlencoded({ extended: true }));
 
+// Cargar configuración dinámica de empresa
+let configuracionEmpresa = null;
+config.cargarConfiguracionEmpresa().then(empresa => {
+    configuracionEmpresa = empresa;
+    console.log('🏢 Configuración de empresa cargada:', empresa.nombre);
+});
+
 // Inicializar base de datos
 const dbPath = path.join(__dirname, 'database', 'telwagen.db');
-const db = new sqlite3.Database(dbPath, (err) => {
+const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, (err) => {
     if (err) {
         console.error('❌ Error al conectar con la base de datos:', err.message);
     } else {
         console.log('✅ Base de datos conectada exitosamente');
+        
+        // Configurar la base de datos para mejor manejo de concurrencia
+        db.run('PRAGMA busy_timeout = 30000'); // 30 segundos de timeout
+        db.run('PRAGMA journal_mode = WAL'); // Modo WAL para mejor concurrencia
+        db.run('PRAGMA synchronous = NORMAL'); // Balance entre seguridad y rendimiento
+        
         initDatabase();
     }
 });
+
+// Función utilitaria para ejecutar operaciones de base de datos con reintentos
+function ejecutarConReintentos(operacion, maxReintentos = 3, delay = 100) {
+    return new Promise((resolve, reject) => {
+        let intentos = 0;
+        
+        function intentar() {
+            operacion()
+                .then(resolve)
+                .catch(err => {
+                    if (err.code === 'SQLITE_BUSY' && intentos < maxReintentos) {
+                        intentos++;
+                        console.log(`⚠️ Base de datos ocupada, reintentando... (${intentos}/${maxReintentos})`);
+                        setTimeout(intentar, delay * intentos);
+                    } else {
+                        reject(err);
+                    }
+                });
+        }
+        
+        intentar();
+    });
+}
 
 // Inicializar módulos de la Ley Antifraude
 let sistemaIntegridad, sistemaAuditoria, generadorVeriFactu, sistemaBackup;
@@ -463,18 +500,34 @@ function insertSampleData() {
         }
     ];
 
-    cochesEjemplo.forEach(coche => {
-        db.run(`
-            INSERT OR IGNORE INTO coches (matricula, chasis, color, kms, modelo)
-            VALUES (?, ?, ?, ?, ?)
-        `, [coche.matricula, coche.chasis, coche.color, coche.kms, coche.modelo], (err) => {
-            if (err) {
-                console.error('❌ Error al insertar coche:', err.message);
-            } else {
+    // Función para insertar coches de forma secuencial con reintentos
+    async function insertarCoches() {
+        for (const coche of cochesEjemplo) {
+            try {
+                await ejecutarConReintentos(() => {
+                    return new Promise((resolve, reject) => {
+                        db.run(`
+                            INSERT OR IGNORE INTO coches (matricula, chasis, color, kms, modelo)
+                            VALUES (?, ?, ?, ?, ?)
+                        `, [coche.matricula, coche.chasis, coche.color, coche.kms, coche.modelo], (err) => {
+                            if (err) {
+                                reject(err);
+                            } else {
+                                resolve();
+                            }
+                        });
+                    });
+                });
                 console.log('✅ Coche insertado/verificado:', coche.matricula);
+            } catch (err) {
+                console.error('❌ Error al insertar coche:', err.message);
+                // Continuar con el siguiente coche en caso de error
             }
-        });
-    });
+        }
+    }
+
+    // Ejecutar inserción de coches
+    insertarCoches();
 
     // Productos de ejemplo
     const productosEjemplo = [
@@ -484,15 +537,52 @@ function insertSampleData() {
         { codigo: 'NISSAN-JUKE-1.0', descripcion: 'NISSAN JUKE 1.0 DIG-T ACENTA 117 CV', precio: 15990.00 }
     ];
 
-    productosEjemplo.forEach(producto => {
-        db.run(`
-            INSERT OR IGNORE INTO productos (codigo, descripcion, precio, stock)
-            VALUES (?, ?, ?, ?)
-        `, [producto.codigo, producto.descripcion, producto.precio, 10]);
-    });
+    // Función para insertar productos de forma secuencial con reintentos
+    async function insertarProductos() {
+        for (const producto of productosEjemplo) {
+            try {
+                await ejecutarConReintentos(() => {
+                    return new Promise((resolve, reject) => {
+                        db.run(`
+                            INSERT OR IGNORE INTO productos (codigo, descripcion, precio, stock)
+                            VALUES (?, ?, ?, ?)
+                        `, [producto.codigo, producto.descripcion, producto.precio, 10], (err) => {
+                            if (err) {
+                                reject(err);
+                            } else {
+                                resolve();
+                            }
+                        });
+                    });
+                });
+                console.log('✅ Producto insertado/verificado:', producto.codigo);
+            } catch (err) {
+                console.error('❌ Error al insertar producto:', err.message);
+                // Continuar con el siguiente producto en caso de error
+            }
+        }
+    }
+
+    // Ejecutar inserción de productos
+    insertarProductos();
 
     console.log('✅ Datos de ejemplo insertados');
 }
+
+// Endpoint para obtener configuración de empresa
+app.get('/api/configuracion/empresa', (req, res) => {
+    if (configuracionEmpresa) {
+        res.json({
+            success: true,
+            data: configuracionEmpresa
+        });
+    } else {
+        res.json({
+            success: false,
+            error: 'Configuración de empresa no disponible'
+        });
+    }
+});
 
 // Rutas API
 
@@ -551,25 +641,56 @@ app.post('/api/empresas', (req, res) => {
 });
 
 // PUT - Actualizar empresa
-app.put('/api/empresas/:id', (req, res) => {
-    const { id } = req.params;
-    const { nombre, cif, direccion, telefono, email } = req.body;
-    
-    db.run(`
-        UPDATE empresas 
-        SET nombre = ?, cif = ?, direccion = ?, telefono = ?, email = ?
-        WHERE id = ?
-    `, [nombre, cif, direccion, telefono, email, id], function(err) {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
+app.put('/api/empresas/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const { nombre, cif, direccion, telefono, email, firmaDigitalThumbprint } = req.body;
+        
+        // Actualizar datos básicos de la empresa
+        await new Promise((resolve, reject) => {
+            db.run(`
+                UPDATE empresas 
+                SET nombre = ?, cif = ?, direccion = ?, telefono = ?, email = ?
+                WHERE id = ?
+            `, [nombre, cif, direccion, telefono, email, id], function(err) {
+                if (err) {
+                    reject(err);
+                } else if (this.changes === 0) {
+                    reject(new Error('Empresa no encontrada'));
+                } else {
+                    resolve();
+                }
+            });
+        });
+        
+        // Si se especifica una firma digital, asociarla con la empresa
+        if (firmaDigitalThumbprint) {
+            try {
+                const resultadoAsociacion = await sistemaFirmaDigital.asociarCertificadoConEmpresa(id, firmaDigitalThumbprint);
+                
+                if (resultadoAsociacion.success) {
+                    console.log(`✅ Firma digital asociada con empresa ${nombre}: ${resultadoAsociacion.certificado.empresa}`);
+                } else {
+                    console.log(`⚠️ No se pudo asociar firma digital: ${resultadoAsociacion.error}`);
+                }
+            } catch (error) {
+                console.log(`⚠️ Error al asociar firma digital: ${error.message}`);
+            }
         }
-        if (this.changes === 0) {
-            res.status(404).json({ error: 'Empresa no encontrada' });
-            return;
-        }
-        res.json({ success: true, message: 'Empresa actualizada correctamente' });
-    });
+        
+        res.json({ 
+            success: true, 
+            message: 'Empresa actualizada correctamente',
+            firmaDigitalAsociada: firmaDigitalThumbprint ? true : false
+        });
+        
+    } catch (error) {
+        console.error('Error al actualizar empresa:', error);
+        res.status(500).json({ 
+            success: false,
+            error: error.message 
+        });
+    }
 });
 
 // DELETE - Eliminar empresa (eliminación física)
@@ -1078,20 +1199,30 @@ app.post('/api/facturas', async (req, res) => {
                 // Actualizar factura con código VeriFactu
                 db.run('UPDATE facturas SET codigo_verifactu = ? WHERE id = ?', [codigoVeriFactu, facturaId]);
                 
-                // Generar firma digital de la factura
+                // Generar firma digital de la factura con certificado de empresa
                 const datosFacturaParaFirma = {
                     ...datosCompletosFactura,
                     codigo_verifactu: codigoVeriFactu,
                     productos: productos || []
                 };
                 
-                const firmaDigital = sistemaFirmaDigital.firmarFactura(datosFacturaParaFirma);
+                const resultadoFirma = await sistemaFirmaDigital.firmarDocumentoConEmpresa(empresa_id, datosFacturaParaFirma);
                 
-                // Actualizar factura con información de firma digital
-                db.run('UPDATE facturas SET respuesta_aeat = ? WHERE id = ?', 
-                    [JSON.stringify({ firma_digital: firmaDigital.firma, archivo_firma: firmaDigital.archivo }), facturaId]);
-                
-                console.log('🔐 Factura firmada digitalmente:', firmaDigital.archivo);
+                if (resultadoFirma.success) {
+                    const firmaDigital = {
+                        firma: resultadoFirma.firma,
+                        archivo: resultadoFirma.firma.archivo,
+                        certificado: resultadoFirma.firma.certificado
+                    };
+                    
+                    // Actualizar factura con información de firma digital
+                    db.run('UPDATE facturas SET respuesta_aeat = ? WHERE id = ?', 
+                        [JSON.stringify({ firma_digital: firmaDigital.firma, archivo_firma: firmaDigital.archivo }), facturaId]);
+                    
+                    console.log('🔐 Factura firmada digitalmente:', firmaDigital.archivo);
+                } else {
+                    console.log('⚠️ No se pudo firmar la factura:', resultadoFirma.error);
+                }
                 
                 console.log('✅ Factura creada con cumplimiento de Ley Antifraude:', facturaId);
                 
@@ -1550,9 +1681,11 @@ app.get('/api/productos/buscar/:codigo', (req, res) => {
 
 // Ruta de prueba
 app.get('/', (req, res) => {
+    const nombreEmpresa = configuracionEmpresa ? configuracionEmpresa.nombre : 'Generador de Facturas';
     res.json({ 
-        message: '🚗 API del Generador de Facturas Telwagen',
+        message: `🚗 API del ${nombreEmpresa}`,
         version: '1.0.0',
+        empresa: configuracionEmpresa,
         endpoints: {
             clientes: '/api/clientes',
             productos: '/api/productos',
@@ -1902,14 +2035,142 @@ app.post('/api/usuarios', sistemaControlAcceso.middlewareAutenticacion(),
     // ========================================
 
     // Información del certificado
-    app.get('/api/firma-digital/certificado', (req, res) => {
+    app.get('/api/firma-digital/certificado', async (req, res) => {
         try {
-            const info = sistemaFirmaDigital.obtenerInformacionCertificado();
+            const info = await sistemaFirmaDigital.obtenerInformacionCertificado();
             res.json({ success: true, data: info });
         } catch (error) {
             res.status(500).json({
                 success: false,
                 error: error.message
+            });
+        }
+    });
+
+    // Obtener certificados de Windows
+    app.get('/api/firma-digital/certificados-windows', async (req, res) => {
+        try {
+            const resultado = await sistemaFirmaDigital.obtenerCertificadosWindows();
+            res.json(resultado);
+        } catch (error) {
+            console.error('Error al obtener certificados de Windows:', error);
+            res.status(500).json({ 
+                success: false, 
+                error: 'Error interno del servidor' 
+            });
+        }
+    });
+
+    // Asociar certificado con empresa
+    app.post('/api/firma-digital/asociar-certificado-empresa', async (req, res) => {
+        try {
+            const { empresaId, thumbprint } = req.body;
+            
+            if (!empresaId || !thumbprint) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'empresaId y thumbprint son requeridos'
+                });
+            }
+            
+            const resultado = await sistemaFirmaDigital.asociarCertificadoConEmpresa(empresaId, thumbprint);
+            res.json(resultado);
+        } catch (error) {
+            console.error('Error al asociar certificado con empresa:', error);
+            res.status(500).json({ 
+                success: false, 
+                error: 'Error interno del servidor' 
+            });
+        }
+    });
+
+    // Obtener certificado asociado a empresa
+    app.get('/api/firma-digital/certificado-empresa/:empresaId', async (req, res) => {
+        try {
+            const { empresaId } = req.params;
+            
+            const resultado = await sistemaFirmaDigital.obtenerCertificadoEmpresa(empresaId);
+            res.json(resultado);
+        } catch (error) {
+            console.error('Error al obtener certificado de empresa:', error);
+            res.status(500).json({ 
+                success: false, 
+                error: 'Error interno del servidor' 
+            });
+        }
+    });
+
+    // Firmar documento con certificado de empresa
+    app.post('/api/firma-digital/firmar-documento-empresa', async (req, res) => {
+        try {
+            const { empresaId, datosDocumento } = req.body;
+            
+            if (!empresaId || !datosDocumento) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'empresaId y datosDocumento son requeridos'
+                });
+            }
+            
+            const resultado = await sistemaFirmaDigital.firmarDocumentoConEmpresa(empresaId, datosDocumento);
+            res.json(resultado);
+        } catch (error) {
+            console.error('Error al firmar documento con empresa:', error);
+            res.status(500).json({ 
+                success: false, 
+                error: 'Error interno del servidor' 
+            });
+        }
+    });
+
+    // Obtener todas las firmas digitales disponibles
+    app.get('/api/firma-digital/firmas-disponibles', async (req, res) => {
+        try {
+            const resultado = await sistemaFirmaDigital.detectarTodasLasFirmasDisponibles();
+            res.json(resultado);
+        } catch (error) {
+            console.error('Error al obtener firmas disponibles:', error);
+            res.status(500).json({ 
+                success: false, 
+                error: 'Error interno del servidor' 
+            });
+        }
+    });
+
+    // Obtener firmas disponibles para asignar a una empresa específica
+    app.get('/api/firma-digital/firmas-para-asignar/:empresaId?', async (req, res) => {
+        try {
+            const empresaId = req.params.empresaId ? parseInt(req.params.empresaId) : null;
+            const resultado = await sistemaFirmaDigital.obtenerFirmasParaAsignar(empresaId);
+            res.json(resultado);
+        } catch (error) {
+            console.error('Error al obtener firmas para asignar:', error);
+            res.status(500).json({ 
+                success: false, 
+                error: 'Error interno del servidor' 
+            });
+        }
+    });
+
+    // Cambiar certificado activo
+    app.post('/api/firma-digital/cambiar-certificado', async (req, res) => {
+        try {
+            const { thumbprint } = req.body;
+            
+            if (!thumbprint) {
+                return res.status(400).json({
+                    success: false,
+                    error: 'Thumbprint es requerido'
+                });
+            }
+            
+            const resultado = await sistemaFirmaDigital.cambiarCertificadoActivo(thumbprint);
+            res.json(resultado);
+        } catch (error) {
+            console.error('Error al cambiar certificado:', error);
+            res.status(500).json({ 
+                success: false, 
+                error: 'Error interno del servidor' 
             });
         }
     });
@@ -1988,8 +2249,21 @@ app.post('/api/usuarios', sistemaControlAcceso.middlewareAutenticacion(),
                 productos: productos
             };
 
-            // Firmar factura
-            const firmaDigital = sistemaFirmaDigital.firmarFactura(datosFactura);
+            // Firmar factura con certificado de la empresa
+            const resultadoFirma = await sistemaFirmaDigital.firmarDocumentoConEmpresa(factura.empresa_id, datosFactura);
+            
+            if (!resultadoFirma.success) {
+                return res.status(400).json({
+                    success: false,
+                    error: `Error al firmar factura: ${resultadoFirma.error}`
+                });
+            }
+            
+            const firmaDigital = {
+                firma: resultadoFirma.firma,
+                archivo: resultadoFirma.firma.archivo,
+                certificado: resultadoFirma.firma.certificado
+            };
 
             // Actualizar factura con información de firma
             await new Promise((resolve, reject) => {

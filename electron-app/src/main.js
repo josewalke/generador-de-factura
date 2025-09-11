@@ -1,4 +1,4 @@
-const { app, BrowserWindow, ipcMain } = require('electron');
+const { app, BrowserWindow, ipcMain, Menu } = require('electron');
 const path = require('path');
 const puppeteer = require('puppeteer');
 const ApiService = require('./apiService');
@@ -375,6 +375,32 @@ ipcMain.handle('api-obtener-siguiente-numero', async (event, empresaId) => {
     }
 });
 
+// Manejador para obtener configuración de empresa
+ipcMain.handle('api-obtener-configuracion-empresa', async () => {
+    console.log('🏢 Obteniendo configuración de empresa...');
+    try {
+        const resultado = await apiService.obtenerConfiguracionEmpresa();
+        console.log('✅ Configuración de empresa obtenida:', resultado.data?.nombre);
+        return resultado;
+    } catch (error) {
+        console.error('❌ Error al obtener configuración de empresa:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+// Manejador para obtener información del certificado
+ipcMain.handle('api-obtener-certificado', async () => {
+    console.log('🔐 Obteniendo información del certificado...');
+    try {
+        const resultado = await apiService.obtenerCertificado();
+        console.log('✅ Información del certificado obtenida:', resultado.data?.certificado?.empresa);
+        return resultado;
+    } catch (error) {
+        console.error('❌ Error al obtener certificado:', error);
+        return { success: false, error: error.message };
+    }
+});
+
 console.log('✅ Manejadores IPC registrados correctamente');
 console.log('📋 Handlers registrados:');
 console.log('- api-obtener-clientes');
@@ -400,6 +426,8 @@ console.log('- api-obtener-facturas');
 console.log('- api-obtener-factura');
 console.log('- api-crear-factura');
 console.log('- api-obtener-siguiente-numero');
+console.log('- api-obtener-configuracion-empresa');
+console.log('- api-obtener-certificado');
 console.log('- api-verificar-conexion');
 
 // Función para generar HTML de la factura
@@ -627,10 +655,49 @@ function createWindow() {
         height: 900,
         webPreferences: {
             nodeIntegration: true,
-            contextIsolation: false
+            contextIsolation: false,
+            devTools: true  // Habilitar DevTools
         },
         icon: path.join(__dirname, '../public/LOGO.png')
     });
+
+    // Abrir DevTools automáticamente en modo desarrollo
+    if (process.env.NODE_ENV === 'development') {
+        mainWindow.webContents.openDevTools();
+    }
+
+    // Crear menú de desarrollo
+    const template = [
+        {
+            label: 'Desarrollo',
+            submenu: [
+                {
+                    label: 'Abrir DevTools',
+                    accelerator: 'F12',
+                    click: () => {
+                        mainWindow.webContents.openDevTools();
+                    }
+                },
+                {
+                    label: 'Recargar',
+                    accelerator: 'F5',
+                    click: () => {
+                        mainWindow.reload();
+                    }
+                },
+                {
+                    label: 'Recargar Ignorando Cache',
+                    accelerator: 'Ctrl+Shift+R',
+                    click: () => {
+                        mainWindow.webContents.reloadIgnoringCache();
+                    }
+                }
+            ]
+        }
+    ];
+
+    const menu = Menu.buildFromTemplate(template);
+    Menu.setApplicationMenu(menu);
 
     // Cargar el archivo home.html de la aplicación
     mainWindow.loadFile(path.join(__dirname, '../public/home.html'));

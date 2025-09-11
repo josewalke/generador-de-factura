@@ -72,9 +72,37 @@ let resultadosBusqueda = [];
 // Variables para búsqueda de coches
 let resultadosBusquedaCoches = [];
 
+// Cargar configuración de empresa al iniciar
+async function cargarConfiguracionEmpresa() {
+    try {
+        const resultado = await ipcRenderer.invoke('api-obtener-configuracion-empresa');
+        if (resultado.success && resultado.data) {
+            const empresa = resultado.data;
+            
+            // Actualizar título de la página
+            document.title = `Generador de Facturas - ${empresa.nombre}`;
+            
+            // Actualizar header
+            const header = document.getElementById('app-header');
+            if (header) {
+                header.textContent = `🧾 ${empresa.nombre}`;
+            }
+            
+            console.log('✅ Configuración de empresa cargada:', empresa.nombre);
+        } else {
+            console.warn('⚠️ No se pudo cargar la configuración de empresa');
+        }
+    } catch (error) {
+        console.error('❌ Error al cargar configuración de empresa:', error);
+    }
+}
+
 // Inicializar aplicación
 document.addEventListener('DOMContentLoaded', async () => {
-    console.log('🧾 Generador de Facturas Telwagen iniciado');
+    console.log('🧾 Generador de Facturas iniciado');
+    
+    // Cargar configuración de empresa primero
+    await cargarConfiguracionEmpresa();
     
     // Verificar conexión con el backend
     await verificarConexionBackend();

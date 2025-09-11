@@ -7,6 +7,12 @@ const totalClientes = document.getElementById('total-clientes');
 const totalCoches = document.getElementById('total-coches');
 const totalFacturas = document.getElementById('total-facturas');
 
+// Elementos del certificado
+const certificadoEmpresa = document.getElementById('certificado-empresa');
+const certificadoCif = document.getElementById('certificado-cif');
+const certificadoSerial = document.getElementById('certificado-serial');
+const certificadoEstado = document.getElementById('certificado-estado');
+
 // Botones de navegación
 const btnFacturas = document.getElementById('btn-facturas');
 const btnClientes = document.getElementById('btn-clientes');
@@ -35,6 +41,9 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Verificar conexión con el backend
     await verificarConexion();
     
+    // Cargar información del certificado
+    await cargarInformacionCertificado();
+    
     // Cargar estadísticas
     await cargarEstadisticas();
     
@@ -60,6 +69,67 @@ async function verificarConexion() {
         console.error('❌ Error al verificar conexión:', error);
         connectionStatus.className = 'status-badge disconnected';
         connectionStatus.querySelector('.status-text').textContent = 'Error de conexión';
+    }
+}
+
+// Cargar información del certificado digital
+async function cargarInformacionCertificado() {
+    try {
+        console.log('🔐 Cargando información del certificado...');
+        const resultado = await ipcRenderer.invoke('api-obtener-certificado');
+        
+        if (resultado.success && resultado.data) {
+            const certificado = resultado.data.certificado;
+            
+            // Mostrar información del certificado
+            certificadoEmpresa.textContent = certificado.empresa || 'No disponible';
+            certificadoCif.textContent = certificado.cif || 'No disponible';
+            certificadoSerial.textContent = certificado.serial || 'No disponible';
+            
+            // Determinar estado del certificado
+            const ahora = new Date();
+            const validoDesde = new Date(certificado.validoDesde);
+            const validoHasta = new Date(certificado.validoHasta);
+            
+            let estado = 'Desconocido';
+            let claseEstado = 'error';
+            
+            if (ahora >= validoDesde && ahora <= validoHasta) {
+                estado = 'Válido';
+                claseEstado = 'valido';
+            } else if (ahora < validoDesde) {
+                estado = 'No válido aún';
+                claseEstado = 'error';
+            } else if (ahora > validoHasta) {
+                estado = 'Expirado';
+                claseEstado = 'expirado';
+            }
+            
+            certificadoEstado.textContent = estado;
+            certificadoEstado.className = `certificado-value ${claseEstado}`;
+            
+            // Remover clase de cargando
+            certificadoEmpresa.classList.remove('cargando');
+            
+            console.log('✅ Información del certificado cargada:', {
+                empresa: certificado.empresa,
+                cif: certificado.cif,
+                serial: certificado.serial,
+                estado: estado
+            });
+        } else {
+            throw new Error(resultado.error || 'No se pudo obtener la información del certificado');
+        }
+    } catch (error) {
+        console.error('❌ Error al cargar información del certificado:', error);
+        
+        // Mostrar estado de error
+        certificadoEmpresa.textContent = 'Error al cargar';
+        certificadoEmpresa.className = 'certificado-value error';
+        certificadoCif.textContent = 'Error';
+        certificadoSerial.textContent = 'Error';
+        certificadoEstado.textContent = 'Error';
+        certificadoEstado.className = 'certificado-value error';
     }
 }
 

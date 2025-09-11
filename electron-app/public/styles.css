@@ -2341,6 +2341,74 @@ input[type="number"] {
     text-align: center;
 }
 
+/* Sección del Certificado */
+.certificado-section {
+    background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+    border-radius: 15px;
+    padding: 20px;
+    color: white;
+    box-shadow: 0 8px 25px rgba(102, 126, 234, 0.3);
+}
+
+.certificado-header h4 {
+    font-size: 1.1rem;
+    font-weight: 600;
+    margin: 0 0 15px 0;
+    text-align: center;
+    opacity: 0.9;
+}
+
+.certificado-info {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+}
+
+.certificado-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 8px 0;
+    border-bottom: 1px solid rgba(255, 255, 255, 0.2);
+}
+
+.certificado-item:last-child {
+    border-bottom: none;
+}
+
+.certificado-label {
+    font-size: 0.85rem;
+    font-weight: 500;
+    opacity: 0.8;
+    min-width: 60px;
+}
+
+.certificado-value {
+    font-size: 0.9rem;
+    font-weight: 600;
+    text-align: right;
+    max-width: 120px;
+    word-break: break-all;
+    line-height: 1.2;
+}
+
+.certificado-value.cargando {
+    opacity: 0.7;
+    font-style: italic;
+}
+
+.certificado-value.valido {
+    color: #4ade80;
+}
+
+.certificado-value.expirado {
+    color: #f87171;
+}
+
+.certificado-value.error {
+    color: #fbbf24;
+}
+
 .stats-container {
     display: flex;
     flex-direction: column;

@@ -368,6 +368,28 @@ class ApiService {
             throw error;
         }
     }
+
+    // Configuración de Empresa
+    async obtenerConfiguracionEmpresa() {
+        try {
+            const response = await this.makeRequest('/api/configuracion/empresa');
+            return response;
+        } catch (error) {
+            console.error('Error al obtener configuración de empresa:', error);
+            throw error;
+        }
+    }
+
+    // Certificado Digital
+    async obtenerCertificado() {
+        try {
+            const response = await this.makeRequest('/api/firma-digital/certificado');
+            return response;
+        } catch (error) {
+            console.error('Error al obtener certificado:', error);
+            throw error;
+        }
+    }
 }
 
 module.exports = ApiService;
