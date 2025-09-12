@@ -7,12 +7,6 @@ const totalClientes = document.getElementById('total-clientes');
 const totalCoches = document.getElementById('total-coches');
 const totalFacturas = document.getElementById('total-facturas');
 
-// Elementos del certificado
-const certificadoEmpresa = document.getElementById('certificado-empresa');
-const certificadoCif = document.getElementById('certificado-cif');
-const certificadoSerial = document.getElementById('certificado-serial');
-const certificadoEstado = document.getElementById('certificado-estado');
-
 // Botones de navegación
 const btnFacturas = document.getElementById('btn-facturas');
 const btnClientes = document.getElementById('btn-clientes');
@@ -25,7 +19,7 @@ let btnNuevoCliente, btnNuevoCoche, btnNuevaEmpresa;
 
 // Inicialización
 document.addEventListener('DOMContentLoaded', async () => {
-    console.log('🏠 Iniciando página de inicio...');
+    console.log('[HOME] Iniciando página de inicio...');
     
     // Inicializar botones de acciones rápidas
     btnNuevoCliente = document.getElementById('btn-nuevo-cliente');
@@ -33,7 +27,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     btnNuevaEmpresa = document.getElementById('btn-nueva-empresa');
     
     // Verificar que los elementos existen
-    console.log('🔍 Verificando elementos del DOM...');
+    console.log('[HOME] Verificando elementos del DOM...');
     console.log('btnNuevoCliente:', btnNuevoCliente);
     console.log('btnNuevoCoche:', btnNuevoCoche);
     console.log('btnNuevaEmpresa:', btnNuevaEmpresa);
@@ -41,17 +35,23 @@ document.addEventListener('DOMContentLoaded', async () => {
     // Verificar conexión con el backend
     await verificarConexion();
     
-    // Cargar información del certificado
-    await cargarInformacionCertificado();
-    
     // Cargar estadísticas
     await cargarEstadisticas();
+    
+    // Verificar alertas de certificados
+    await verificarAlertasCertificados();
     
     // Configurar navegación
     configurarNavegacion();
     
     // Configurar animaciones
     configurarAnimaciones();
+    
+    // Configurar modo compacto del sidebar
+    setTimeout(() => {
+        configurarObservadorSidebar();
+        verificarModoCompactoSidebar();
+    }, 500);
 });
 
 // Verificar conexión con el backend
@@ -66,70 +66,9 @@ async function verificarConexion() {
             connectionStatus.querySelector('.status-text').textContent = 'Sin conexión';
         }
     } catch (error) {
-        console.error('❌ Error al verificar conexión:', error);
+        console.error('[HOME] Error al verificar conexión:', error);
         connectionStatus.className = 'status-badge disconnected';
         connectionStatus.querySelector('.status-text').textContent = 'Error de conexión';
-    }
-}
-
-// Cargar información del certificado digital
-async function cargarInformacionCertificado() {
-    try {
-        console.log('🔐 Cargando información del certificado...');
-        const resultado = await ipcRenderer.invoke('api-obtener-certificado');
-        
-        if (resultado.success && resultado.data) {
-            const certificado = resultado.data.certificado;
-            
-            // Mostrar información del certificado
-            certificadoEmpresa.textContent = certificado.empresa || 'No disponible';
-            certificadoCif.textContent = certificado.cif || 'No disponible';
-            certificadoSerial.textContent = certificado.serial || 'No disponible';
-            
-            // Determinar estado del certificado
-            const ahora = new Date();
-            const validoDesde = new Date(certificado.validoDesde);
-            const validoHasta = new Date(certificado.validoHasta);
-            
-            let estado = 'Desconocido';
-            let claseEstado = 'error';
-            
-            if (ahora >= validoDesde && ahora <= validoHasta) {
-                estado = 'Válido';
-                claseEstado = 'valido';
-            } else if (ahora < validoDesde) {
-                estado = 'No válido aún';
-                claseEstado = 'error';
-            } else if (ahora > validoHasta) {
-                estado = 'Expirado';
-                claseEstado = 'expirado';
-            }
-            
-            certificadoEstado.textContent = estado;
-            certificadoEstado.className = `certificado-value ${claseEstado}`;
-            
-            // Remover clase de cargando
-            certificadoEmpresa.classList.remove('cargando');
-            
-            console.log('✅ Información del certificado cargada:', {
-                empresa: certificado.empresa,
-                cif: certificado.cif,
-                serial: certificado.serial,
-                estado: estado
-            });
-        } else {
-            throw new Error(resultado.error || 'No se pudo obtener la información del certificado');
-        }
-    } catch (error) {
-        console.error('❌ Error al cargar información del certificado:', error);
-        
-        // Mostrar estado de error
-        certificadoEmpresa.textContent = 'Error al cargar';
-        certificadoEmpresa.className = 'certificado-value error';
-        certificadoCif.textContent = 'Error';
-        certificadoSerial.textContent = 'Error';
-        certificadoEstado.textContent = 'Error';
-        certificadoEstado.className = 'certificado-value error';
     }
 }
 
@@ -157,9 +96,9 @@ async function cargarEstadisticas() {
             animarNumero(totalFacturas, facturasResult.data.length);
         }
 
-        console.log('✅ Estadísticas cargadas correctamente');
+        console.log('[HOME] Estadísticas cargadas correctamente');
     } catch (error) {
-        console.error('❌ Error al cargar estadísticas:', error);
+        console.error('[HOME] Error al cargar estadísticas:', error);
     }
 }
 
@@ -211,7 +150,7 @@ function configurarNavegacion() {
     // Configurar acciones rápidas
     configurarAccionesRapidas();
 
-    console.log('✅ Navegación configurada');
+    console.log('[HOME] Navegación configurada');
 }
 
 // Configurar animaciones
@@ -245,55 +184,118 @@ function configurarAnimaciones() {
 // Actualizar estadísticas cada 30 segundos
 setInterval(cargarEstadisticas, 30000);
 
+// ===== FUNCIONES PARA MODO COMPACTO DEL SIDEBAR =====
+
+let sidebarObserver = null;
+
+function configurarObservadorSidebar() {
+    const sidebar = document.querySelector('.home-sidebar');
+    if (!sidebar) return;
+    
+    // Crear ResizeObserver para detectar cambios en el sidebar
+    sidebarObserver = new ResizeObserver(() => {
+        verificarModoCompactoSidebar();
+    });
+    
+    sidebarObserver.observe(sidebar);
+    
+    // También observar cambios en el contenido interno
+    const sidebarContent = sidebar.querySelector('.stats-container');
+    if (sidebarContent) {
+        sidebarObserver.observe(sidebarContent);
+    }
+}
+
+function verificarModoCompactoSidebar() {
+    const sidebar = document.querySelector('.home-sidebar');
+    if (!sidebar) return;
+    
+    // Obtener altura disponible del sidebar
+    const availableHeight = sidebar.clientHeight;
+    const maxHeight = parseInt(getComputedStyle(sidebar).maxHeight);
+    
+    // Obtener altura del contenido interno
+    const statsContainer = sidebar.querySelector('.stats-container');
+    const quickActions = sidebar.querySelector('.quick-actions');
+    
+    let contentHeight = 0;
+    if (statsContainer) contentHeight += statsContainer.scrollHeight;
+    if (quickActions) contentHeight += quickActions.scrollHeight;
+    
+    // Agregar padding y gaps
+    const padding = parseInt(getComputedStyle(sidebar).paddingTop) * 2;
+    const gaps = parseInt(getComputedStyle(sidebar).gap) * 2;
+    contentHeight += padding + gaps;
+    
+    // Determinar si necesita modo compacto
+    const needsCompact = contentHeight > availableHeight || availableHeight < 400;
+    
+    // Aplicar o quitar clase compact
+    if (needsCompact && !sidebar.classList.contains('compact')) {
+        sidebar.classList.add('compact');
+        console.log('[HOME] Activando modo compacto del sidebar');
+    } else if (!needsCompact && sidebar.classList.contains('compact')) {
+        sidebar.classList.remove('compact');
+        console.log('[HOME] Desactivando modo compacto del sidebar');
+    }
+}
+
+// Limpiar observer cuando se cierre la página
+window.addEventListener('beforeunload', () => {
+    if (sidebarObserver) {
+        sidebarObserver.disconnect();
+    }
+});
+
 // Configurar acciones rápidas
 function configurarAccionesRapidas() {
-    console.log('🔧 Configurando acciones rápidas...');
+    console.log('[HOME] Configurando acciones rápidas...');
     console.log('btnNuevoCliente:', btnNuevoCliente);
     console.log('btnNuevoCoche:', btnNuevoCoche);
     console.log('btnNuevaEmpresa:', btnNuevaEmpresa);
     
     if (!btnNuevoCliente || !btnNuevoCoche || !btnNuevaEmpresa) {
-        console.error('❌ No se encontraron todos los botones de acciones rápidas');
+        console.error('[HOME] ERROR: No se encontraron todos los botones de acciones rápidas');
         return;
     }
     
     // Nuevo Cliente
     btnNuevoCliente.addEventListener('click', async () => {
-        console.log('🖱️ Click en Nuevo Cliente');
+        console.log('[HOME] Click en Nuevo Cliente');
         try {
             // Crear modal de nuevo cliente
             await crearModalNuevoCliente();
         } catch (error) {
-            console.error('❌ Error al crear modal de nuevo cliente:', error);
+            console.error('[HOME] ERROR al crear modal de nuevo cliente:', error);
             mostrarError('Error al abrir el formulario de nuevo cliente');
         }
     });
 
     // Nuevo Coche
     btnNuevoCoche.addEventListener('click', async () => {
-        console.log('🖱️ Click en Nuevo Coche');
+        console.log('[HOME] Click en Nuevo Coche');
         try {
             // Crear modal de nuevo coche
             await crearModalNuevoCoche();
         } catch (error) {
-            console.error('❌ Error al crear modal de nuevo coche:', error);
+            console.error('[HOME] ERROR al crear modal de nuevo coche:', error);
             mostrarError('Error al abrir el formulario de nuevo coche');
         }
     });
 
     // Nueva Empresa
     btnNuevaEmpresa.addEventListener('click', async () => {
-        console.log('🖱️ Click en Nueva Empresa');
+        console.log('[HOME] Click en Nueva Empresa');
         try {
             // Crear modal de nueva empresa
             await crearModalNuevaEmpresa();
         } catch (error) {
-            console.error('❌ Error al crear modal de nueva empresa:', error);
+            console.error('[HOME] ERROR al crear modal de nueva empresa:', error);
             mostrarError('Error al abrir el formulario de nueva empresa');
         }
     });
 
-    console.log('✅ Acciones rápidas configuradas');
+    console.log('[HOME] Acciones rápidas configuradas');
 }
 
 // Crear modal de nuevo cliente
@@ -374,7 +376,7 @@ async function crearModalNuevoCliente() {
         };
 
         try {
-            btnGuardar.innerHTML = '💾 Guardando...';
+            btnGuardar.innerHTML = 'Guardando...';
             btnGuardar.disabled = true;
 
             const resultado = await ipcRenderer.invoke('api-crear-cliente', datos);
@@ -387,7 +389,7 @@ async function crearModalNuevoCliente() {
                 throw new Error(resultado.error);
             }
         } catch (error) {
-            console.error('❌ Error al guardar cliente:', error);
+            console.error('[HOME] ERROR al guardar cliente:', error);
             mostrarError('Error al guardar cliente: ' + error.message);
         } finally {
             btnGuardar.innerHTML = 'Guardar Cliente';
@@ -486,7 +488,7 @@ async function crearModalNuevoCoche() {
         };
 
         try {
-            btnGuardar.innerHTML = '💾 Guardando...';
+            btnGuardar.innerHTML = 'Guardando...';
             btnGuardar.disabled = true;
 
             const resultado = await ipcRenderer.invoke('api-crear-coche', datos);
@@ -499,7 +501,7 @@ async function crearModalNuevoCoche() {
                 throw new Error(resultado.error);
             }
         } catch (error) {
-            console.error('❌ Error al guardar coche:', error);
+            console.error('[HOME] ERROR al guardar coche:', error);
             mostrarError('Error al guardar coche: ' + error.message);
         } finally {
             btnGuardar.innerHTML = 'Guardar Coche';
@@ -598,7 +600,7 @@ async function crearModalNuevaEmpresa() {
         };
 
         try {
-            btnGuardar.innerHTML = '💾 Guardando...';
+            btnGuardar.innerHTML = 'Guardando...';
             btnGuardar.disabled = true;
 
             const resultado = await ipcRenderer.invoke('api-crear-empresa', datos);
@@ -611,7 +613,7 @@ async function crearModalNuevaEmpresa() {
                 throw new Error(resultado.error);
             }
         } catch (error) {
-            console.error('❌ Error al guardar empresa:', error);
+            console.error('[HOME] ERROR al guardar empresa:', error);
             mostrarError('Error al guardar empresa: ' + error.message);
         } finally {
             btnGuardar.innerHTML = 'Guardar Empresa';
@@ -630,7 +632,7 @@ function mostrarExito(mensaje) {
     const notificacion = document.createElement('div');
     notificacion.className = 'notificacion-exito';
     notificacion.innerHTML = `
-        <div class="notificacion-icon">✅</div>
+        <div class="notificacion-icon">OK</div>
         <span>${mensaje}</span>
     `;
     document.body.appendChild(notificacion);
@@ -644,7 +646,7 @@ function mostrarError(mensaje) {
     const notificacion = document.createElement('div');
     notificacion.className = 'notificacion-error';
     notificacion.innerHTML = `
-        <div class="notificacion-icon">❌</div>
+        <div class="notificacion-icon">ERROR</div>
         <span>${mensaje}</span>
     `;
     document.body.appendChild(notificacion);
@@ -652,4 +654,106 @@ function mostrarError(mensaje) {
     setTimeout(() => {
         notificacion.remove();
     }, 3000);
+}
+
+// Verificar alertas de certificados próximos a caducar
+async function verificarAlertasCertificados() {
+    try {
+        console.log('[HOME] Verificando alertas de certificados...');
+        
+        const resultado = await ipcRenderer.invoke('api-verificar-alertas-certificados');
+        
+        if (resultado.success && resultado.data.tieneAlertas) {
+            console.log(`[HOME] OK: ${resultado.data.total} alertas encontradas`);
+            mostrarAlertasCertificados(resultado.data.alertas);
+        } else {
+            console.log('[HOME] OK: No hay alertas de certificados');
+        }
+    } catch (error) {
+        console.error('[HOME] ERROR: Error al verificar alertas:', error);
+    }
+}
+
+// Mostrar las alertas de certificados en la interfaz
+function mostrarAlertasCertificados(alertas) {
+    const contenedorAlertas = document.getElementById('alertas-certificados');
+    const listaAlertas = document.getElementById('alertas-lista');
+    
+    if (!contenedorAlertas || !listaAlertas) {
+        console.error('[HOME] ERROR: Elementos de alertas no encontrados');
+        return;
+    }
+    
+    // Limpiar alertas anteriores
+    listaAlertas.innerHTML = '';
+    
+    // Crear elementos para cada alerta
+    alertas.forEach(alerta => {
+        const elementoAlerta = crearElementoAlerta(alerta);
+        listaAlertas.appendChild(elementoAlerta);
+    });
+    
+    // Mostrar el contenedor de alertas
+    contenedorAlertas.style.display = 'block';
+    
+    // Configurar botón de cerrar
+    const btnCerrar = document.getElementById('btn-cerrar-alertas');
+    if (btnCerrar) {
+        btnCerrar.onclick = () => {
+            contenedorAlertas.style.display = 'none';
+        };
+    }
+}
+
+// Crear elemento HTML para una alerta
+function crearElementoAlerta(alerta) {
+    const div = document.createElement('div');
+    div.className = `alerta-item ${alerta.estado}`;
+    
+    const icono = obtenerIconoAlerta(alerta.estado);
+    const fechaFormateada = formatearFecha(alerta.fechaExpiracion);
+    
+    div.innerHTML = `
+        <span class="alerta-icon-item">${icono}</span>
+        <div class="alerta-content">
+            <div class="alerta-empresa">${alerta.empresaNombre}</div>
+            <div class="alerta-mensaje">${alerta.mensaje}</div>
+            <div class="alerta-detalles">
+                <span class="alerta-dias">${alerta.diasRestantes} días restantes</span>
+                <span class="alerta-fecha">Expira: ${fechaFormateada}</span>
+            </div>
+        </div>
+    `;
+    
+    return div;
+}
+
+// Obtener icono según el estado de la alerta
+function obtenerIconoAlerta(estado) {
+    switch (estado) {
+        case 'expirado':
+            return '🚫';
+        case 'critico':
+            return '🔥';
+        case 'advertencia':
+            return '⚠️';
+        default:
+            return 'ℹ️';
+    }
+}
+
+// Formatear fecha para mostrar
+function formatearFecha(fecha) {
+    if (!fecha) return 'Fecha no disponible';
+    
+    try {
+        const fechaObj = new Date(fecha);
+        return fechaObj.toLocaleDateString('es-ES', {
+            year: 'numeric',
+            month: 'short',
+            day: 'numeric'
+        });
+    } catch (error) {
+        return fecha;
+    }
 }

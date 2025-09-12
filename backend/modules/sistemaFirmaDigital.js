@@ -594,8 +594,39 @@ class SistemaFirmaDigital {
             const certificado = resultadoCertificado.certificado;
 
             // Verificar que el certificado corresponde a la empresa
+            console.log(`[DEBUG] Verificando certificado para empresa ${empresa.nombre}...`);
+            console.log(`[DEBUG] Certificado: ${certificado.CommonName}, NotAfter: ${certificado.NotAfter}`);
+            
             const certificadoValido = this.verificarCertificadoEmpresa(certificado, empresa);
+            console.log(`[DEBUG] Resultado verificación:`, certificadoValido);
+            
             if (!certificadoValido.valido) {
+                // Si es un certificado expirado, devolver información detallada
+                if (certificadoValido.certificadoExpirado) {
+                    return {
+                        success: false,
+                        error: certificadoValido.motivo,
+                        certificadoExpirado: true,
+                        diasRestantes: certificadoValido.diasRestantes,
+                        fechaExpiracion: certificadoValido.fechaExpiracion,
+                        certificado: certificado,
+                        empresa: empresa
+                    };
+                }
+                
+                // Si es un certificado próximo a expirar, devolver advertencia
+                if (certificadoValido.certificadoProximoExpirado) {
+                    return {
+                        success: false,
+                        error: certificadoValido.motivo,
+                        certificadoProximoExpirado: true,
+                        diasRestantes: certificadoValido.diasRestantes,
+                        fechaExpiracion: certificadoValido.fechaExpiracion,
+                        certificado: certificado,
+                        empresa: empresa
+                    };
+                }
+                
                 throw new Error(`Certificado no válido para la empresa: ${certificadoValido.motivo}`);
             }
 
@@ -625,6 +656,41 @@ class SistemaFirmaDigital {
      */
     verificarCertificadoEmpresa(certificado, empresa) {
         try {
+            // PRIMERO: Verificar si el certificado está expirado
+            const fechaActual = new Date();
+            const fechaExpiracion = new Date(certificado.NotAfter);
+            const diasRestantes = Math.ceil((fechaExpiracion - fechaActual) / (1000 * 60 * 60 * 24));
+            
+            if (diasRestantes <= 0) {
+                return { 
+                    valido: false, 
+                    motivo: `El certificado ha EXPIRADO. Fecha de expiración: ${fechaExpiracion.toLocaleDateString('es-ES')}. Debe renovarse antes de poder usarlo.`,
+                    certificadoExpirado: true,
+                    diasRestantes: diasRestantes,
+                    fechaExpiracion: fechaExpiracion
+                };
+            }
+            
+            if (diasRestantes <= 7) {
+                return { 
+                    valido: false, 
+                    motivo: `El certificado expira en ${diasRestantes} días (${fechaExpiracion.toLocaleDateString('es-ES')}). Se recomienda renovarlo antes de usarlo.`,
+                    certificadoProximoExpirado: true,
+                    diasRestantes: diasRestantes,
+                    fechaExpiracion: fechaExpiracion
+                };
+            }
+
+            // SEGUNDO: Verificar validez del certificado
+            if (!certificado.IsValid) {
+                return { valido: false, motivo: 'El certificado no es válido' };
+            }
+
+            if (!certificado.HasPrivateKey) {
+                return { valido: false, motivo: 'El certificado no tiene clave privada asociada' };
+            }
+
+            // TERCERO: Verificar coincidencia con la empresa (solo si el certificado no está expirado)
             // Extraer CIF del certificado
             const cifCertificado = this.extraerCIFDelCertificado(certificado);
             const cifEmpresa = empresa.cif;
@@ -772,27 +838,71 @@ class SistemaFirmaDigital {
                         return;
                     }
                     
+                    // Primero buscar en la tabla empresas
                     db.get(`
-                        SELECT * FROM empresa_certificados 
-                        WHERE empresa_id = ? AND activo = 1 
-                        ORDER BY fecha_asociacion DESC 
-                        LIMIT 1
-                    `, [empresaId], (err, row) => {
-                        db.close();
+                        SELECT certificado_thumbprint FROM empresas 
+                        WHERE id = ?
+                    `, [empresaId], (err, empresaRow) => {
                         if (err) {
+                            db.close();
                             reject(err);
-                        } else if (row) {
-                            const certificadoInfo = JSON.parse(row.certificado_info);
-                            resolve({
-                                success: true,
-                                certificado: certificadoInfo,
-                                thumbprint: row.thumbprint,
-                                fechaAsociacion: row.fecha_asociacion
+                            return;
+                        }
+                        
+                        if (empresaRow && empresaRow.certificado_thumbprint) {
+                            // Si hay thumbprint en empresas, buscar el certificado completo
+                            db.get(`
+                                SELECT * FROM empresa_certificados 
+                                WHERE empresa_id = ? AND thumbprint = ? AND activo = 1 
+                                ORDER BY fecha_asociacion DESC 
+                                LIMIT 1
+                            `, [empresaId, empresaRow.certificado_thumbprint], (err, row) => {
+                                db.close();
+                                if (err) {
+                                    reject(err);
+                                } else if (row) {
+                                    const certificadoInfo = JSON.parse(row.certificado_info);
+                                    resolve({
+                                        success: true,
+                                        certificado: certificadoInfo,
+                                        thumbprint: row.thumbprint,
+                                        fechaAsociacion: row.fecha_asociacion,
+                                        fuente: 'empresa_directa'
+                                    });
+                                } else {
+                                    resolve({
+                                        success: false,
+                                        error: 'Certificado no encontrado en empresa_certificados',
+                                        empresa: empresaId
+                                    });
+                                }
                             });
                         } else {
-                            resolve({
-                                success: false,
-                                error: 'No hay certificado asociado a esta empresa'
+                            // Si no hay thumbprint en empresas, buscar en empresa_certificados
+                            db.get(`
+                                SELECT * FROM empresa_certificados 
+                                WHERE empresa_id = ? AND activo = 1 
+                                ORDER BY fecha_asociacion DESC 
+                                LIMIT 1
+                            `, [empresaId], (err, row) => {
+                                db.close();
+                                if (err) {
+                                    reject(err);
+                                } else if (row) {
+                                    const certificadoInfo = JSON.parse(row.certificado_info);
+                                    resolve({
+                                        success: true,
+                                        certificado: certificadoInfo,
+                                        thumbprint: row.thumbprint,
+                                        fechaAsociacion: row.fecha_asociacion,
+                                        fuente: 'empresa_certificados'
+                                    });
+                                } else {
+                                    resolve({
+                                        success: false,
+                                        error: 'No hay certificado asociado a esta empresa'
+                                    });
+                                }
                             });
                         }
                     });
@@ -1200,6 +1310,117 @@ class SistemaFirmaDigital {
         } catch (error) {
             console.error('❌ Error al generar certificado de producción:', error);
             throw error;
+        }
+    }
+
+    /**
+     * Verifica alertas de certificados próximos a caducar (7 días o menos)
+     */
+    async verificarAlertasCertificados() {
+        try {
+            console.log('[FIRMA-DIGITAL] Verificando alertas de certificados...');
+            
+            const alertas = [];
+            const fechaActual = new Date();
+            const diasAlerta = 7; // Días de anticipación para la alerta
+            
+            // Obtener todas las empresas con certificados asociados
+            const empresas = await this.obtenerTodasLasEmpresasConCertificados();
+            
+            for (const empresa of empresas) {
+                try {
+                    const resultadoCertificado = await this.obtenerCertificadoEmpresa(empresa.id);
+                    
+                    if (resultadoCertificado.success && resultadoCertificado.certificado) {
+                        const certificado = resultadoCertificado.certificado;
+                        
+                        // Verificar si el certificado está próximo a caducar
+                        if (certificado.DaysUntilExpiry !== undefined && certificado.DaysUntilExpiry <= diasAlerta) {
+                            const estadoAlerta = certificado.DaysUntilExpiry <= 0 ? 'expirado' : 
+                                               certificado.DaysUntilExpiry <= 3 ? 'critico' : 'advertencia';
+                            
+                            alertas.push({
+                                empresaId: empresa.id,
+                                empresaNombre: empresa.nombre,
+                                certificadoNombre: certificado.CommonName || certificado.empresa || 'Certificado',
+                                diasRestantes: certificado.DaysUntilExpiry,
+                                fechaExpiracion: certificado.NotAfter || certificado.validoHasta,
+                                estado: estadoAlerta,
+                                mensaje: this.generarMensajeAlerta(certificado.DaysUntilExpiry, estadoAlerta)
+                            });
+                        }
+                    }
+                } catch (error) {
+                    console.error(`[FIRMA-DIGITAL] ERROR: Error al verificar certificado de empresa ${empresa.id}:`, error);
+                }
+            }
+            
+            console.log(`[FIRMA-DIGITAL] OK: ${alertas.length} alertas encontradas`);
+            return {
+                success: true,
+                data: {
+                    alertas: alertas,
+                    total: alertas.length,
+                    tieneAlertas: alertas.length > 0
+                }
+            };
+        } catch (error) {
+            console.error('[FIRMA-DIGITAL] ERROR: Error al verificar alertas:', error);
+            return {
+                success: false,
+                error: error.message
+            };
+        }
+    }
+
+    /**
+     * Obtiene todas las empresas que tienen certificados asociados
+     */
+    async obtenerTodasLasEmpresasConCertificados() {
+        return new Promise((resolve, reject) => {
+            const sqlite3 = require('sqlite3').verbose();
+            const path = require('path');
+            
+            // Usar la misma ruta de base de datos que el servidor
+            const dbPath = path.join(__dirname, '..', 'database', 'telwagen.db');
+            const db = new sqlite3.Database(dbPath, (err) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                
+                // Configurar PRAGMA para mejor compatibilidad
+                db.run("PRAGMA journal_mode = WAL");
+                db.run("PRAGMA synchronous = NORMAL");
+                
+                const query = `
+                    SELECT DISTINCT e.id, e.nombre, e.certificado_thumbprint
+                    FROM empresas e
+                    WHERE e.certificado_thumbprint IS NOT NULL
+                `;
+                
+                db.all(query, [], (err, rows) => {
+                    if (err) {
+                        reject(err);
+                    } else {
+                        resolve(rows || []);
+                    }
+                    db.close();
+                });
+            });
+        });
+    }
+
+    /**
+     * Genera el mensaje de alerta según los días restantes
+     */
+    generarMensajeAlerta(diasRestantes, estado) {
+        if (diasRestantes <= 0) {
+            return `El certificado digital ha EXPIRADO y debe renovarse inmediatamente.`;
+        } else if (diasRestantes <= 3) {
+            return `URGENTE: El certificado digital expira en ${diasRestantes} día${diasRestantes !== 1 ? 's' : ''}. Renovación requerida.`;
+        } else {
+            return `El certificado digital expira en ${diasRestantes} días. Se recomienda renovarlo pronto.`;
         }
     }
 }

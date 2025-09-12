@@ -383,6 +383,17 @@ class DetectorCertificadosWindows {
             };
         }
 
+        // Calcular días restantes correctamente
+        if (certificado.NotAfter) {
+            const fechaActual = new Date();
+            const fechaExpiracion = new Date(certificado.NotAfter);
+            const diasRestantes = Math.ceil((fechaExpiracion - fechaActual) / (1000 * 60 * 60 * 24));
+            
+            // Actualizar el certificado con los días restantes calculados
+            certificado.DaysUntilExpiry = diasRestantes;
+            certificado.IsValid = diasRestantes > 0;
+        }
+
         return {
             success: true,
             certificado: certificado

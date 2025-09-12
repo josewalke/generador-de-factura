@@ -228,6 +228,55 @@ ipcMain.handle('api-actualizar-empresa', async (event, id, empresaData) => {
     }
 });
 
+// Manejadores para certificados digitales
+ipcMain.handle('api-obtener-firmas-disponibles', async () => {
+    console.log('🔐 Obteniendo firmas digitales disponibles...');
+    try {
+        const resultado = await apiService.obtenerFirmasDisponibles();
+        console.log('✅ Firmas obtenidas:', resultado.data?.total || 0);
+        return resultado;
+    } catch (error) {
+        console.error('❌ Error al obtener firmas:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+ipcMain.handle('api-obtener-certificado-empresa', async (event, empresaId) => {
+    console.log('🔐 Obteniendo certificado de empresa:', empresaId);
+    try {
+        const resultado = await apiService.obtenerCertificadoEmpresa(empresaId);
+        console.log('✅ Certificado obtenido');
+        return resultado;
+    } catch (error) {
+        console.error('❌ Error al obtener certificado de empresa:', error);
+        return { success: false, error: error.message };
+    }
+});
+
+    ipcMain.handle('api-asociar-certificado-empresa', async (event, empresaId, thumbprint) => {
+        console.log('🔐 Asociando certificado con empresa:', empresaId);
+        try {
+            const resultado = await apiService.asociarCertificadoEmpresa(empresaId, thumbprint);
+            console.log('✅ Certificado asociado');
+            return resultado;
+        } catch (error) {
+            console.error('❌ Error al asociar certificado:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
+    ipcMain.handle('api-verificar-alertas-certificados', async () => {
+        console.log('🔐 Verificando alertas de certificados...');
+        try {
+            const resultado = await apiService.verificarAlertasCertificados();
+            console.log('✅ Alertas verificadas');
+            return resultado;
+        } catch (error) {
+            console.error('❌ Error al verificar alertas:', error);
+            return { success: false, error: error.message };
+        }
+    });
+
 ipcMain.handle('api-eliminar-empresa', async (event, id) => {
     console.log('🏢 Eliminando empresa:', id);
     try {
@@ -422,6 +471,9 @@ console.log('- api-crear-empresa');
 console.log('- api-actualizar-empresa');
 console.log('- api-eliminar-empresa');
 console.log('- api-desactivar-empresa');
+console.log('- api-obtener-firmas-disponibles');
+console.log('- api-obtener-certificado-empresa');
+console.log('- api-asociar-certificado-empresa');
 console.log('- api-obtener-facturas');
 console.log('- api-obtener-factura');
 console.log('- api-crear-factura');

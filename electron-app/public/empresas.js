@@ -23,10 +23,13 @@ let empresaEditando = null;
 
 // Inicialización
 document.addEventListener('DOMContentLoaded', async () => {
-    console.log('🏢 Iniciando página de empresas...');
+    console.log('[EMPRESAS] Iniciando página de empresas...');
     
     // Configurar event listeners
     configurarEventListeners();
+    
+    // Configurar event listeners para certificados
+    configurarEventListenersCertificados();
     
     // Cargar empresas
     await cargarEmpresas();
@@ -191,6 +194,13 @@ function renderizarListaEmpresas() {
                             <span>${empresa.email || 'No especificado'}</span>
                         </div>
                     </div>
+                    <div class="detail-item-modern certificado-item-modern" id="certificado-${empresa.id}">
+                        <span class="detail-icon">🔐</span>
+                        <div class="detail-content">
+                            <label>Certificado Digital</label>
+                            <span class="certificado-status" id="cert-status-${empresa.id}">Cargando...</span>
+                        </div>
+                    </div>
                 </div>
             </div>
         </div>
@@ -200,6 +210,11 @@ function renderizarListaEmpresas() {
     
     // Agregar event listeners después de renderizar
     agregarEventListeners();
+    
+    // Cargar información de certificados para cada empresa (con delay para asegurar que el DOM esté listo)
+    setTimeout(() => {
+        cargarCertificadosEmpresas();
+    }, 100);
 }
 
 // Función para agregar event listeners a las tarjetas
@@ -388,10 +403,22 @@ function abrirModalNuevoEmpresa() {
     setTimeout(() => {
         document.getElementById('nombre').focus();
     }, 100);
+    
+    // Esperar un poco para que el modal se renderice completamente
+    setTimeout(async () => {
+        console.log('[CERT] Cargando certificados después de abrir modal de nueva empresa...');
+        // Cargar certificados disponibles
+        await cargarCertificadosDisponibles();
+        
+        // Limpiar selección de certificado para nueva empresa
+        if (certificadoSelect) {
+            certificadoSelect.value = '';
+        }
+    }, 200);
 }
 
 // Abrir modal para editar empresa
-function editarEmpresa(id) {
+async function editarEmpresa(id) {
     const empresa = empresas.find(e => e.id === id);
     if (!empresa) {
         mostrarError('Empresa no encontrada');
@@ -414,6 +441,16 @@ function editarEmpresa(id) {
     setTimeout(() => {
         document.getElementById('nombre').focus();
     }, 100);
+    
+    // Esperar un poco para que el modal se renderice completamente
+    setTimeout(async () => {
+        console.log('[CERT] Cargando certificados después de abrir modal de edición...');
+        // Cargar certificados disponibles
+        await cargarCertificadosDisponibles();
+        
+        // Cargar certificado asociado a la empresa
+        await cargarCertificadoEmpresa(empresa.id);
+    }, 200);
 }
 
 // Cerrar modal
@@ -431,7 +468,8 @@ async function guardarEmpresa() {
         cif: formData.get('cif'),
         direccion: formData.get('direccion'),
         telefono: formData.get('telefono'),
-        email: formData.get('email')
+        email: formData.get('email'),
+        firmaDigitalThumbprint: formData.get('certificado-digital') || null
     };
     
     // Validaciones básicas
@@ -462,7 +500,14 @@ async function guardarEmpresa() {
             cerrarModal();
             await cargarEmpresas();
         } else {
-            throw new Error(resultado.error);
+            // Manejar errores específicos de certificados
+            if (resultado.certificadoExpirado) {
+                mostrarErrorCertificadoExpirado(resultado);
+            } else if (resultado.certificadoProximoExpirado) {
+                mostrarAdvertenciaCertificadoProximoExpirado(resultado);
+            } else {
+                throw new Error(resultado.error);
+            }
         }
     } catch (error) {
         console.error('❌ Error al guardar empresa:', error);
@@ -527,3 +572,453 @@ function mostrarError(mensaje) {
         notificacion.remove();
     }, 3000);
 }
+
+// Mostrar error específico de certificado expirado
+function mostrarErrorCertificadoExpirado(resultado) {
+    const notificacion = document.createElement('div');
+    notificacion.className = 'notificacion-error certificado-expirado';
+    notificacion.innerHTML = `
+        <div class="notificacion-header">
+            <span class="notificacion-icon">🚫</span>
+            <span class="notificacion-titulo">Certificado Digital Expirado</span>
+        </div>
+        <div class="notificacion-mensaje">${resultado.error}</div>
+        <div class="notificacion-detalles">
+            <div class="detalle-item">
+                <strong>Empresa:</strong> ${resultado.empresa?.nombre || 'N/A'}
+            </div>
+            <div class="detalle-item">
+                <strong>Certificado:</strong> ${resultado.certificado?.CommonName || 'N/A'}
+            </div>
+            <div class="detalle-item">
+                <strong>Fecha de expiración:</strong> ${resultado.fechaExpiracion ? new Date(resultado.fechaExpiracion).toLocaleDateString('es-ES') : 'N/A'}
+            </div>
+            <div class="detalle-item">
+                <strong>Días restantes:</strong> ${resultado.diasRestantes || 0} días
+            </div>
+        </div>
+        <div class="notificacion-accion">
+            <button onclick="this.parentElement.parentElement.remove()" class="btn-cerrar-notificacion">
+                Entendido
+            </button>
+        </div>
+    `;
+    
+    document.body.appendChild(notificacion);
+    
+    // No se cierra automáticamente para certificados expirados
+}
+
+// Mostrar advertencia de certificado próximo a expirar
+function mostrarAdvertenciaCertificadoProximoExpirado(resultado) {
+    const notificacion = document.createElement('div');
+    notificacion.className = 'notificacion-advertencia certificado-proximo-expirado';
+    notificacion.innerHTML = `
+        <div class="notificacion-header">
+            <span class="notificacion-icon">⚠️</span>
+            <span class="notificacion-titulo">Certificado Próximo a Expirar</span>
+        </div>
+        <div class="notificacion-mensaje">${resultado.error}</div>
+        <div class="notificacion-detalles">
+            <div class="detalle-item">
+                <strong>Empresa:</strong> ${resultado.empresa?.nombre || 'N/A'}
+            </div>
+            <div class="detalle-item">
+                <strong>Certificado:</strong> ${resultado.certificado?.CommonName || 'N/A'}
+            </div>
+            <div class="detalle-item">
+                <strong>Fecha de expiración:</strong> ${resultado.fechaExpiracion ? new Date(resultado.fechaExpiracion).toLocaleDateString('es-ES') : 'N/A'}
+            </div>
+            <div class="detalle-item">
+                <strong>Días restantes:</strong> ${resultado.diasRestantes || 0} días
+            </div>
+        </div>
+        <div class="notificacion-accion">
+            <button onclick="this.parentElement.parentElement.remove()" class="btn-cerrar-notificacion">
+                Entendido
+            </button>
+        </div>
+    `;
+    
+    document.body.appendChild(notificacion);
+    
+    // Se cierra automáticamente después de 10 segundos
+    setTimeout(() => {
+        notificacion.remove();
+    }, 10000);
+}
+
+// ===== FUNCIONES PARA CERTIFICADOS DIGITALES =====
+
+// Elementos del DOM para certificados
+const certificadoSelect = document.getElementById('certificado-digital');
+const btnRefreshCertificados = document.getElementById('btn-refresh-certificados');
+const certificadoInfo = document.getElementById('certificado-info');
+
+// Variables para certificados
+let certificadosDisponibles = [];
+
+// Configurar event listeners para certificados
+function configurarEventListenersCertificados() {
+    console.log('[CERT] Configurando event listeners para certificados...');
+    
+    // Verificar que los elementos existan
+    if (!certificadoSelect) {
+        console.error('[CERT] ERROR: No se encontró el elemento certificadoSelect');
+        return;
+    }
+    
+    if (!btnRefreshCertificados) {
+        console.error('[CERT] ERROR: No se encontró el elemento btnRefreshCertificados');
+        return;
+    }
+    
+    if (!certificadoInfo) {
+        console.error('[CERT] ERROR: No se encontró el elemento certificadoInfo');
+        return;
+    }
+    
+    console.log('[CERT] OK: Elementos de certificados encontrados');
+    
+    // Botón de actualizar certificados
+    btnRefreshCertificados.addEventListener('click', cargarCertificadosDisponibles);
+    
+    // Cambio de selección de certificado
+    certificadoSelect.addEventListener('change', mostrarInfoCertificado);
+    
+    console.log('[CERT] OK: Event listeners de certificados configurados');
+}
+
+// Cargar certificados disponibles
+async function cargarCertificadosDisponibles() {
+    console.log('[CERT] Cargando certificados disponibles...');
+    
+    try {
+        if (!certificadoSelect) {
+            console.error('[CERT] ERROR: Elemento certificadoSelect no encontrado');
+            console.log('[CERT] Elementos disponibles en el DOM:');
+            console.log('[CERT] - certificado-digital:', document.getElementById('certificado-digital'));
+            console.log('[CERT] - Todos los elementos con ID:', document.querySelectorAll('[id]'));
+            return;
+        }
+        
+        console.log('[CERT] Elemento certificadoSelect encontrado:', certificadoSelect);
+        console.log('[CERT] Estableciendo estado de carga...');
+        certificadoSelect.innerHTML = '<option value="">Cargando certificados...</option>';
+        certificadoSelect.disabled = true;
+        
+        console.log('[CERT] Llamando a API para obtener firmas...');
+        console.log('[CERT] IPC Renderer disponible:', typeof ipcRenderer);
+        
+        const resultado = await ipcRenderer.invoke('api-obtener-firmas-disponibles');
+        console.log('[CERT] Resultado completo de API:', JSON.stringify(resultado, null, 2));
+        console.log('[CERT] Tipo de resultado:', typeof resultado);
+        console.log('[CERT] Resultado.success:', resultado?.success);
+        console.log('[CERT] Resultado.firmas:', resultado?.firmas);
+        console.log('[CERT] Resultado.total:', resultado?.total);
+        
+        if (resultado && resultado.success) {
+            certificadosDisponibles = resultado.firmas || [];
+            console.log(`[CERT] OK: Se cargaron ${certificadosDisponibles.length} certificados`);
+            console.log('[CERT] Certificados disponibles:', certificadosDisponibles);
+            actualizarSelectCertificados();
+            mostrarExito(`Se cargaron ${resultado.total || certificadosDisponibles.length} certificados disponibles`);
+        } else {
+            console.error('[CERT] ERROR: Respuesta de API no exitosa:', resultado);
+            throw new Error(resultado?.error || 'Error al cargar certificados');
+        }
+        
+    } catch (error) {
+        console.error('[CERT] ERROR completo al cargar certificados:', error);
+        console.error('[CERT] Stack trace:', error.stack);
+        if (certificadoSelect) {
+            certificadoSelect.innerHTML = '<option value="">Error al cargar certificados</option>';
+        }
+        mostrarError('Error al cargar certificados: ' + error.message);
+    } finally {
+        if (certificadoSelect) {
+            certificadoSelect.disabled = false;
+            console.log('[CERT] Select habilitado nuevamente');
+        }
+    }
+}
+
+// Actualizar el select con los certificados disponibles
+function actualizarSelectCertificados() {
+    console.log('[CERT] Actualizando select de certificados...');
+    console.log('[CERT] Certificados disponibles para actualizar:', certificadosDisponibles);
+    console.log('[CERT] Tipo de certificadosDisponibles:', typeof certificadosDisponibles);
+    console.log('[CERT] Es array:', Array.isArray(certificadosDisponibles));
+    console.log('[CERT] Longitud:', certificadosDisponibles?.length);
+    
+    if (!certificadoSelect) {
+        console.error('[CERT] ERROR: Elemento certificadoSelect no encontrado');
+        return;
+    }
+    
+    console.log('[CERT] Limpiando select...');
+    certificadoSelect.innerHTML = '<option value="">Seleccionar certificado...</option>';
+    
+    if (!certificadosDisponibles || certificadosDisponibles.length === 0) {
+        certificadoSelect.innerHTML = '<option value="">No hay certificados disponibles</option>';
+        console.log('[CERT] WARNING: No hay certificados disponibles');
+        return;
+    }
+    
+    console.log(`[CERT] Agregando ${certificadosDisponibles.length} certificados al select`);
+    
+    certificadosDisponibles.forEach((certificado, index) => {
+        console.log(`[CERT] Procesando certificado ${index + 1}:`, certificado);
+        
+        const option = document.createElement('option');
+        option.value = certificado.thumbprint || '';
+        
+        // Extraer organización del certificado
+        const organizacion = extraerOrganizacionDeFirma(certificado);
+        const nombreMostrar = organizacion || certificado.empresa || certificado.descripcion || 'Certificado sin nombre';
+        
+        option.textContent = `${nombreMostrar} ${certificado.isValido ? 'OK' : 'EXPIRADO'}`;
+        
+        // Agregar clases para estilos
+        if (certificado.isValido) {
+            option.className = 'certificado-valido';
+        } else {
+            option.className = 'certificado-expirado';
+        }
+        
+        certificadoSelect.appendChild(option);
+        console.log(`[CERT] OK: Agregado certificado ${index + 1}: ${nombreMostrar}`);
+    });
+    
+    console.log('[CERT] OK: Select de certificados actualizado completamente');
+    console.log(`[CERT] Total de opciones en select: ${certificadoSelect.options.length}`);
+}
+
+// Mostrar información del certificado seleccionado
+function mostrarInfoCertificado() {
+    const thumbprint = certificadoSelect.value;
+    
+    if (!thumbprint) {
+        certificadoInfo.style.display = 'none';
+        return;
+    }
+    
+    const certificado = certificadosDisponibles.find(c => c.thumbprint === thumbprint);
+    
+    if (!certificado) {
+        certificadoInfo.style.display = 'none';
+        return;
+    }
+    
+    // Actualizar información del certificado
+    const organizacion = extraerOrganizacionDeFirma(certificado);
+    document.getElementById('cert-empresa').textContent = organizacion || certificado.empresa || 'N/A';
+    document.getElementById('cert-cif').textContent = certificado.cif || 'N/A';
+    document.getElementById('cert-valido-hasta').textContent = certificado.validoHasta || 'N/A';
+    document.getElementById('cert-dias-restantes').textContent = certificado.diasRestantes ? `${certificado.diasRestantes} días` : 'N/A';
+    
+    // Actualizar estado con colores
+    const estadoElement = document.getElementById('cert-estado');
+    if (certificado.isValido) {
+        estadoElement.textContent = 'Válido';
+        estadoElement.className = 'certificado-value certificado-estado-valido';
+    } else {
+        estadoElement.textContent = 'Expirado';
+        estadoElement.className = 'certificado-value certificado-estado-expirado';
+    }
+    
+    // Mostrar información
+    certificadoInfo.style.display = 'block';
+}
+
+// Cargar certificado asociado a una empresa
+async function cargarCertificadoEmpresa(empresaId) {
+    try {
+        const resultado = await ipcRenderer.invoke('api-obtener-certificado-empresa', empresaId);
+        
+        if (resultado.success) {
+            // Seleccionar el certificado en el select
+            certificadoSelect.value = resultado.thumbprint;
+            mostrarInfoCertificado();
+        } else {
+            // No hay certificado asociado
+            certificadoSelect.value = '';
+            certificadoInfo.style.display = 'none';
+        }
+        
+    } catch (error) {
+        console.error('Error al cargar certificado de empresa:', error);
+        certificadoSelect.value = '';
+        certificadoInfo.style.display = 'none';
+    }
+}
+
+// Función para probar certificados manualmente (debug)
+window.probarCertificadosManual = async () => {
+    console.log('[CERT] Llamando a cargarCertificadosDisponibles...');
+    cargarCertificadosDisponibles().then(() => {
+        console.log('[CERT] Certificados cargados manualmente');
+    }).catch(error => {
+        console.error('[CERT] Error al cargar certificados manualmente:', error);
+    });
+};
+
+// Modificar la función abrirModalNuevoEmpresa para cargar certificados
+const abrirModalNuevoEmpresaOriginal = abrirModalNuevoEmpresa;
+async function abrirModalNuevoEmpresa() {
+    console.log('🏢 Abriendo modal para nueva empresa...');
+    await abrirModalNuevoEmpresaOriginal();
+    
+    // Esperar un poco para que el modal se renderice completamente
+    setTimeout(async () => {
+        console.log('🔐 Cargando certificados después de abrir modal...');
+        // Cargar certificados disponibles
+        await cargarCertificadosDisponibles();
+        
+        // Limpiar selección de certificado
+        if (certificadoSelect) {
+            certificadoSelect.value = '';
+        }
+        if (certificadoInfo) {
+            certificadoInfo.style.display = 'none';
+        }
+    }, 100);
+}
+
+// Modificar la función limpiarModal para limpiar certificados
+const limpiarModalOriginal = limpiarModal;
+function limpiarModal() {
+    limpiarModalOriginal();
+    
+    // Limpiar certificados
+    certificadoSelect.value = '';
+    certificadoInfo.style.display = 'none';
+    certificadosDisponibles = [];
+}
+
+// Función para extraer la organización del certificado en el select
+function extraerOrganizacionDeFirma(certificado) {
+    // Para certificados que vienen del endpoint de firmas disponibles
+    if (certificado.sujeto) {
+        const match = certificado.sujeto.match(/O=([^,]+)/);
+        if (match && match[1]) {
+            return match[1].trim();
+        }
+    }
+    
+    // Para certificados que vienen del endpoint de certificado específico
+    if (certificado.Subject) {
+        const match = certificado.Subject.match(/O=([^,]+)/);
+        if (match && match[1]) {
+            return match[1].trim();
+        }
+    }
+    
+    return null;
+}
+
+// Función para extraer la organización del certificado
+function extraerOrganizacion(certificado) {
+    if (!certificado.Subject) {
+        return null;
+    }
+    
+    // Buscar el campo O= en el Subject
+    const match = certificado.Subject.match(/O=([^,]+)/);
+    if (match && match[1]) {
+        return match[1].trim();
+    }
+    
+    return null;
+}
+
+// Cargar información de certificados para todas las empresas
+async function cargarCertificadosEmpresas() {
+    console.log('[CERT] Cargando certificados para todas las empresas...');
+    console.log('[CERT] Total empresas:', empresas.length);
+    
+    for (const empresa of empresas) {
+        try {
+            console.log(`[CERT] Procesando empresa: ${empresa.nombre} (ID: ${empresa.id})`);
+            const resultado = await ipcRenderer.invoke('api-obtener-certificado-empresa', empresa.id);
+            console.log(`[CERT] Resultado para empresa ${empresa.nombre}:`, resultado);
+            
+            const statusElement = document.getElementById(`cert-status-${empresa.id}`);
+            console.log(`[CERT] Elemento DOM encontrado para empresa ${empresa.id}:`, statusElement);
+            
+            if (statusElement) {
+                if (resultado.success && resultado.certificado) {
+                    const certificado = resultado.certificado;
+                    console.log(`[CERT] Certificado encontrado para ${empresa.nombre}:`, certificado);
+                    
+                    const diasRestantes = certificado.DaysUntilExpiry || certificado.diasRestantes || 0;
+                    const esValido = certificado.IsValid || certificado.valido || false;
+                    
+                    let estadoClass = 'certificado-sin-certificado';
+                    let estadoText = 'Sin certificado';
+                    
+                    if (esValido) {
+                        if (diasRestantes > 30) {
+                            estadoClass = 'certificado-valido';
+                            estadoText = extraerOrganizacion(certificado) || certificado.CommonName || certificado.empresa || 'Certificado válido';
+                        } else if (diasRestantes > 0) {
+                            estadoClass = 'certificado-proximo-expiracion';
+                            estadoText = extraerOrganizacion(certificado) || certificado.CommonName || certificado.empresa || 'Certificado próximo a expirar';
+                        } else {
+                            estadoClass = 'certificado-expirado';
+                            estadoText = extraerOrganizacion(certificado) || certificado.CommonName || certificado.empresa || 'Certificado expirado';
+                        }
+                    } else if (certificado.Organization || certificado.CommonName || certificado.empresa) {
+                        estadoClass = 'certificado-expirado';
+                        estadoText = extraerOrganizacion(certificado) || certificado.CommonName || certificado.empresa || 'Certificado expirado';
+                    }
+                    
+                    statusElement.className = `certificado-status ${estadoClass}`;
+                    statusElement.textContent = estadoText;
+                    
+                    console.log(`[CERT] Certificado cargado para empresa ${empresa.nombre}: ${estadoText}`);
+                } else {
+                    statusElement.className = 'certificado-status certificado-sin-certificado';
+                    statusElement.textContent = 'Sin certificado';
+                    console.log(`[CERT] Sin certificado para empresa ${empresa.nombre}`);
+                }
+            } else {
+                console.error(`[CERT] No se encontró el elemento DOM para empresa ${empresa.id}`);
+            }
+        } catch (error) {
+            console.error(`[CERT] Error al cargar certificado para empresa ${empresa.nombre}:`, error);
+            const statusElement = document.getElementById(`cert-status-${empresa.id}`);
+            if (statusElement) {
+                statusElement.className = 'certificado-status certificado-error';
+                statusElement.textContent = 'Error al cargar';
+            }
+        }
+    }
+}
+
+// Función de prueba manual para certificados
+function probarCertificadosManual() {
+    console.log('[CERT] Iniciando prueba manual de certificados...');
+    
+    // Verificar elementos
+    console.log('[CERT] Verificando elementos:');
+    console.log('- certificadoSelect:', certificadoSelect);
+    console.log('- btnRefreshCertificados:', btnRefreshCertificados);
+    console.log('- certificadoInfo:', certificadoInfo);
+    
+    // Verificar IPC
+    console.log('[CERT] Verificando IPC:');
+    console.log('- ipcRenderer:', typeof ipcRenderer);
+    console.log('- invoke disponible:', typeof ipcRenderer.invoke);
+    
+    // Llamar función de carga
+    console.log('[CERT] Llamando a cargarCertificadosDisponibles...');
+    cargarCertificadosDisponibles().then(() => {
+        console.log('[CERT] OK: Prueba manual completada');
+    }).catch((error) => {
+        console.error('[CERT] ERROR en prueba manual:', error);
+    });
+}
+
+// Exponer función de prueba globalmente
+window.probarCertificadosManual = probarCertificadosManual;

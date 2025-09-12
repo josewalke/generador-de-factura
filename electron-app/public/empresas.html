@@ -111,6 +111,49 @@
                             <input type="email" id="email" name="email">
                         </div>
                     </div>
+                    
+                    <!-- Sección de Certificado Digital -->
+                    <div class="form-section-modern">
+                        <div class="section-header-modern">
+                            <span class="section-icon">🔐</span>
+                            <h4>Certificado Digital</h4>
+                        </div>
+                        <div class="form-group-modern">
+                            <label for="certificado-digital">Seleccionar Certificado</label>
+                            <div class="certificado-container">
+                                <select id="certificado-digital" name="certificado-digital" class="certificado-select">
+                                    <option value="">Cargando certificados...</option>
+                                </select>
+                                <button type="button" id="btn-refresh-certificados" class="btn-refresh-certificados" title="Actualizar certificados">
+                                    <span class="btn-icon">🔄</span>
+                                </button>
+                            </div>
+                        </div>
+                        <div id="certificado-info" class="certificado-info" style="display: none;">
+                            <div class="certificado-details">
+                                <div class="certificado-item">
+                                    <span class="certificado-label">Empresa:</span>
+                                    <span id="cert-empresa" class="certificado-value">-</span>
+                                </div>
+                                <div class="certificado-item">
+                                    <span class="certificado-label">CIF:</span>
+                                    <span id="cert-cif" class="certificado-value">-</span>
+                                </div>
+                                <div class="certificado-item">
+                                    <span class="certificado-label">Válido hasta:</span>
+                                    <span id="cert-valido-hasta" class="certificado-value">-</span>
+                                </div>
+                                <div class="certificado-item">
+                                    <span class="certificado-label">Días restantes:</span>
+                                    <span id="cert-dias-restantes" class="certificado-value">-</span>
+                                </div>
+                                <div class="certificado-item">
+                                    <span class="certificado-label">Estado:</span>
+                                    <span id="cert-estado" class="certificado-value">-</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
                 </form>
             </div>
             <div class="modal-footer-modern">

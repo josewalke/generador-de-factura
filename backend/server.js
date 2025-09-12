@@ -7,6 +7,9 @@ const morgan = require('morgan');
 const path = require('path');
 const config = require('./config');
 
+// Exportar la instancia de la base de datos para uso en otros módulos
+let db;
+
 // Módulos para cumplir con la Ley Antifraude
 const SistemaIntegridad = require('./modules/sistemaIntegridad');
 const SistemaAuditoria = require('./modules/sistemaAuditoria');
@@ -37,7 +40,7 @@ config.cargarConfiguracionEmpresa().then(empresa => {
 
 // Inicializar base de datos
 const dbPath = path.join(__dirname, 'database', 'telwagen.db');
-const db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, (err) => {
+db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, (err) => {
     if (err) {
         console.error('❌ Error al conectar con la base de datos:', err.message);
     } else {
@@ -164,6 +167,7 @@ function initDatabase() {
                 direccion TEXT NOT NULL,
                 telefono TEXT,
                 email TEXT,
+                certificado_thumbprint TEXT,
                 fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP
             )
         `, (err) => {
@@ -650,9 +654,9 @@ app.put('/api/empresas/:id', async (req, res) => {
         await new Promise((resolve, reject) => {
             db.run(`
                 UPDATE empresas 
-                SET nombre = ?, cif = ?, direccion = ?, telefono = ?, email = ?
+                SET nombre = ?, cif = ?, direccion = ?, telefono = ?, email = ?, certificado_thumbprint = ?
                 WHERE id = ?
-            `, [nombre, cif, direccion, telefono, email, id], function(err) {
+            `, [nombre, cif, direccion, telefono, email, firmaDigitalThumbprint || null, id], function(err) {
                 if (err) {
                     reject(err);
                 } else if (this.changes === 0) {
@@ -1104,13 +1108,77 @@ app.post('/api/facturas', async (req, res) => {
             referencia_operacion
         } = req.body;
         
+        // Validar y obtener empresa_id válido
+        let empresaIdValido = empresa_id;
+        
+        // Si no se proporciona empresa_id o es inválido, obtener la empresa principal
+        if (!empresaIdValido || empresaIdValido === null || empresaIdValido === undefined) {
+            console.log('⚠️ empresa_id no proporcionado, obteniendo empresa principal...');
+            
+            try {
+                const empresaPrincipal = await new Promise((resolve, reject) => {
+                    db.get(`
+                        SELECT id FROM empresas 
+                        WHERE nombre LIKE '%Telwagen%' OR id = 17
+                        ORDER BY id LIMIT 1
+                    `, (err, row) => {
+                        if (err) reject(err);
+                        else resolve(row);
+                    });
+                });
+                
+                if (empresaPrincipal) {
+                    empresaIdValido = empresaPrincipal.id;
+                    console.log(`✅ Usando empresa principal ID: ${empresaIdValido}`);
+                } else {
+                    // Si no hay empresa principal, usar la primera empresa disponible
+                    const primeraEmpresa = await new Promise((resolve, reject) => {
+                        db.get("SELECT id FROM empresas ORDER BY id LIMIT 1", (err, row) => {
+                            if (err) reject(err);
+                            else resolve(row);
+                        });
+                    });
+                    
+                    if (primeraEmpresa) {
+                        empresaIdValido = primeraEmpresa.id;
+                        console.log(`✅ Usando primera empresa disponible ID: ${empresaIdValido}`);
+                    } else {
+                        throw new Error('No hay empresas disponibles en la base de datos');
+                    }
+                }
+            } catch (error) {
+                console.error('❌ Error al obtener empresa válida:', error.message);
+                return res.status(400).json({ 
+                    success: false, 
+                    error: 'No se pudo determinar la empresa para la factura. Asegúrate de tener al menos una empresa configurada.' 
+                });
+            }
+        }
+        
+        // Verificar que la empresa existe
+        const empresaExiste = await new Promise((resolve, reject) => {
+            db.get("SELECT id, nombre FROM empresas WHERE id = ?", [empresaIdValido], (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+        
+        if (!empresaExiste) {
+            return res.status(400).json({ 
+                success: false, 
+                error: `La empresa con ID ${empresaIdValido} no existe` 
+            });
+        }
+        
+        console.log(`✅ Factura será creada para empresa: ${empresaExiste.nombre} (ID: ${empresaIdValido})`);
+        
         // Generar número de serie único
-        const numero_serie = sistemaIntegridad.generarNumeroSerie(empresa_id, numero_factura);
+        const numero_serie = sistemaIntegridad.generarNumeroSerie(empresaIdValido, numero_factura);
         
         // Preparar datos para hash de integridad
         const datosFactura = {
             numero_factura,
-            empresa_id,
+            empresa_id: empresaIdValido,
             cliente_id,
             fecha_emision,
             fecha_operacion: fecha_operacion || fecha_emision,
@@ -1137,7 +1205,7 @@ app.post('/api/facturas', async (req, res) => {
         `;
         
         const params = [
-            numero_factura, empresa_id, cliente_id, fecha_emision, fecha_vencimiento,
+            numero_factura, empresaIdValido, cliente_id, fecha_emision, fecha_vencimiento,
             subtotal, igic, total, notas, numero_serie, fecha_operacion || fecha_emision,
             tipo_documento, metodo_pago, referencia_operacion || '', hash_documento,
             selladoTemporal.timestamp, 'pendiente'
@@ -2152,6 +2220,20 @@ app.post('/api/usuarios', sistemaControlAcceso.middlewareAutenticacion(),
         }
     });
 
+    // Verificar alertas de certificados próximos a caducar
+    app.get('/api/firma-digital/alertas-certificados', async (req, res) => {
+        try {
+            const resultado = await sistemaFirmaDigital.verificarAlertasCertificados();
+            res.json(resultado);
+        } catch (error) {
+            console.error('Error al verificar alertas de certificados:', error);
+            res.status(500).json({ 
+                success: false, 
+                error: 'Error interno del servidor' 
+            });
+        }
+    });
+
     // Cambiar certificado activo
     app.post('/api/firma-digital/cambiar-certificado', async (req, res) => {
         try {
@@ -2433,3 +2515,6 @@ app.listen(PORT, () => {
     console.log(`📡 API disponible en: http://localhost:${PORT}`);
     console.log(`📋 Documentación: http://localhost:${PORT}/`);
 });
+
+// Exportar la instancia de la base de datos para uso en otros módulos
+module.exports = { db };

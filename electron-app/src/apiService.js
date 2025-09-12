@@ -390,6 +390,53 @@ class ApiService {
             throw error;
         }
     }
+
+    // Firmas Digitales Disponibles
+    async obtenerFirmasDisponibles() {
+        try {
+            const response = await this.makeRequest('/api/firma-digital/firmas-disponibles');
+            return response;
+        } catch (error) {
+            console.error('Error al obtener firmas disponibles:', error);
+            throw error;
+        }
+    }
+
+    // Certificado de Empresa
+    async obtenerCertificadoEmpresa(empresaId) {
+        try {
+            const response = await this.makeRequest(`/api/firma-digital/certificado-empresa/${empresaId}`);
+            return response;
+        } catch (error) {
+            console.error('Error al obtener certificado de empresa:', error);
+            throw error;
+        }
+    }
+
+    // Asociar Certificado con Empresa
+    async asociarCertificadoEmpresa(empresaId, thumbprint) {
+        try {
+            const response = await this.makeRequest('/api/firma-digital/asociar-certificado-empresa', {
+                method: 'POST',
+                body: { empresaId, thumbprint }
+            });
+            return response;
+        } catch (error) {
+            console.error('Error al asociar certificado con empresa:', error);
+            throw error;
+        }
+    }
+
+    // Verificar Alertas de Certificados
+    async verificarAlertasCertificados() {
+        try {
+            const response = await this.makeRequest('/api/firma-digital/alertas-certificados');
+            return response;
+        } catch (error) {
+            console.error('Error al verificar alertas de certificados:', error);
+            throw error;
+        }
+    }
 }
 
 module.exports = ApiService;

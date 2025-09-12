@@ -1175,6 +1175,34 @@ function limpiarCamposProducto() {
     ocultarPreviewCoche();
 }
 
+// Función auxiliar para obtener un empresa_id válido
+async function obtenerEmpresaIdValido() {
+    if (empresaActual?.id) {
+        return empresaActual.id;
+    }
+    
+    console.log('⚠️ empresaActual no tiene ID, obteniendo empresa principal...');
+    try {
+        const empresasResult = await ipcRenderer.invoke('api-obtener-empresas');
+        if (empresasResult.success && empresasResult.data.length > 0) {
+            // Buscar empresa principal (Telwagen) o usar la primera disponible
+            const empresaPrincipal = empresasResult.data.find(emp => 
+                emp.nombre.includes('Telwagen') || emp.id === 17
+            ) || empresasResult.data[0];
+            
+            // Actualizar empresaActual para futuras referencias
+            empresaActual = empresaPrincipal;
+            console.log(`✅ Usando empresa: ${empresaPrincipal.nombre} (ID: ${empresaPrincipal.id})`);
+            return empresaPrincipal.id;
+        } else {
+            throw new Error('No hay empresas disponibles');
+        }
+    } catch (error) {
+        console.error('❌ Error al obtener empresa:', error);
+        throw new Error('No se pudo determinar la empresa para la factura. Asegúrate de tener al menos una empresa configurada.');
+    }
+}
+
 // Generar factura
 generarFacturaBtn.addEventListener('click', async () => {
     try {
@@ -1188,7 +1216,7 @@ generarFacturaBtn.addEventListener('click', async () => {
         
         try {
             // Obtener número de factura automático del backend
-            const numeroResult = await ipcRenderer.invoke('api-obtener-siguiente-numero', empresaActual?.id);
+            const numeroResult = await ipcRenderer.invoke('api-obtener-siguiente-numero', await obtenerEmpresaIdValido());
             if (!numeroResult.success) {
                 alert('❌ Error al obtener número de factura: ' + numeroResult.error);
                 return;
@@ -1199,7 +1227,7 @@ generarFacturaBtn.addEventListener('click', async () => {
             
             const facturaData = {
                 numero: numeroFactura,
-                empresa_id: empresaActual?.id,
+                empresa_id: await obtenerEmpresaIdValido(),
                 fecha: fechaFactura,
                 cliente: {
                     id: datosCliente.id || null,
@@ -1265,7 +1293,7 @@ async function generarPDFFactura() {
         
         try {
             // Obtener número de factura automático del backend
-            const numeroResult = await ipcRenderer.invoke('api-obtener-siguiente-numero', empresaActual?.id);
+            const numeroResult = await ipcRenderer.invoke('api-obtener-siguiente-numero', await obtenerEmpresaIdValido());
             if (!numeroResult.success) {
                 alert('❌ Error al obtener número de factura: ' + numeroResult.error);
                 return;
@@ -1276,7 +1304,7 @@ async function generarPDFFactura() {
             
             const facturaData = {
                 numero: numeroFactura,
-                empresa_id: empresaActual?.id,
+                empresa_id: await obtenerEmpresaIdValido(),
                 fecha: fechaFactura,
                 cliente: {
                     id: datosCliente.id || null,
@@ -1330,7 +1358,7 @@ async function descargarPDFFactura() {
         }
         
         // Obtener número de factura automático del backend
-        const numeroResult = await ipcRenderer.invoke('api-obtener-siguiente-numero', empresaActual?.id);
+        const numeroResult = await ipcRenderer.invoke('api-obtener-siguiente-numero', await obtenerEmpresaIdValido());
         if (!numeroResult.success) {
             alert('❌ Error al obtener número de factura: ' + numeroResult.error);
             return;
@@ -1342,7 +1370,7 @@ async function descargarPDFFactura() {
         // Crear objeto facturaData igual que en generarVistaPrevia
         const facturaData = {
             numero: numeroFactura,
-            empresa_id: empresaActual?.id,
+            empresa_id: await obtenerEmpresaIdValido(),
             fecha: fechaFactura,
             cliente: {
                 id: datosCliente.id || null,

@@ -8,21 +8,34 @@
 </head>
 <body>
     <div class="home-container">
-        <!-- Header Compacto -->
-        <header class="home-header">
-            <div class="home-logo">
-                <div class="logo-text">
-                    <h1>Telwagen</h1>
-                    <span>Generador de Facturas</span>
+        <div class="home-container-inner">
+            <!-- Header Compacto -->
+            <header class="home-header">
+                <div class="home-logo">
+                    <div class="logo-text">
+                        <h1>Telwagen</h1>
+                        <span>Generador de Facturas</span>
+                    </div>
                 </div>
-            </div>
-            <div class="home-status">
-                <div id="connection-status" class="status-badge">
-                    <span class="status-dot"></span>
-                    <span class="status-text">Conectando...</span>
+                <div class="home-status">
+                    <div id="connection-status" class="status-badge">
+                        <span class="status-dot"></span>
+                        <span class="status-text">Conectando...</span>
+                    </div>
                 </div>
+            </header>
+
+        <!-- Alertas de Certificados -->
+        <div id="alertas-certificados" class="alertas-container" style="display: none;">
+            <div class="alerta-header">
+                <span class="alerta-icon">⚠️</span>
+                <h3>Alertas de Certificados Digitales</h3>
+                <button id="btn-cerrar-alertas" class="btn-cerrar-alerta">×</button>
             </div>
-        </header>
+            <div id="alertas-lista" class="alertas-lista">
+                <!-- Las alertas se cargarán dinámicamente -->
+            </div>
+        </div>
 
         <!-- Main Content - Full Screen -->
         <main class="home-main">
@@ -106,31 +119,6 @@
                     <h3>Resumen</h3>
                 </div>
                 
-                <!-- Información del Certificado -->
-                <div class="certificado-section">
-                    <div class="certificado-header">
-                        <h4>🔐 Certificado Digital</h4>
-                    </div>
-                    <div class="certificado-info">
-                        <div class="certificado-item">
-                            <div class="certificado-label">Empresa</div>
-                            <div id="certificado-empresa" class="certificado-value">Cargando...</div>
-                        </div>
-                        <div class="certificado-item">
-                            <div class="certificado-label">CIF</div>
-                            <div id="certificado-cif" class="certificado-value">-</div>
-                        </div>
-                        <div class="certificado-item">
-                            <div class="certificado-label">Serial</div>
-                            <div id="certificado-serial" class="certificado-value">-</div>
-                        </div>
-                        <div class="certificado-item">
-                            <div class="certificado-label">Estado</div>
-                            <div id="certificado-estado" class="certificado-value">-</div>
-                        </div>
-                    </div>
-                </div>
-                
                 <div class="stats-container">
                     <!-- Estadística Clientes -->
                     <div class="stat-item">
@@ -161,19 +149,26 @@
                 <div class="quick-actions">
                     <h4>Acciones Rápidas</h4>
                     <div class="quick-buttons">
-                        <button id="btn-nuevo-cliente" class="quick-btn">
-                            <span>Nuevo Cliente</span>
+                        <button id="btn-nuevo-cliente" class="quick-btn" data-action="cliente">
+                            <span class="quick-btn-icon">👤</span>
+                            <span class="quick-btn-text">Nuevo Cliente</span>
+                            <span class="quick-btn-arrow">→</span>
                         </button>
-                        <button id="btn-nuevo-coche" class="quick-btn">
-                            <span>Nuevo Coche</span>
+                        <button id="btn-nuevo-coche" class="quick-btn" data-action="coche">
+                            <span class="quick-btn-icon">🚗</span>
+                            <span class="quick-btn-text">Nuevo Coche</span>
+                            <span class="quick-btn-arrow">→</span>
                         </button>
-                        <button id="btn-nueva-empresa" class="quick-btn">
-                            <span>Nueva Empresa</span>
+                        <button id="btn-nueva-empresa" class="quick-btn" data-action="empresa">
+                            <span class="quick-btn-icon">🏢</span>
+                            <span class="quick-btn-text">Nueva Empresa</span>
+                            <span class="quick-btn-arrow">→</span>
                         </button>
                     </div>
                 </div>
             </aside>
         </main>
+        </div>
     </div>
 
     <script src="home.js"></script>
