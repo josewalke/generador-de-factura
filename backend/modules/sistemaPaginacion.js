@@ -68,13 +68,28 @@ class PaginationManager {
      */
     executeQuery(query, params = []) {
         return new Promise((resolve, reject) => {
-            this.db.all(query, params, (err, rows) => {
-                if (err) {
-                    reject(err);
-                } else {
-                    resolve(rows);
-                }
-            });
+            if (!this.db) {
+                reject(new Error('Base de datos no está disponible'));
+                return;
+            }
+            
+            if (this.db.all) {
+                // Usar método all con callback (SQLite o wrapper)
+                this.db.all(query, params, (err, rows) => {
+                    if (err) {
+                        reject(err);
+                    } else {
+                        resolve(rows);
+                    }
+                });
+            } else if (this.db.query) {
+                // Usar método query async (PostgreSQL directo)
+                this.db.query(query, params)
+                    .then(result => resolve(result.rows))
+                    .catch(reject);
+            } else {
+                reject(new Error('Método de base de datos no disponible'));
+            }
         });
     }
 

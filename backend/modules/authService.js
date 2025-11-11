@@ -131,14 +131,28 @@ class AuthService {
             const defaultPassword = 'admin123'; // Cambiar en producción
             const hashedPassword = await this.hashPassword(defaultPassword);
 
+            const dbType = config.get('database.type') || 'postgresql';
+            const isPostgreSQL = dbType === 'postgresql';
+            
             const userId = await new Promise((resolve, reject) => {
-                db.run(`
-                    INSERT INTO usuarios (username, password_hash, role, activo, fecha_creacion)
-                    VALUES (?, ?, ?, ?, ?)
-                `, ['admin', hashedPassword, 'admin', 1, new Date().toISOString()], function(err) {
-                    if (err) reject(err);
-                    else resolve(this.lastID);
-                });
+                if (isPostgreSQL && db.query) {
+                    // PostgreSQL: usar RETURNING id
+                    db.query(`
+                        INSERT INTO usuarios (username, password_hash, role, activo, fecha_creacion)
+                        VALUES ($1, $2, $3, $4, $5) RETURNING id
+                    `, ['admin', hashedPassword, 'admin', true, new Date().toISOString()])
+                        .then(result => resolve(result.rows[0].id))
+                        .catch(reject);
+                } else {
+                    // SQLite: usar lastID
+                    db.run(`
+                        INSERT INTO usuarios (username, password_hash, role, activo, fecha_creacion)
+                        VALUES (?, ?, ?, ?, ?)
+                    `, ['admin', hashedPassword, 'admin', 1, new Date().toISOString()], function(err) {
+                        if (err) reject(err);
+                        else resolve(this.lastID);
+                    });
+                }
             });
 
             console.log('✅ Usuario por defecto creado: admin / admin123');

@@ -1,3 +1,6 @@
+const SQLAdapter = require('./sqlAdapter');
+const config = require('../config/config');
+
 /**
  * Sistema de Logs de Seguridad
  * Registra eventos de seguridad para cumplir con Ley Antifraude
@@ -55,22 +58,34 @@ class SistemaLogsSeguridad {
      */
     async crearTablaLogs() {
         return new Promise((resolve, reject) => {
-            const query = `
+            if (!this.db) {
+                reject(new Error('Base de datos no está disponible'));
+                return;
+            }
+            
+            const dbType = config.get('database.type') || 'postgresql';
+            const isPostgreSQL = dbType === 'postgresql';
+            
+            let query = `
                 CREATE TABLE IF NOT EXISTS logs_seguridad (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    nivel TEXT NOT NULL,
-                    tipo_evento TEXT NOT NULL,
-                    descripcion TEXT NOT NULL,
+                    id ${isPostgreSQL ? 'SERIAL PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT'},
+                    timestamp ${isPostgreSQL ? 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP' : 'DATETIME DEFAULT CURRENT_TIMESTAMP'},
+                    nivel ${isPostgreSQL ? 'VARCHAR(20)' : 'TEXT'} NOT NULL,
+                    tipo_evento ${isPostgreSQL ? 'VARCHAR(50)' : 'TEXT'} NOT NULL,
+                    descripcion ${isPostgreSQL ? 'TEXT' : 'TEXT'} NOT NULL,
                     usuario_id INTEGER,
-                    usuario_nombre TEXT,
-                    ip_address TEXT,
-                    user_agent TEXT,
-                    detalles TEXT,
-                    hash_evento TEXT,
+                    usuario_nombre ${isPostgreSQL ? 'VARCHAR(255)' : 'TEXT'},
+                    ip_address ${isPostgreSQL ? 'VARCHAR(45)' : 'TEXT'},
+                    user_agent ${isPostgreSQL ? 'TEXT' : 'TEXT'},
+                    detalles ${isPostgreSQL ? 'TEXT' : 'TEXT'},
+                    hash_evento ${isPostgreSQL ? 'VARCHAR(64)' : 'TEXT'},
                     FOREIGN KEY (usuario_id) REFERENCES usuarios (id)
                 )
             `;
+            
+            if (isPostgreSQL) {
+                query = SQLAdapter.adaptCreateTable(query);
+            }
             
             this.db.run(query, (err) => {
                 if (err) reject(err);

@@ -1,4 +1,6 @@
 const crypto = require('crypto');
+const SQLAdapter = require('./sqlAdapter');
+const config = require('../config/config');
 
 /**
  * Sistema de Control de Acceso por Roles
@@ -98,23 +100,35 @@ class SistemaControlAcceso {
      */
     async crearTablaUsuarios() {
         return new Promise((resolve, reject) => {
-            const query = `
+            if (!this.db) {
+                reject(new Error('Base de datos no está disponible'));
+                return;
+            }
+            
+            const dbType = config.get('database.type') || 'postgresql';
+            const isPostgreSQL = dbType === 'postgresql';
+            
+            let query = `
                 CREATE TABLE IF NOT EXISTS usuarios (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    username TEXT UNIQUE NOT NULL,
-                    password_hash TEXT NOT NULL,
-                    salt TEXT NOT NULL,
-                    rol TEXT NOT NULL DEFAULT 'operador',
-                    nombre TEXT,
-                    email TEXT,
-                    activo BOOLEAN DEFAULT 1,
-                    ultimo_acceso DATETIME,
+                    id ${isPostgreSQL ? 'SERIAL PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT'},
+                    username ${isPostgreSQL ? 'VARCHAR(255)' : 'TEXT'} UNIQUE NOT NULL,
+                    password_hash ${isPostgreSQL ? 'TEXT' : 'TEXT'} NOT NULL,
+                    salt ${isPostgreSQL ? 'TEXT' : 'TEXT'} NOT NULL,
+                    role ${isPostgreSQL ? 'VARCHAR(50)' : 'TEXT'} NOT NULL DEFAULT 'operador',
+                    nombre ${isPostgreSQL ? 'VARCHAR(255)' : 'TEXT'},
+                    email ${isPostgreSQL ? 'VARCHAR(255)' : 'TEXT'},
+                    activo ${isPostgreSQL ? 'BOOLEAN DEFAULT true' : 'BOOLEAN DEFAULT 1'},
+                    ultimo_acceso ${isPostgreSQL ? 'TIMESTAMP' : 'DATETIME'},
                     intentos_fallidos INTEGER DEFAULT 0,
-                    bloqueado_hasta DATETIME,
-                    fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    fecha_actualizacion DATETIME DEFAULT CURRENT_TIMESTAMP
+                    bloqueado_hasta ${isPostgreSQL ? 'TIMESTAMP' : 'DATETIME'},
+                    fecha_creacion ${isPostgreSQL ? 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP' : 'DATETIME DEFAULT CURRENT_TIMESTAMP'},
+                    fecha_actualizacion ${isPostgreSQL ? 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP' : 'DATETIME DEFAULT CURRENT_TIMESTAMP'}
                 )
             `;
+            
+            if (isPostgreSQL) {
+                query = SQLAdapter.adaptCreateTable(query);
+            }
             
             this.db.run(query, (err) => {
                 if (err) reject(err);
@@ -128,19 +142,31 @@ class SistemaControlAcceso {
      */
     async crearTablaSesiones() {
         return new Promise((resolve, reject) => {
-            const query = `
+            if (!this.db) {
+                reject(new Error('Base de datos no está disponible'));
+                return;
+            }
+            
+            const dbType = config.get('database.type') || 'postgresql';
+            const isPostgreSQL = dbType === 'postgresql';
+            
+            let query = `
                 CREATE TABLE IF NOT EXISTS sesiones (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    id ${isPostgreSQL ? 'SERIAL PRIMARY KEY' : 'INTEGER PRIMARY KEY AUTOINCREMENT'},
                     usuario_id INTEGER NOT NULL,
-                    token TEXT UNIQUE NOT NULL,
-                    ip_address TEXT,
-                    user_agent TEXT,
-                    fecha_inicio DATETIME DEFAULT CURRENT_TIMESTAMP,
-                    fecha_expiracion DATETIME NOT NULL,
-                    activa BOOLEAN DEFAULT 1,
+                    token ${isPostgreSQL ? 'VARCHAR(255)' : 'TEXT'} UNIQUE NOT NULL,
+                    ip_address ${isPostgreSQL ? 'VARCHAR(45)' : 'TEXT'},
+                    user_agent ${isPostgreSQL ? 'TEXT' : 'TEXT'},
+                    fecha_inicio ${isPostgreSQL ? 'TIMESTAMP DEFAULT CURRENT_TIMESTAMP' : 'DATETIME DEFAULT CURRENT_TIMESTAMP'},
+                    fecha_expiracion ${isPostgreSQL ? 'TIMESTAMP' : 'DATETIME'} NOT NULL,
+                    activa ${isPostgreSQL ? 'BOOLEAN DEFAULT true' : 'BOOLEAN DEFAULT 1'},
                     FOREIGN KEY (usuario_id) REFERENCES usuarios (id)
                 )
             `;
+            
+            if (isPostgreSQL) {
+                query = SQLAdapter.adaptCreateTable(query);
+            }
             
             this.db.run(query, (err) => {
                 if (err) reject(err);
@@ -154,7 +180,7 @@ class SistemaControlAcceso {
      */
     async crearUsuarioAdmin() {
         return new Promise((resolve, reject) => {
-            const query = 'SELECT COUNT(*) as count FROM usuarios WHERE rol = ?';
+            const query = 'SELECT COUNT(*) as count FROM usuarios WHERE role = ?';
             this.db.get(query, ['admin'], (err, row) => {
                 if (err) {
                     reject(err);
@@ -166,7 +192,7 @@ class SistemaControlAcceso {
                     const passwordHash = crypto.pbkdf2Sync('admin123', salt, 10000, 64, 'sha512').toString('hex');
                     
                     const insertQuery = `
-                        INSERT INTO usuarios (username, password_hash, salt, rol, nombre, email)
+                        INSERT INTO usuarios (username, password_hash, salt, role, nombre, email)
                         VALUES (?, ?, ?, ?, ?, ?)
                     `;
                     
@@ -238,7 +264,7 @@ class SistemaControlAcceso {
                 usuario: {
                     id: usuario.id,
                     username: usuario.username,
-                    rol: usuario.rol,
+                    rol: usuario.role,
                     nombre: usuario.nombre,
                     email: usuario.email
                 },
@@ -333,11 +359,16 @@ class SistemaControlAcceso {
      */
     async verificarToken(token) {
         return new Promise((resolve, reject) => {
+            const dbType = config.get('database.type') || 'postgresql';
+            const isPostgreSQL = dbType === 'postgresql';
+            const activaValue = isPostgreSQL ? 'true' : '1';
+            const fechaNow = isPostgreSQL ? 'NOW()' : "datetime('now')";
+            
             const query = `
-                SELECT s.*, u.username, u.rol, u.nombre, u.email
+                SELECT s.*, u.username, u.role as rol, u.nombre, u.email
                 FROM sesiones s
                 JOIN usuarios u ON s.usuario_id = u.id
-                WHERE s.token = ? AND s.activa = 1 AND s.fecha_expiracion > datetime('now')
+                WHERE s.token = ? AND s.activa = ${activaValue} AND s.fecha_expiracion > ${fechaNow}
             `;
             
             this.db.get(query, [token], (err, row) => {
@@ -460,7 +491,7 @@ class SistemaControlAcceso {
 
         return new Promise((resolve, reject) => {
             const query = `
-                INSERT INTO usuarios (username, password_hash, salt, rol, nombre, email)
+                INSERT INTO usuarios (username, password_hash, salt, role, nombre, email)
                 VALUES (?, ?, ?, ?, ?, ?)
             `;
             

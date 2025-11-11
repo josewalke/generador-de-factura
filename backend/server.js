@@ -1,5 +1,4 @@
 const express = require('express');
-const sqlite3 = require('sqlite3').verbose();
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const helmet = require('helmet');
@@ -7,12 +6,15 @@ const morgan = require('morgan');
 const path = require('path');
 const multer = require('multer');
 const fs = require('fs');
+const { exec } = require('child_process');
 const rateLimit = require('express-rate-limit');
 const config = require('./config/config');
 const { DatabaseCacheManager } = require('./modules/sistemaCache');
 const PaginationManager = require('./modules/sistemaPaginacion');
 const { LoggerFactory } = require('./modules/sistemaLogging');
 const ImportadorExcel = require('./modules/importadorExcel');
+const database = require('./modules/database');
+const SQLAdapter = require('./modules/sqlAdapter');
 
 // Exportar la instancia de la base de datos para uso en otros módulos
 let db;
@@ -42,8 +44,19 @@ async function initPerformanceSystems() {
         logger.systemEvent('Importador Excel inicializado');
         
         // Precalentar caché con datos frecuentes de forma asíncrona
+        // Solo después de que db esté disponible
         setImmediate(async () => {
-            await preheatCache();
+            // Esperar a que db esté disponible
+            let attempts = 0;
+            while (!db && attempts < 10) {
+                await new Promise(resolve => setTimeout(resolve, 100));
+                attempts++;
+            }
+            if (db) {
+                await preheatCache();
+            } else {
+                logger.warn('No se pudo precalentar caché: base de datos no disponible', {}, 'cache');
+            }
         });
         
     } catch (error) {
@@ -53,35 +66,63 @@ async function initPerformanceSystems() {
 
 // Precalentar caché con datos frecuentes
 async function preheatCache() {
-    const fetchFunctions = {
-        'empresas:all': () => new Promise((resolve, reject) => {
-            db.all('SELECT * FROM empresas ORDER BY nombre', (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        }),
-        'productos:all': () => new Promise((resolve, reject) => {
-            db.all('SELECT * FROM productos WHERE activo = 1 ORDER BY descripcion', (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        }),
-        'clientes:count': () => new Promise((resolve, reject) => {
-            db.get('SELECT COUNT(*) as count FROM clientes', (err, row) => {
-                if (err) reject(err);
-                else resolve(row.count);
-            });
-        }),
-        'facturas:count': () => new Promise((resolve, reject) => {
-            db.get('SELECT COUNT(*) as count FROM facturas', (err, row) => {
-                if (err) reject(err);
-                else resolve(row.count);
-            });
-        })
-    };
+    // Verificar que db esté disponible antes de precalentar
+    if (!db) {
+        logger.warn('Base de datos no disponible para precalentar caché, omitiendo...', {}, 'cache');
+        return;
+    }
     
-    await cacheManager.preheat(fetchFunctions);
-    logger.systemEvent('Caché precalentado con datos frecuentes');
+    try {
+        const fetchFunctions = {
+            'empresas:all': () => new Promise((resolve, reject) => {
+                if (!db) {
+                    reject(new Error('Base de datos no disponible'));
+                    return;
+                }
+                db.all('SELECT * FROM empresas ORDER BY nombre', (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                });
+            }),
+            'productos:all': () => new Promise((resolve, reject) => {
+                if (!db) {
+                    reject(new Error('Base de datos no disponible'));
+                    return;
+                }
+                const dbType = config.get('database.type') || 'postgresql';
+                const activoValue = dbType === 'postgresql' ? 'true' : '1';
+                db.all(`SELECT * FROM productos WHERE activo = ${activoValue} ORDER BY descripcion`, (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows);
+                });
+            }),
+            'clientes:count': () => new Promise((resolve, reject) => {
+                if (!db) {
+                    reject(new Error('Base de datos no disponible'));
+                    return;
+                }
+                db.get('SELECT COUNT(*) as count FROM clientes', (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row.count);
+                });
+            }),
+            'facturas:count': () => new Promise((resolve, reject) => {
+                if (!db) {
+                    reject(new Error('Base de datos no disponible'));
+                    return;
+                }
+                db.get('SELECT COUNT(*) as count FROM facturas', (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row.count);
+                });
+            })
+        };
+        
+        await cacheManager.preheat(fetchFunctions);
+        logger.systemEvent('Caché precalentado con datos frecuentes');
+    } catch (error) {
+        logger.error('Error precalentando caché', { error: error.message }, 'cache');
+    }
 }
 
 // Módulos para cumplir con la Ley Antifraude
@@ -161,15 +202,36 @@ app.use(limiter);
 app.use((req, res, next) => {
     const start = Date.now();
     
+    // Log de inicio de petición
+    logger.debug(`Incoming request: ${req.method} ${req.url}`, {
+        ip: req.ip,
+        userAgent: req.get('User-Agent'),
+        query: req.query,
+        body: req.method !== 'GET' ? logger.sanitizeData(req.body) : null
+    }, 'api');
+    
     res.on('finish', () => {
         const duration = Date.now() - start;
-        logger.apiRequest(req.method, req.url, res.statusCode, duration);
+        
+        // Log detallado de la petición
+        logger.apiRequest(req.method, req.url, res.statusCode, duration, req);
         
         // Registrar en monitoreo de seguridad
         securityMonitor.logHTTPRequest(req, duration, res.statusCode);
         
         // Detectar códigos de error
         if (res.statusCode >= 400) {
+            logger.error(`HTTP Error ${res.statusCode}: ${req.method} ${req.url}`, {
+                statusCode: res.statusCode,
+                url: req.url,
+                method: req.method,
+                ip: req.ip,
+                userAgent: req.get('User-Agent'),
+                duration: `${duration}ms`,
+                query: req.query,
+                body: req.method !== 'GET' ? logger.sanitizeData(req.body) : null
+            }, 'api');
+            
             securityMonitor.logSecurityEvent('http_error', {
                 statusCode: res.statusCode,
                 url: req.url,
@@ -255,24 +317,89 @@ config.loadFromDatabase().then(() => {
 });
 
 // Inicializar base de datos
-const dbPath = config.get('database.path');
-db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, (err) => {
-    if (err) {
-        logger.error('Error al conectar con la base de datos', { error: err.message });
+async function initDatabaseConnection() {
+    const dbType = config.get('database.type') || 'postgresql';
+    
+    if (dbType === 'postgresql') {
+        // Usar PostgreSQL
+        try {
+            await database.connect();
+            db = database;
+            logger.systemEvent('Base de datos PostgreSQL conectada exitosamente', {
+                host: config.get('database.host'),
+                database: config.get('database.database')
+            });
+            
+            // Crear wrapper compatible con SQLite
+            db = {
+                // Métodos con callback para compatibilidad (usados por el código existente)
+                all: (query, params, callback) => {
+                    if (typeof params === 'function') {
+                        callback = params;
+                        params = [];
+                    }
+                    database.allWithCallback(query, params, callback);
+                },
+                get: (query, params, callback) => {
+                    if (typeof params === 'function') {
+                        callback = params;
+                        params = [];
+                    }
+                    database.getWithCallback(query, params, callback);
+                },
+                run: (query, params, callback) => {
+                    if (typeof params === 'function') {
+                        callback = params;
+                        params = [];
+                    }
+                    database.runWithCallback(query, params, callback);
+                },
+                
+                // Métodos async (para nuevo código)
+                query: (text, params) => database.query(text, params),
+                
+                // Para compatibilidad con código existente
+                serialize: (callback) => {
+                    // En PostgreSQL no necesitamos serialize, ejecutamos directamente
+                    if (callback) callback();
+                },
+                close: () => database.close()
+            };
+            
+            await initDatabase();
+        } catch (error) {
+            logger.error('Error al conectar con PostgreSQL', { error: error.message, stack: error.stack });
+            throw error;
+        }
     } else {
-        logger.systemEvent('Base de datos conectada exitosamente');
-        
-        // Configurar la base de datos para mejor manejo de concurrencia y memoria
-        db.run(`PRAGMA busy_timeout = ${config.get('database.timeout')}`);
-        db.run(`PRAGMA journal_mode = ${config.get('database.journalMode')}`);
-        db.run(`PRAGMA synchronous = ${config.get('database.synchronous')}`);
-        db.run(`PRAGMA cache_size = ${config.get('database.cacheSize')}`);
-        db.run(`PRAGMA temp_store = memory`); // Usar memoria para tablas temporales
-        db.run(`PRAGMA mmap_size = 268435456`); // 256MB de memoria mapeada
-        db.run(`PRAGMA optimize`); // Optimizar automáticamente
-        
-        initDatabase();
+        // Usar SQLite (compatibilidad)
+        const sqlite3 = require('sqlite3').verbose();
+        const dbPath = config.get('database.path');
+        db = new sqlite3.Database(dbPath, sqlite3.OPEN_READWRITE | sqlite3.OPEN_CREATE, (err) => {
+            if (err) {
+                logger.error('Error al conectar con la base de datos SQLite', { error: err.message });
+            } else {
+                logger.systemEvent('Base de datos SQLite conectada exitosamente');
+                
+                // Configurar la base de datos para mejor manejo de concurrencia y memoria
+                db.run(`PRAGMA busy_timeout = ${config.get('database.timeout')}`);
+                db.run(`PRAGMA journal_mode = ${config.get('database.journalMode')}`);
+                db.run(`PRAGMA synchronous = ${config.get('database.synchronous')}`);
+                db.run(`PRAGMA cache_size = ${config.get('database.cacheSize')}`);
+                db.run(`PRAGMA temp_store = memory`);
+                db.run(`PRAGMA mmap_size = 268435456`);
+                db.run(`PRAGMA optimize`);
+                
+                initDatabase();
+            }
+        });
     }
+}
+
+// Inicializar conexión
+initDatabaseConnection().catch(err => {
+    logger.error('Error fatal al inicializar base de datos', { error: err.message });
+    process.exit(1);
 });
 
 // Función utilitaria para ejecutar operaciones de base de datos con reintentos
@@ -286,7 +413,7 @@ function ejecutarConReintentos(operacion, maxReintentos = 3, delay = 100) {
                 .catch(err => {
                     if (err.code === 'SQLITE_BUSY' && intentos < maxReintentos) {
                         intentos++;
-                        console.log(`⚠️ Base de datos ocupada, reintentando... (${intentos}/${maxReintentos})`);
+                        logger.warn(`Base de datos ocupada, reintentando... (${intentos}/${maxReintentos})`, {}, 'database');
                         setTimeout(intentar, delay * intentos);
                     } else {
                         reject(err);
@@ -302,10 +429,30 @@ function ejecutarConReintentos(operacion, maxReintentos = 3, delay = 100) {
 let sistemaIntegridad, sistemaAuditoria, generadorVeriFactu, sistemaBackup;
 let sistemaCifrado, sistemaControlAcceso, sistemaLogsSeguridad, sistemaValidacionFiscal;
 let sistemaFirmaDigital;
+let modulosAntifraudeInicializados = false;
 
 // Función para inicializar módulos después de la base de datos
 function initModulosAntifraude() {
+    // Evitar inicialización duplicada
+    if (modulosAntifraudeInicializados) {
+        logger.debug('Módulos de Ley Antifraude ya inicializados, omitiendo...', {}, 'operations');
+        return;
+    }
     try {
+        // Verificar que db esté definido antes de continuar
+        if (!db) {
+            logger.warn('Base de datos no está lista aún, reintentando inicialización de módulos...', {}, 'operations');
+            // Reintentar después de un breve delay
+            setTimeout(() => {
+                if (db) {
+                    initModulosAntifraude();
+                } else {
+                    logger.error('No se pudo inicializar módulos: base de datos no disponible', {}, 'operations');
+                }
+            }, 500);
+            return;
+        }
+        
         sistemaIntegridad = new SistemaIntegridad();
         sistemaAuditoria = new SistemaAuditoria(db);
         generadorVeriFactu = new GeneradorVeriFactu();
@@ -320,40 +467,99 @@ function initModulosAntifraude() {
         sistemaControlAcceso = new SistemaControlAcceso(db);
         sistemaLogsSeguridad = new SistemaLogsSeguridad(db);
         sistemaValidacionFiscal = new SistemaValidacionFiscal();
-        sistemaFirmaDigital = new SistemaFirmaDigital();
+        sistemaFirmaDigital = new SistemaFirmaDigital(db);
         
-        // Inicializar sistemas que requieren base de datos
-        sistemaControlAcceso.inicializar();
-        sistemaLogsSeguridad.inicializar();
-        
-        // Iniciar backup automático de forma asíncrona (no bloquea el arranque)
-        setImmediate(() => {
-        sistemaBackup.iniciarBackupAutomatico();
+        // Inicializar sistemas que requieren base de datos de forma asíncrona
+        // para no bloquear el arranque del servidor
+        setImmediate(async () => {
+            try {
+                await sistemaControlAcceso.inicializar();
+                await sistemaLogsSeguridad.inicializar();
+                
+                // Iniciar backup automático de forma asíncrona (no bloquea el arranque)
+                sistemaBackup.iniciarBackupAutomatico();
+                
+                logger.systemEvent('Módulos de Ley Antifraude inicializados correctamente');
+                logger.systemEvent('Sistema de cifrado activado');
+                logger.systemEvent('Sistema de control de acceso activado');
+                logger.systemEvent('Sistema de logs de seguridad activado');
+                logger.systemEvent('Sistema de validación fiscal activado');
+                logger.systemEvent('Sistema de firma digital activado');
+                logger.systemEvent('Sistema de backup automático activado');
+                
+                // Configurar endpoints de seguridad después de la inicialización
+                configurarEndpointsSeguridad();
+                
+                // Marcar como inicializado
+                modulosAntifraudeInicializados = true;
+            } catch (initError) {
+                logger.error('Error al inicializar módulos de seguridad', { 
+                    error: initError.message, 
+                    stack: initError.stack 
+                }, 'operations');
+            }
         });
         
-        console.log('✅ Módulos de Ley Antifraude inicializados correctamente');
-        console.log('🔒 Sistema de cifrado activado');
-        console.log('🛡️ Sistema de control de acceso activado');
-        console.log('📋 Sistema de logs de seguridad activado');
-        console.log('✅ Sistema de validación fiscal activado');
-        console.log('🔐 Sistema de firma digital activado');
-        console.log('💾 Sistema de backup automático activado');
-        
-        // Configurar endpoints de seguridad después de la inicialización
-        configurarEndpointsSeguridad();
     } catch (error) {
-        console.error('❌ Error al inicializar módulos de Ley Antifraude:', error);
+        logger.error('Error al crear módulos de Ley Antifraude', { error: error.message, stack: error.stack }, 'operations');
     }
 }
 
 // Inicializar tablas
-function initDatabase() {
+async function initDatabase() {
     logger.systemEvent('Inicializando base de datos');
     
+    const dbType = config.get('database.type') || 'postgresql';
+    const isPostgreSQL = dbType === 'postgresql';
+    
+    // Función helper para ejecutar queries
+    const executeQuery = async (query, callback) => {
+        try {
+            if (isPostgreSQL) {
+                const adaptedQuery = SQLAdapter.adapt(query);
+                const result = await db.query(adaptedQuery);
+                if (callback) callback(null, result);
+            } else {
+                db.run(query, callback);
+            }
+        } catch (error) {
+            if (callback) callback(error, null);
+        }
+    };
+    
     // Crear tablas secuencialmente
-    db.serialize(() => {
+    try {
+        // Adaptar queries para PostgreSQL si es necesario
+        const adaptQuery = (query) => {
+            return isPostgreSQL ? SQLAdapter.adapt(query) : query;
+        };
+        
+        // Función helper para ejecutar CREATE TABLE
+        const createTable = async (query, tableName) => {
+            try {
+                const adaptedQuery = adaptQuery(query);
+                if (isPostgreSQL) {
+                    await db.query(adaptedQuery);
+                } else {
+                    await new Promise((resolve, reject) => {
+                        db.run(adaptedQuery, (err) => {
+                            if (err) reject(err);
+                            else resolve();
+                        });
+                    });
+                }
+                logger.debug(`Tabla ${tableName} creada/verificada`, {}, 'database');
+            } catch (err) {
+                // Ignorar error si la tabla ya existe o columna duplicada
+                if (!err.message.includes('already exists') && 
+                    !err.message.includes('duplicate column name')) {
+                    logger.error(`Error al crear tabla ${tableName}`, { error: err.message }, 'database');
+                }
+            }
+        };
+        
         // Tabla de clientes
-        db.run(`
+        await createTable(`
             CREATE TABLE IF NOT EXISTS clientes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 nombre TEXT NOT NULL,
@@ -364,22 +570,27 @@ function initDatabase() {
                 telefono TEXT,
                 fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP
             )
-        `, (err) => {
-            if (err) {
-                logger.error('Error al crear tabla clientes', { error: err.message });
-            } else {
-                logger.debug('Tabla clientes creada/verificada');
-                // Añadir columna codigo_postal si no existe
-                db.run('ALTER TABLE clientes ADD COLUMN codigo_postal TEXT', (err) => {
-                    if (err && !err.message.includes('duplicate column name')) {
-                        logger.error('Error al añadir columna codigo_postal', { error: err.message });
-                    }
+        `, 'clientes');
+        
+        // Añadir columna codigo_postal si no existe (solo para SQLite, PostgreSQL ya la tiene)
+        if (!isPostgreSQL) {
+            try {
+                await new Promise((resolve, reject) => {
+                    db.run('ALTER TABLE clientes ADD COLUMN codigo_postal TEXT', (err) => {
+                        if (err && !err.message.includes('duplicate column name')) {
+                            reject(err);
+                        } else {
+                            resolve();
+                        }
+                    });
                 });
+            } catch (err) {
+                // Ignorar si la columna ya existe
             }
-        });
+        }
 
         // Tabla de empresas
-        db.run(`
+        await createTable(`
             CREATE TABLE IF NOT EXISTS empresas (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 nombre TEXT NOT NULL,
@@ -392,16 +603,10 @@ function initDatabase() {
                 fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP,
                 activo INTEGER DEFAULT 1
             )
-        `, (err) => {
-            if (err) {
-                console.error('❌ Error al crear tabla empresas:', err.message);
-            } else {
-                console.log('✅ Tabla empresas creada/verificada');
-            }
-        });
+        `, 'empresas');
 
         // Tabla de usuarios para autenticación
-        db.run(`
+        await createTable(`
             CREATE TABLE IF NOT EXISTS usuarios (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 username TEXT UNIQUE NOT NULL,
@@ -413,25 +618,19 @@ function initDatabase() {
                 ultimo_acceso DATETIME,
                 FOREIGN KEY (empresa_id) REFERENCES empresas (id)
             )
-        `, (err) => {
-            if (err) {
-                logger.error('Error al crear tabla usuarios', { error: err.message });
-            } else {
-                logger.debug('Tabla usuarios creada/verificada');
-                
-                // Crear usuario por defecto para aplicación de escritorio
-                setImmediate(async () => {
-                    try {
-                        await authService.createDefaultUser(db);
-                    } catch (error) {
-                        logger.error('Error creando usuario por defecto', { error: error.message });
-                    }
-                });
+        `, 'usuarios');
+        
+        // Crear usuario por defecto para aplicación de escritorio
+        setImmediate(async () => {
+            try {
+                await authService.createDefaultUser(db);
+            } catch (error) {
+                logger.error('Error creando usuario por defecto', { error: error.message });
             }
         });
 
         // Tabla de coches
-        db.run(`
+        await createTable(`
             CREATE TABLE IF NOT EXISTS coches (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 matricula TEXT UNIQUE NOT NULL,
@@ -442,16 +641,10 @@ function initDatabase() {
                 activo BOOLEAN DEFAULT 1,
                 fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP
             )
-        `, (err) => {
-            if (err) {
-                console.error('❌ Error al crear tabla coches:', err.message);
-            } else {
-                console.log('✅ Tabla coches creada/verificada');
-            }
-        });
+        `, 'coches');
 
         // Tabla de productos/vehículos
-        db.run(`
+        await createTable(`
             CREATE TABLE IF NOT EXISTS productos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 codigo TEXT,
@@ -462,25 +655,27 @@ function initDatabase() {
                 activo BOOLEAN DEFAULT 1,
                 fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP
             )
-        `, (err) => {
-            if (err) {
-                console.error('❌ Error al crear tabla productos:', err.message);
-            } else {
-                console.log('✅ Tabla productos creada/verificada');
-                
-                // Agregar columna codigo si no existe
-                db.run('ALTER TABLE productos ADD COLUMN codigo TEXT', (err) => {
-                    if (err && !err.message.includes('duplicate column name')) {
-                        console.error('❌ Error al agregar columna codigo:', err.message);
-                    } else if (!err) {
-                        console.log('✅ Columna codigo agregada a productos');
-                    }
+        `, 'productos');
+        
+        // Agregar columna codigo si no existe (solo para SQLite)
+        if (!isPostgreSQL) {
+            try {
+                await new Promise((resolve, reject) => {
+                    db.run('ALTER TABLE productos ADD COLUMN codigo TEXT', (err) => {
+                        if (err && !err.message.includes('duplicate column name')) {
+                            reject(err);
+                        } else {
+                            resolve();
+                        }
+                    });
                 });
+            } catch (err) {
+                // Ignorar si la columna ya existe
             }
-        });
+        }
 
         // Tabla de facturas
-        db.run(`
+        await createTable(`
             CREATE TABLE IF NOT EXISTS facturas (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 numero_factura TEXT NOT NULL,
@@ -498,16 +693,10 @@ function initDatabase() {
                 FOREIGN KEY (cliente_id) REFERENCES clientes (id),
                 UNIQUE(numero_factura, empresa_id)
             )
-        `, (err) => {
-            if (err) {
-                console.error('❌ Error al crear tabla facturas:', err.message);
-            } else {
-                console.log('✅ Tabla facturas creada/verificada');
-            }
-        });
+        `, 'facturas');
 
         // Tabla de detalles de factura
-        db.run(`
+        await createTable(`
             CREATE TABLE IF NOT EXISTS detalles_factura (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 factura_id INTEGER,
@@ -522,32 +711,43 @@ function initDatabase() {
                 FOREIGN KEY (factura_id) REFERENCES facturas (id),
                 FOREIGN KEY (producto_id) REFERENCES productos (id)
             )
-        `, (err) => {
-            if (err) {
-                console.error('❌ Error al crear tabla detalles_factura:', err.message);
-            } else {
-                console.log('✅ Tabla detalles_factura creada/verificada');
-                
-                // Agregar columna descripcion si no existe (migración)
-                db.run(`ALTER TABLE detalles_factura ADD COLUMN descripcion TEXT`, (err) => {
-                    if (err && !err.message.includes('duplicate column name')) {
-                        console.error('❌ Error al agregar columna descripcion:', err.message);
-                    } else if (!err) {
-                        console.log('✅ Columna descripcion agregada a detalles_factura');
-                    }
+        `, 'detalles_factura');
+        
+        // Agregar columnas si no existen (solo para SQLite, PostgreSQL ya las tiene)
+        if (!isPostgreSQL) {
+            // Agregar columna descripcion si no existe
+            try {
+                await new Promise((resolve, reject) => {
+                    db.run(`ALTER TABLE detalles_factura ADD COLUMN descripcion TEXT`, (err) => {
+                        if (err && !err.message.includes('duplicate column name')) {
+                            reject(err);
+                        } else {
+                            resolve();
+                        }
+                    });
                 });
-                
-                // Agregar columna tipo_impuesto si no existe (migración)
-                db.run(`ALTER TABLE detalles_factura ADD COLUMN tipo_impuesto TEXT DEFAULT 'igic'`, (err) => {
-                    if (err && !err.message.includes('duplicate column name')) {
-                        console.error('❌ Error al agregar columna tipo_impuesto:', err.message);
-                    } else if (!err) {
-                        console.log('✅ Columna tipo_impuesto agregada a detalles_factura');
-                    }
-        });
+            } catch (err) {
+                // Ignorar si la columna ya existe
+            }
+            
+            // Agregar columna tipo_impuesto si no existe
+            try {
+                await new Promise((resolve, reject) => {
+                    db.run(`ALTER TABLE detalles_factura ADD COLUMN tipo_impuesto TEXT DEFAULT 'igic'`, (err) => {
+                        if (err && !err.message.includes('duplicate column name')) {
+                            reject(err);
+                        } else {
+                            resolve();
+                        }
+                    });
+                });
+            } catch (err) {
+                // Ignorar si la columna ya existe
+            }
+        }
 
         // Tabla de auditoría (para cumplir con Ley Antifraude)
-        db.run(`
+        await createTable(`
             CREATE TABLE IF NOT EXISTS audit_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 tabla TEXT NOT NULL,
@@ -560,55 +760,65 @@ function initDatabase() {
                 ip_address TEXT,
                 user_agent TEXT
             )
-        `, (err) => {
-            if (err) {
-                logger.error('Error al crear tabla audit_log', { error: err.message });
-            } else {
-                logger.debug('Tabla audit_log creada/verificada');
-            }
-        });
-
+        `, 'audit_log');
+        
         // Insertar datos de ejemplo después de crear todas las tablas
-        insertSampleData();
+        insertSampleData(isPostgreSQL);
         
         // Crear índices optimizados después de que todas las tablas estén listas
-        if (paginationManager) {
+        // Asegurarse de que paginationManager tenga db antes de crear índices
+        if (paginationManager && db) {
+            paginationManager.setDatabase(db);
             paginationManager.createPaginationIndexes().then(() => {
-                console.log('✅ Índices de paginación creados');
+                logger.systemEvent('Índices de paginación creados');
             }).catch((error) => {
-                console.error('❌ Error creando índices de paginación:', error);
+                logger.error('Error creando índices de paginación', { error: error.message }, 'database');
             });
         }
-                
-                // Inicializar módulos de Ley Antifraude
-                initModulosAntifraude();
-                
-                // Inicializar sistemas de rendimiento
-                initPerformanceSystems();
-            }
-        });
-    });
+        
+        // Inicializar módulos de Ley Antifraude
+        initModulosAntifraude();
+        
+        // Inicializar sistemas de rendimiento
+        initPerformanceSystems();
+        
+    } catch (error) {
+        logger.error('Error inicializando base de datos', { error: error.message, stack: error.stack }, 'database');
+        throw error;
+    }
 }
 
 // Insertar datos de ejemplo de forma silenciosa
-function insertSampleData() {
+function insertSampleData(isPostgreSQL = false) {
+    // Verificar que db esté disponible
+    if (!db) {
+        logger.warn('Base de datos no disponible para insertar datos de ejemplo', {}, 'database');
+        return;
+    }
+    
     // Insertar empresa Telwagen
-    db.run(`
-        INSERT OR IGNORE INTO empresas (nombre, cif, direccion, telefono, email)
-        VALUES (?, ?, ?, ?, ?)
-    `, [
+    const empresaQuery = isPostgreSQL
+        ? `INSERT INTO empresas (nombre, cif, direccion, telefono, email) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (cif) DO NOTHING`
+        : `INSERT OR IGNORE INTO empresas (nombre, cif, direccion, telefono, email) VALUES (?, ?, ?, ?, ?)`;
+    
+    db.run(empresaQuery, [
         'Telwagen Car Ibérica, S.L.',
         'B-93.289.585',
         'C. / Tomás Miller N° 48 Local\n35007 Las Palmas de Gran Canaria',
         '+34 928 123 456',
         'info@telwagen.es'
-    ]);
+    ], (err) => {
+        if (err && !err.message.includes('duplicate') && !err.message.includes('UNIQUE')) {
+            logger.debug('Error insertando empresa de ejemplo', { error: err.message }, 'database');
+        }
+    });
 
     // Insertar cliente de ejemplo
-    db.run(`
-        INSERT OR IGNORE INTO clientes (nombre, direccion, identificacion, email, telefono)
-        VALUES (?, ?, ?, ?, ?)
-    `, [
+    const clienteQuery = isPostgreSQL
+        ? `INSERT INTO clientes (nombre, direccion, identificacion, email, telefono) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (identificacion) DO NOTHING`
+        : `INSERT OR IGNORE INTO clientes (nombre, direccion, identificacion, email, telefono) VALUES (?, ?, ?, ?, ?)`;
+    
+    db.run(clienteQuery, [
         'GRUPO MIGUEL LEON S.L.',
         'C/. ALFREDO MARTIN REYES N° 7\nLAS PALMAS DE G.C.',
         'B76233865',
@@ -623,11 +833,16 @@ function insertSampleData() {
         { matricula: 'GC-9012-EF', chasis: 'WAUZZZ8V8KA123456', color: 'Azul', kms: 28000, modelo: 'Audi A4' }
     ];
 
+    const cocheQuery = isPostgreSQL
+        ? `INSERT INTO coches (matricula, chasis, color, kms, modelo) VALUES ($1, $2, $3, $4, $5) ON CONFLICT (matricula) DO NOTHING`
+        : `INSERT OR IGNORE INTO coches (matricula, chasis, color, kms, modelo) VALUES (?, ?, ?, ?, ?)`;
+
     cochesEjemplo.forEach(coche => {
-        db.run(`
-            INSERT OR IGNORE INTO coches (matricula, chasis, color, kms, modelo)
-            VALUES (?, ?, ?, ?, ?)
-        `, [coche.matricula, coche.chasis, coche.color, coche.kms, coche.modelo]);
+        db.run(cocheQuery, [coche.matricula, coche.chasis, coche.color, coche.kms, coche.modelo], (err) => {
+            if (err && !err.message.includes('duplicate') && !err.message.includes('UNIQUE')) {
+                logger.debug('Error insertando coche de ejemplo', { error: err.message }, 'database');
+            }
+        });
     });
 
     // Insertar productos de ejemplo (solo algunos)
@@ -637,11 +852,16 @@ function insertSampleData() {
         { codigo: 'NISSAN-LEAF-40KWH', descripcion: 'Nissan Leaf 40kWh', precio: 35000 }
     ];
 
+    const productoQuery = isPostgreSQL
+        ? `INSERT INTO productos (codigo, descripcion, precio, stock) VALUES ($1, $2, $3, $4) ON CONFLICT DO NOTHING`
+        : `INSERT OR IGNORE INTO productos (codigo, descripcion, precio, stock) VALUES (?, ?, ?, ?)`;
+
     productosEjemplo.forEach(producto => {
-        db.run(`
-            INSERT OR IGNORE INTO productos (codigo, descripcion, precio, stock)
-            VALUES (?, ?, ?, ?)
-        `, [producto.codigo, producto.descripcion, producto.precio, 10]);
+        db.run(productoQuery, [producto.codigo, producto.descripcion, producto.precio, 10], (err) => {
+            if (err && !err.message.includes('duplicate') && !err.message.includes('UNIQUE')) {
+                logger.debug('Error insertando producto de ejemplo', { error: err.message }, 'database');
+            }
+        });
     });
 }
 
@@ -689,22 +909,41 @@ app.post('/api/importar/coches', upload.single('archivo'), async (req, res) => {
 
 // POST - Importar productos desde Excel
 app.post('/api/importar/productos', upload.single('archivo'), async (req, res) => {
+    const startTime = Date.now();
+    
     try {
         if (!req.file) {
+            logger.warn('Intento de importar productos sin archivo', {}, 'operations');
             return res.status(400).json({
                 success: false,
                 error: 'No se ha proporcionado ningún archivo'
             });
         }
 
+        logger.info('Iniciando importación de productos desde Excel', {
+            filename: req.file.originalname,
+            size: req.file.size,
+            mimetype: req.file.mimetype
+        }, 'operations');
+
         const resultado = await importadorExcel.importarProductos(req.file.path);
+        const duration = Date.now() - startTime;
+        
+        logger.importOperation('productos', req.file.originalname, resultado.total || 0, resultado.success, resultado.errors || []);
         
         // Limpiar archivo temporal
         fs.unlinkSync(req.file.path);
+        logger.debug('Archivo temporal eliminado', { filename: req.file.originalname }, 'operations');
         
         res.json(resultado);
     } catch (error) {
-        logger.error('Error importando productos desde Excel', { error: error.message });
+        const duration = Date.now() - startTime;
+        logger.error('Error importando productos desde Excel', { 
+            error: error.message,
+            stack: error.stack,
+            duration: `${duration}ms`,
+            filename: req.file?.originalname
+        }, 'operations');
         res.status(500).json({
             success: false,
             error: 'Error interno del servidor'
@@ -714,22 +953,41 @@ app.post('/api/importar/productos', upload.single('archivo'), async (req, res) =
 
 // POST - Importar clientes desde Excel
 app.post('/api/importar/clientes', upload.single('archivo'), async (req, res) => {
+    const startTime = Date.now();
+    
     try {
         if (!req.file) {
+            logger.warn('Intento de importar clientes sin archivo', {}, 'operations');
             return res.status(400).json({
                 success: false,
                 error: 'No se ha proporcionado ningún archivo'
             });
         }
 
+        logger.info('Iniciando importación de clientes desde Excel', {
+            filename: req.file.originalname,
+            size: req.file.size,
+            mimetype: req.file.mimetype
+        }, 'operations');
+
         const resultado = await importadorExcel.importarClientes(req.file.path);
+        const duration = Date.now() - startTime;
+        
+        logger.importOperation('clientes', req.file.originalname, resultado.total || 0, resultado.success, resultado.errors || []);
         
         // Limpiar archivo temporal
         fs.unlinkSync(req.file.path);
+        logger.debug('Archivo temporal eliminado', { filename: req.file.originalname }, 'operations');
         
         res.json(resultado);
     } catch (error) {
-        logger.error('Error importando clientes desde Excel', { error: error.message });
+        const duration = Date.now() - startTime;
+        logger.error('Error importando clientes desde Excel', { 
+            error: error.message,
+            stack: error.stack,
+            duration: `${duration}ms`,
+            filename: req.file?.originalname
+        }, 'operations');
         res.status(500).json({
             success: false,
             error: 'Error interno del servidor'
@@ -1210,19 +1468,28 @@ app.post('/api/reset-data', (req, res) => {
 
 // GET - Obtener todos los clientes
 app.get('/api/clientes', (req, res) => {
-    console.log('🔍 [GET /api/clientes] Iniciando consulta...');
+    const startTime = Date.now();
+    logger.operationRead('clientes', null, req.query);
     
     db.all('SELECT * FROM clientes ORDER BY fecha_creacion DESC', (err, rows) => {
+        const duration = Date.now() - startTime;
+        
         if (err) {
-            console.error('❌ [GET /api/clientes] Error en consulta:', err.message);
+            logger.error('Error obteniendo clientes', { 
+                error: err.message, 
+                duration: `${duration}ms`,
+                query: req.query 
+            }, 'database');
+            logger.databaseQuery('SELECT * FROM clientes', duration, 0);
             res.status(500).json({ error: err.message });
             return;
         }
         
-        console.log(`✅ [GET /api/clientes] Consulta exitosa. Filas encontradas: ${rows.length}`);
-        rows.forEach((cliente, index) => {
-            console.log(`   ${index + 1}. ID: ${cliente.id}, Nombre: ${cliente.nombre}`);
-        });
+        logger.databaseQuery('SELECT * FROM clientes ORDER BY fecha_creacion DESC', duration, rows.length);
+        logger.info(`Clientes obtenidos: ${rows.length} registros`, { 
+            count: rows.length, 
+            duration: `${duration}ms` 
+        }, 'operations');
         
         res.json({ success: true, data: rows });
     });
@@ -1230,29 +1497,48 @@ app.get('/api/clientes', (req, res) => {
 
 // POST - Crear nuevo cliente
 app.post('/api/clientes', (req, res) => {
-    console.log('POST /api/clientes - Body recibido:', req.body);
+    const startTime = Date.now();
     const { nombre, direccion, codigo_postal, identificacion, email, telefono } = req.body;
+    
+    logger.debug('Creando nuevo cliente', { 
+        nombre, 
+        identificacion,
+        email: email ? '***' : null,
+        telefono: telefono ? '***' : null
+    }, 'operations');
     
     // Validar campos obligatorios
     if (!nombre || !direccion || !identificacion) {
-        console.log('Error: Campos obligatorios faltantes:', { nombre, direccion, identificacion });
+        logger.warn('Intento de crear cliente sin campos obligatorios', { 
+            nombre: !!nombre, 
+            direccion: !!direccion, 
+            identificacion: !!identificacion 
+        }, 'operations');
         return res.status(400).json({ 
             error: 'Campos obligatorios faltantes: nombre, direccion, identificacion' 
         });
     }
     
-    console.log('Insertando cliente con datos:', { nombre, direccion, codigo_postal, identificacion, email, telefono });
-    
     db.run(`
         INSERT INTO clientes (nombre, direccion, codigo_postal, identificacion, email, telefono)
         VALUES (?, ?, ?, ?, ?, ?)
     `, [nombre, direccion, codigo_postal, identificacion, email, telefono], function(err) {
+        const duration = Date.now() - startTime;
+        
         if (err) {
-            console.log('Error en la base de datos:', err.message);
+            logger.error('Error creando cliente', { 
+                error: err.message, 
+                identificacion,
+                duration: `${duration}ms`
+            }, 'database');
+            logger.databaseQuery('INSERT INTO clientes', duration, 0, [nombre, direccion, identificacion]);
             res.status(500).json({ error: err.message });
             return;
         }
-        console.log('Cliente creado exitosamente con ID:', this.lastID);
+        
+        logger.databaseQuery('INSERT INTO clientes', duration, 1, [nombre, direccion, identificacion]);
+        logger.operationCreate('cliente', this.lastID, { nombre, identificacion });
+        
         res.json({ 
             success: true, 
             data: { 
@@ -1861,6 +2147,8 @@ app.get('/api/facturas', async (req, res) => {
 
 // POST - Crear nueva factura (Cumpliendo Ley Antifraude)
 app.post('/api/facturas', async (req, res) => {
+    const startTime = Date.now();
+    
     try {
         const { 
             numero_factura, 
@@ -1880,10 +2168,21 @@ app.post('/api/facturas', async (req, res) => {
             referencia_operacion
         } = req.body;
         
+        logger.info('Iniciando creación de factura', {
+            numero_factura,
+            empresa_id,
+            cliente_id,
+            total,
+            productos_count: productos?.length || 0
+        }, 'operations');
+        
         // ==================== VALIDACIONES ESTRICTAS ====================
         
         // 1. Validar empresa_id ANTES de cualquier procesamiento
         if (!empresa_id || empresa_id === null || empresa_id === undefined) {
+            logger.warn('Intento de crear factura sin empresa_id', {
+                body: logger.sanitizeData(req.body)
+            }, 'operations');
             return res.status(400).json({ 
                 success: false, 
                 error: 'empresa_id es obligatorio para crear una factura' 
@@ -1891,19 +2190,29 @@ app.post('/api/facturas', async (req, res) => {
         }
         
         // 2. Verificar que la empresa existe
+        const empresaStartTime = Date.now();
         const empresaExiste = await new Promise((resolve, reject) => {
             db.get("SELECT id, nombre FROM empresas WHERE id = ?", [empresa_id], (err, row) => {
-                        if (err) reject(err);
-                        else resolve(row);
-                    });
-                });
+                const duration = Date.now() - empresaStartTime;
+                logger.databaseQuery('SELECT empresas WHERE id', duration, row ? 1 : 0, [empresa_id]);
+                if (err) {
+                    logger.error('Error verificando empresa', { error: err.message, empresa_id }, 'database');
+                    reject(err);
+                } else {
+                    resolve(row);
+                }
+            });
+        });
                 
         if (!empresaExiste) {
+            logger.warn('Intento de crear factura con empresa inexistente', { empresa_id }, 'operations');
             return res.status(400).json({ 
                 success: false, 
                 error: `La empresa con ID ${empresa_id} no existe en la base de datos` 
             });
         }
+        
+        logger.debug('Empresa validada', { empresa_id, nombre: empresaExiste.nombre }, 'operations');
         
         // 3. Validar número de factura único para la empresa
         if (numero_factura) {
@@ -1940,7 +2249,12 @@ app.post('/api/facturas', async (req, res) => {
             }
         }
         
-        console.log(`✅ Validaciones pasadas - Creando factura para empresa: ${empresaExiste.nombre} (ID: ${empresa_id})`);
+        logger.info('Validaciones pasadas - Creando factura', {
+            empresa: empresaExiste.nombre,
+            empresa_id,
+            numero_factura,
+            cliente_id
+        }, 'operations');
         
         // ==================== FIN VALIDACIONES ESTRICTAS ====================
         
@@ -2110,12 +2424,22 @@ app.post('/api/facturas', async (req, res) => {
                 };
                 
                 await sistemaAuditoria.registrarCreacionFactura(datosCompletosFactura);
+                logger.debug('Factura registrada en auditoría', { facturaId, numero_factura }, 'operations');
                 
                 // Generar código VeriFactu
                 const codigoVeriFactu = sistemaIntegridad.generarCodigoVeriFactu(datosCompletosFactura);
+                logger.debug('Código VeriFactu generado', { facturaId, codigoVeriFactu }, 'operations');
                 
                 // Actualizar factura con código VeriFactu
-                db.run('UPDATE facturas SET codigo_verifactu = ? WHERE id = ?', [codigoVeriFactu, facturaId]);
+                const updateStartTime = Date.now();
+                db.run('UPDATE facturas SET codigo_verifactu = ? WHERE id = ?', [codigoVeriFactu, facturaId], function(err) {
+                    const duration = Date.now() - updateStartTime;
+                    if (err) {
+                        logger.error('Error actualizando código VeriFactu', { error: err.message, facturaId }, 'database');
+                    } else {
+                        logger.databaseQuery('UPDATE facturas SET codigo_verifactu', duration, this.changes, [facturaId]);
+                    }
+                });
                 
                 // Generar firma digital de la factura con certificado de empresa
                 const datosFacturaParaFirma = {
@@ -2134,15 +2458,40 @@ app.post('/api/facturas', async (req, res) => {
                     };
                     
                     // Actualizar factura con información de firma digital
+                    const firmaStartTime = Date.now();
                     db.run('UPDATE facturas SET respuesta_aeat = ? WHERE id = ?', 
-                        [JSON.stringify({ firma_digital: firmaDigital.firma, archivo_firma: firmaDigital.archivo }), facturaId]);
+                        [JSON.stringify({ firma_digital: firmaDigital.firma, archivo_firma: firmaDigital.archivo }), facturaId], function(err) {
+                            const duration = Date.now() - firmaStartTime;
+                            if (err) {
+                                logger.error('Error actualizando firma digital', { error: err.message, facturaId }, 'database');
+                            } else {
+                                logger.databaseQuery('UPDATE facturas SET respuesta_aeat', duration, this.changes, [facturaId]);
+                            }
+                        });
                     
-                    console.log('🔐 Factura firmada digitalmente:', firmaDigital.archivo);
+                    logger.info('Factura firmada digitalmente', { 
+                        facturaId, 
+                        archivo: firmaDigital.archivo 
+                    }, 'operations');
                 } else {
-                    console.log('⚠️ No se pudo firmar la factura:', resultadoFirma.error);
+                    logger.warn('No se pudo firmar la factura', { 
+                        facturaId, 
+                        error: resultadoFirma.error 
+                    }, 'operations');
                 }
                 
-                console.log('✅ Factura creada con cumplimiento de Ley Antifraude:', facturaId);
+                const totalDuration = Date.now() - startTime;
+                logger.invoiceCreated(facturaId, numero_factura, total, cliente_id);
+                logger.info('Factura creada exitosamente con cumplimiento de Ley Antifraude', {
+                    facturaId,
+                    numero_factura,
+                    numero_serie,
+                    empresa_id,
+                    cliente_id,
+                    total,
+                    duration: `${totalDuration}ms`,
+                    productos_count: productos?.length || 0
+                }, 'operations');
                 
                 res.json({ 
                     success: true, 
@@ -2158,8 +2507,15 @@ app.post('/api/facturas', async (req, res) => {
                 });
                 
             } catch (error) {
-                console.error('❌ Error en proceso de creación de factura:', error);
-                console.error('❌ Stack trace:', error.stack);
+                const totalDuration = Date.now() - startTime;
+                logger.error('Error en proceso de creación de factura', {
+                    error: error.message,
+                    stack: error.stack,
+                    empresa_id,
+                    cliente_id,
+                    numero_factura,
+                    duration: `${totalDuration}ms`
+                }, 'operations');
                 res.status(500).json({ 
                     success: false,
                     error: 'Error en el proceso de creación de factura',
@@ -3791,24 +4147,123 @@ app.post('/api/usuarios', sistemaControlAcceso.middlewareAutenticacion(),
     });
 }
 
+// Endpoint para obtener estadísticas de logs
+app.get('/api/logs/stats', requireAuth, requireRole(['admin']), (req, res) => {
+    try {
+        const stats = logger.getStats();
+        res.json({
+            success: true,
+            data: stats
+        });
+    } catch (error) {
+        logger.error('Error obteniendo estadísticas de logs', { error: error.message }, 'operations');
+        res.status(500).json({
+            success: false,
+            error: 'Error obteniendo estadísticas de logs'
+        });
+    }
+});
+
 // Manejo de errores
 app.use((err, req, res, next) => {
-    console.error(err.stack);
+    logger.error('Error no manejado en la aplicación', { 
+        error: err.message, 
+        stack: err.stack,
+        url: req.url,
+        method: req.method
+    }, 'error');
     res.status(500).json({ error: 'Algo salió mal!' });
 });
 
+// Función para obtener IPs locales
+function getLocalIPs() {
+    const os = require('os');
+    const interfaces = os.networkInterfaces();
+    const ips = [];
+    
+    for (const name of Object.keys(interfaces)) {
+        for (const iface of interfaces[name]) {
+            // Ignorar IPv6 y direcciones internas
+            if (iface.family === 'IPv4' && !iface.internal) {
+                ips.push(iface.address);
+            }
+        }
+    }
+    
+    return ips;
+}
+
+// Función para configurar firewall automáticamente (Windows)
+function configureFirewall(port) {
+    // Verificar si la regla ya existe
+    exec(`netsh advfirewall firewall show rule name="Node.js Backend - Puerto ${port}"`, (error, stdout) => {
+        if (stdout && stdout.includes('Node.js Backend')) {
+            logger.info(`✅ Regla del firewall ya existe para puerto ${port}`, {}, 'general');
+            return;
+        }
+        
+        // Intentar crear la regla (requiere permisos de administrador)
+        const command = `netsh advfirewall firewall add rule name="Node.js Backend - Puerto ${port}" dir=in action=allow protocol=TCP localport=${port}`;
+        
+        exec(command, (error, stdout, stderr) => {
+            if (error) {
+                // Si falla, probablemente no tiene permisos de administrador
+                logger.warn(`⚠️  No se pudo configurar el firewall automáticamente.`, {}, 'general');
+                logger.warn(`   Ejecuta como Administrador: .\\configurar-firewall.ps1`, {}, 'general');
+                logger.warn(`   O configura manualmente el puerto ${port} en el Firewall de Windows`, {}, 'general');
+            } else {
+                logger.info(`✅ Regla del firewall creada para puerto ${port}`, {}, 'general');
+                console.log(`✅ Firewall configurado: puerto ${port} permitido`);
+            }
+        });
+    });
+}
+
 // Iniciar servidor HTTP
-const server = app.listen(PORT, () => {
-    logger.systemEvent('Servidor backend iniciado', { 
-        port: PORT, 
+const server = app.listen(PORT, HOST, () => {
+    const localIPs = getLocalIPs();
+    
+    logger.systemEvent('Servidor backend iniciado', {
+        port: PORT,
         host: HOST,
         environment: config.get('server.environment')
     });
-    logger.info(`📡 API disponible en: http://localhost:${PORT}`);
-    logger.info(`📋 Documentación: http://localhost:${PORT}/`);
+    
+    // Logs con URLs completas
+    logger.info(`📡 API disponible localmente: http://localhost:${PORT}`, {}, 'general');
+    logger.info(`📋 Documentación: http://localhost:${PORT}/`, {}, 'general');
+    
+    // Mostrar URLs para acceso desde otros ordenadores
+    if (localIPs.length > 0) {
+        logger.info(`🌐 URLs para acceso desde otros ordenadores:`, {}, 'general');
+        localIPs.forEach(ip => {
+            logger.info(`   • http://${ip}:${PORT}`, {}, 'general');
+            logger.info(`   • http://${ip}:${PORT}/api/clientes`, {}, 'general');
+        });
+    } else {
+        logger.warn('⚠️  No se detectaron IPs de red local', {}, 'general');
+    }
+    
+    // Programar limpieza de logs antiguos cada 24 horas
+    setInterval(() => {
+        logger.cleanupOldLogs(30); // Mantener logs de 30 días
+    }, 24 * 60 * 60 * 1000);
     
     console.log(`🚀 Servidor HTTP ejecutándose en http://${HOST}:${PORT}`);
     console.log(`📱 Aplicación de escritorio puede conectarse desde Electron`);
+    
+    // Mostrar URLs en consola también
+    if (localIPs.length > 0) {
+        console.log(`\n🌐 URLs para acceso desde otros ordenadores:`);
+        localIPs.forEach(ip => {
+            console.log(`   • http://${ip}:${PORT}`);
+        });
+    }
+    
+    // Intentar configurar firewall automáticamente (solo Windows)
+    if (process.platform === 'win32') {
+        configureFirewall(PORT);
+    }
     
     // Configurar HTTPS para aplicación de escritorio
     if (config.get('electron.electronMode')) {
@@ -3818,8 +4273,9 @@ const server = app.listen(PORT, () => {
     // Inicializar sistemas de rendimiento
     initPerformanceSystems();
     
-    // Inicializar módulos de Ley Antifraude
-    initModulosAntifraude();
+    // Los módulos de Ley Antifraude se inicializan desde initDatabase()
+    // No es necesario llamarlos aquí ya que initDatabase() se ejecuta antes
+    // de que el servidor esté listo
 });
 
 // Configurar manejo de errores del servidor

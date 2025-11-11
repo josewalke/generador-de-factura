@@ -36,23 +36,40 @@ class ConfigManager {
             // Configuración del servidor
             server: {
                 port: process.env.PORT || 3000,
-                host: process.env.HOST || 'localhost',
+                // Usar 0.0.0.0 para permitir conexiones desde otros ordenadores
+                host: process.env.HOST || '0.0.0.0',
                 environment: process.env.NODE_ENV || 'development',
                 cors: {
                     origin: function (origin, callback) {
                         // Permitir requests sin origin (como mobile apps o curl)
                         if (!origin) return callback(null, true);
                         
-                        const allowedOrigins = [
-                            'http://localhost:5173',
-                            'http://localhost:3000',
-                            'file://'
-                        ];
+                        // En producción, permitir todos los orígenes para facilitar acceso desde otros ordenadores
+                        // En desarrollo, mantener lista restrictiva
+                        const isProduction = process.env.NODE_ENV === 'production';
                         
-                        if (allowedOrigins.indexOf(origin) !== -1) {
+                        if (isProduction) {
+                            // En producción, permitir todos los orígenes
+                            // (Puedes restringir esto más tarde si es necesario)
                             callback(null, true);
                         } else {
-                            callback(new Error('No permitido por CORS'));
+                            // En desarrollo, lista restrictiva
+                            const allowedOrigins = [
+                                'http://localhost:5173',
+                                'http://localhost:3000',
+                                'http://127.0.0.1:5173',
+                                'http://127.0.0.1:3000',
+                                'file://'
+                            ];
+                            
+                            // También permitir cualquier IP local (192.168.x.x, 10.x.x.x, etc.)
+                            const isLocalNetwork = /^https?:\/\/(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|localhost|127\.0\.0\.1)/.test(origin);
+                            
+                            if (allowedOrigins.indexOf(origin) !== -1 || isLocalNetwork) {
+                                callback(null, true);
+                            } else {
+                                callback(new Error('No permitido por CORS'));
+                            }
                         }
                     },
                     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -62,11 +79,21 @@ class ConfigManager {
                 }
             },
             
-            // Configuración de la base de datos
+            // Configuración de la base de datos (PostgreSQL)
             database: {
+                type: process.env.DB_TYPE || 'postgresql', // 'postgresql' o 'sqlite'
+                // PostgreSQL
+                host: process.env.DB_HOST || 'localhost',
+                port: parseInt(process.env.DB_PORT) || 5432,
+                database: process.env.DB_NAME || 'telwagen',
+                user: process.env.DB_USER || 'postgres',
+                password: process.env.DB_PASSWORD || '',
+                maxConnections: parseInt(process.env.DB_MAX_CONNECTIONS) || 20,
+                connectionTimeout: parseInt(process.env.DB_CONNECTION_TIMEOUT) || 2000,
+                idleTimeout: parseInt(process.env.DB_IDLE_TIMEOUT) || 30000,
+                // SQLite (para compatibilidad)
                 path: process.env.DB_PATH || './telwagen.db',
                 timeout: parseInt(process.env.DB_TIMEOUT) || 30000,
-                maxConnections: parseInt(process.env.DB_MAX_CONNECTIONS) || 10,
                 journalMode: process.env.DB_JOURNAL_MODE || 'WAL',
                 synchronous: process.env.DB_SYNCHRONOUS || 'NORMAL',
                 cacheSize: parseInt(process.env.DB_CACHE_SIZE) || 2000

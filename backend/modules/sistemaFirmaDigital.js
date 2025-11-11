@@ -9,7 +9,8 @@ const DetectorCertificadosWindows = require('./detectorCertificadosWindows');
  * Integra detección de certificados instalados en Windows
  */
 class SistemaFirmaDigital {
-    constructor() {
+    constructor(database = null) {
+        this.db = database;
         this.algoritmoFirma = 'sha256';
         this.algoritmoCifrado = 'aes-256-cbc';
         this.directorioCertificados = path.join(__dirname, '..', 'certificados');
@@ -188,24 +189,14 @@ class SistemaFirmaDigital {
             const sqlite3 = require('sqlite3').verbose();
             const path = require('path');
             
-            const dbPath = path.join(__dirname, '..', 'database', 'telwagen.db');
-            
-            return new Promise((resolve, reject) => {
-                const db = new sqlite3.Database(dbPath, (err) => {
-                    if (err) {
-                        reject(err);
-                        return;
-                    }
-                });
-
-                // Obtener la primera empresa (empresa principal)
-                db.get("SELECT * FROM empresas ORDER BY id LIMIT 1", (err, row) => {
-                    db.close();
-                    
-                    if (err) {
-                        reject(err);
-                        return;
-                    }
+            // Usar el wrapper db si está disponible, sino usar SQLite directamente
+            if (this.db) {
+                return new Promise((resolve, reject) => {
+                    this.db.get("SELECT * FROM empresas ORDER BY id LIMIT 1", (err, row) => {
+                        if (err) {
+                            reject(err);
+                            return;
+                        }
                     
                     if (!row) {
                         // Si no hay empresas, usar datos por defecto
@@ -220,8 +211,46 @@ class SistemaFirmaDigital {
                     }
                     
                     resolve(row);
+                    });
                 });
-            });
+            } else {
+                // Fallback a SQLite si no hay wrapper db
+                const dbPath = path.join(__dirname, '..', 'database', 'telwagen.db');
+                
+                return new Promise((resolve, reject) => {
+                    const sqlite3 = require('sqlite3').verbose();
+                    const db = new sqlite3.Database(dbPath, (err) => {
+                        if (err) {
+                            reject(err);
+                            return;
+                        }
+                    });
+
+                    // Obtener la primera empresa (empresa principal)
+                    db.get("SELECT * FROM empresas ORDER BY id LIMIT 1", (err, row) => {
+                        db.close();
+                        
+                        if (err) {
+                            reject(err);
+                            return;
+                        }
+                        
+                        if (!row) {
+                            // Si no hay empresas, usar datos por defecto
+                            resolve({
+                                nombre: 'Telwagen Car Ibérica, S.L.',
+                                cif: 'B-93.289.585',
+                                direccion: 'C. / Tomás Miller N° 48 Local, 35007 Las Palmas de Gran Canaria',
+                                email: 'info@telwagen.es',
+                                telefono: '+34 928 123 456'
+                            });
+                            return;
+                        }
+                        
+                        resolve(row);
+                    });
+                });
+            }
         } catch (error) {
             console.error('❌ Error al obtener datos de empresa:', error);
             // Fallback a datos por defecto
