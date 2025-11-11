@@ -1627,6 +1627,9 @@ app.delete('/api/clientes/:id', (req, res) => {
 // GET - Obtener todos los coches (mantener para compatibilidad)
 app.get('/api/coches', async (req, res) => {
     try {
+        const dbType = config.get('database.type') || 'postgresql';
+        const activoValue = dbType === 'postgresql' ? 'true' : '1';
+        
         // Verificar consistencia del caché antes de devolver datos
         if (global.cacheManager) {
             const cachedData = await global.cacheManager.verifyAndCorrect('coches:all', async () => {
@@ -1642,7 +1645,7 @@ app.get('/api/coches', async (req, res) => {
                         LEFT JOIN detalles_factura df ON (df.descripcion LIKE '%' || c.matricula || '%')
                         LEFT JOIN facturas f ON df.factura_id = f.id AND f.estado IN ('pagada', 'pendiente')
                         LEFT JOIN clientes cl ON f.cliente_id = cl.id
-                        WHERE c.activo = 1 
+                        WHERE c.activo = ${activoValue} 
                         ORDER BY c.fecha_creacion DESC
                     `, (err, rows) => {
                         if (err) reject(err);
@@ -1669,7 +1672,7 @@ app.get('/api/coches', async (req, res) => {
             LEFT JOIN detalles_factura df ON (df.descripcion LIKE '%' || c.matricula || '%')
             LEFT JOIN facturas f ON df.factura_id = f.id AND f.estado IN ('pagada', 'pendiente')
             LEFT JOIN clientes cl ON f.cliente_id = cl.id
-            WHERE c.activo = 1 
+            WHERE c.activo = ${activoValue} 
             ORDER BY c.fecha_creacion DESC
         `, (err, rows) => {
             if (err) {
@@ -1692,6 +1695,9 @@ app.get('/api/coches', async (req, res) => {
 
 // GET - Obtener solo coches disponibles (no vendidos)
 app.get('/api/coches/disponibles', (req, res) => {
+    const dbType = config.get('database.type') || 'postgresql';
+    const activoValue = dbType === 'postgresql' ? 'true' : '1';
+    
     db.all(`
         SELECT c.*,
                0 as vendido,
@@ -1702,7 +1708,7 @@ app.get('/api/coches/disponibles', (req, res) => {
         FROM coches c
         LEFT JOIN detalles_factura df ON (df.descripcion LIKE '%' || c.matricula || '%')
         LEFT JOIN facturas f ON df.factura_id = f.id AND f.estado IN ('pagada', 'pendiente')
-        WHERE c.activo = 1 AND f.id IS NULL
+        WHERE c.activo = ${activoValue} AND f.id IS NULL
         ORDER BY c.fecha_creacion DESC
     `, (err, rows) => {
         if (err) {
@@ -1715,6 +1721,9 @@ app.get('/api/coches/disponibles', (req, res) => {
 
 // GET - Obtener solo coches vendidos
 app.get('/api/coches/vendidos', (req, res) => {
+    const dbType = config.get('database.type') || 'postgresql';
+    const activoValue = dbType === 'postgresql' ? 'true' : '1';
+    
     db.all(`
         SELECT c.*,
                1 as vendido,
@@ -1726,7 +1735,7 @@ app.get('/api/coches/vendidos', (req, res) => {
         LEFT JOIN detalles_factura df ON (df.descripcion LIKE '%' || c.matricula || '%')
         LEFT JOIN facturas f ON df.factura_id = f.id AND f.estado IN ('pagada', 'pendiente')
         LEFT JOIN clientes cl ON f.cliente_id = cl.id
-        WHERE c.activo = 1 AND f.id IS NOT NULL
+        WHERE c.activo = ${activoValue} AND f.id IS NOT NULL
         ORDER BY f.fecha_creacion DESC
     `, (err, rows) => {
         if (err) {
@@ -1739,6 +1748,9 @@ app.get('/api/coches/vendidos', (req, res) => {
 
 // GET - Obtener coches disponibles para productos (con información de productos asociados)
 app.get('/api/coches/productos', (req, res) => {
+    const dbType = config.get('database.type') || 'postgresql';
+    const activoValue = dbType === 'postgresql' ? 'true' : '1';
+    
     db.all(`
         SELECT c.*, 
                CASE WHEN p.id IS NOT NULL THEN 1 ELSE 0 END as tiene_producto,
@@ -1746,7 +1758,7 @@ app.get('/api/coches/productos', (req, res) => {
                p.codigo as codigo_producto
         FROM coches c
         LEFT JOIN productos p ON c.matricula = p.codigo
-        WHERE c.activo = 1 
+        WHERE c.activo = ${activoValue} 
         ORDER BY c.fecha_creacion DESC
     `, (err, rows) => {
         if (err) {
@@ -1760,8 +1772,10 @@ app.get('/api/coches/productos', (req, res) => {
 // GET - Obtener coche por ID
 app.get('/api/coches/:id', (req, res) => {
     const { id } = req.params;
+    const dbType = config.get('database.type') || 'postgresql';
+    const activoValue = dbType === 'postgresql' ? 'true' : '1';
     
-    db.get('SELECT * FROM coches WHERE id = ? AND activo = 1', [id], (err, row) => {
+    db.get(`SELECT * FROM coches WHERE id = ? AND activo = ${activoValue}`, [id], (err, row) => {
         if (err) {
             res.status(500).json({ error: err.message });
             return;
