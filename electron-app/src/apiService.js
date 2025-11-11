@@ -309,6 +309,16 @@ class ApiService {
         }
     }
 
+    async obtenerCochesVendidos() {
+        try {
+            const response = await axios.get(`${this.baseUrl}/api/coches/vendidos`);
+            return response.data;
+        } catch (error) {
+            console.error('Error al obtener coches vendidos:', error);
+            throw error;
+        }
+    }
+
     async crearProductoDesdeCoche(cocheId, precio, cantidad = 1) {
         try {
             const response = await axios.post(`${this.baseUrl}/api/productos/desde-coche`, {

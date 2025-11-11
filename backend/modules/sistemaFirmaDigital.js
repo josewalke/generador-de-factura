@@ -24,6 +24,7 @@ class SistemaFirmaDigital {
         // Certificado por defecto para desarrollo (se inicializará de forma asíncrona)
         this.certificadoPorDefecto = null;
         this.certificadosWindows = [];
+        this.deteccionEnProceso = false; // Bandera para evitar detecciones duplicadas
         this.inicializarCertificado();
     }
 
@@ -31,32 +32,34 @@ class SistemaFirmaDigital {
      * Inicializa el certificado de forma asíncrona
      */
     async inicializarCertificado() {
-        try {
-            // Primero intentar detectar certificados de Windows
-            await this.detectarCertificadosWindows();
-            
-            // Si hay certificados de Windows, usar el recomendado
-            if (this.certificadosWindows.length > 0) {
-                const certificadoRecomendado = await this.detectorCertificados.obtenerCertificadoRecomendado();
-                if (certificadoRecomendado.success) {
-                    this.certificadoPorDefecto = this.convertirCertificadoWindows(certificadoRecomendado.certificado);
-                    console.log('✅ Certificado de Windows detectado y configurado:', this.certificadoPorDefecto.empresa);
-                    return;
+        // Hacer la inicialización de forma asíncrona sin bloquear el arranque
+        setImmediate(async () => {
+            try {
+                // Primero intentar detectar certificados de Windows
+                await this.detectarCertificadosWindows();
+                
+                // Si hay certificados de Windows, usar el recomendado
+                if (this.certificadosWindows.length > 0) {
+                    const certificadoRecomendado = await this.detectorCertificados.obtenerCertificadoRecomendado();
+                    if (certificadoRecomendado.success) {
+                        this.certificadoPorDefecto = this.convertirCertificadoWindows(certificadoRecomendado.certificado);
+                        console.log('✅ Certificado de Windows detectado y configurado:', this.certificadoPorDefecto.empresa);
+                        return;
+                    }
                 }
-            }
-            
-            // Fallback a certificado de desarrollo
-            this.certificadoPorDefecto = await this.generarCertificadoDesarrollo();
-            console.log('✅ Certificado de desarrollo inicializado con datos reales');
-        } catch (error) {
-            console.error('❌ Error al inicializar certificado:', error);
-            // Fallback a certificado básico
-            this.certificadoPorDefecto = {
-                empresa: 'Telwagen Car Ibérica, S.L.',
-                cif: 'B-93.289.585',
-                direccion: 'C. / Tomás Miller N° 48 Local, 35007 Las Palmas de Gran Canaria',
-                email: 'info@telwagen.es',
-                telefono: '+34 928 123 456',
+                
+                // Fallback a certificado de desarrollo
+                this.certificadoPorDefecto = await this.generarCertificadoDesarrollo();
+                console.log('✅ Certificado de desarrollo inicializado con datos reales');
+            } catch (error) {
+                console.warn('⚠️ Error inicializando certificado:', error.message);
+                // Fallback a certificado básico
+                this.certificadoPorDefecto = {
+                    empresa: 'Telwagen Car Ibérica, S.L.',
+                    cif: 'B-93.289.585',
+                    direccion: 'C. / Tomás Miller N° 48 Local, 35007 Las Palmas de Gran Canaria',
+                    email: 'info@telwagen.es',
+                    telefono: '+34 928 123 456',
                 validoDesde: new Date(),
                 validoHasta: new Date(Date.now() + 365 * 24 * 60 * 60 * 1000),
                 serial: 'TELWAGEN-DEV-FALLBACK',
@@ -66,7 +69,8 @@ class SistemaFirmaDigital {
                 emisor: 'Telwagen Car Ibérica, S.L.',
                 sujeto: 'Telwagen Car Ibérica, S.L.'
             };
-        }
+            }
+        });
     }
 
     /**

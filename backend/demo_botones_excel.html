@@ -1,0 +1,324 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Demo - Nuevos Botones Excel</title>
+    <style>
+        body {
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            margin: 0;
+            padding: 40px;
+            min-height: 100vh;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .demo-container {
+            background: white;
+            border-radius: 20px;
+            padding: 40px;
+            box-shadow: 0 20px 40px rgba(0,0,0,0.1);
+            text-align: center;
+            max-width: 600px;
+        }
+
+        .demo-title {
+            color: #333;
+            margin-bottom: 30px;
+            font-size: 28px;
+            font-weight: 600;
+        }
+
+        .demo-subtitle {
+            color: #666;
+            margin-bottom: 40px;
+            font-size: 16px;
+            line-height: 1.6;
+        }
+
+        .panel-actions {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 20px;
+            margin-bottom: 30px;
+            padding: 20px;
+            background: #f8f9fa;
+            border-radius: 12px;
+        }
+
+        .btn-secondary-modern {
+            background: linear-gradient(135deg, #6c757d, #495057);
+            color: white;
+            border: none;
+            border-radius: 8px;
+            padding: 12px 20px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .btn-secondary-modern:hover {
+            background: linear-gradient(135deg, #5a6268, #343a40);
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        .btn-icon {
+            font-size: 16px;
+        }
+
+        .btn-text {
+            font-size: 14px;
+        }
+
+        /* Contenedor de acciones Excel */
+        .excel-actions {
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+
+        /* Botones Excel base */
+        .btn-excel {
+            width: 40px;
+            height: 40px;
+            border: none;
+            border-radius: 8px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .btn-excel:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+        }
+
+        .btn-excel:active {
+            transform: translateY(0);
+        }
+
+        /* Botón Importar */
+        .btn-excel-import {
+            background: linear-gradient(135deg, #28a745, #20c997);
+            color: white;
+        }
+
+        .btn-excel-import:hover {
+            background: linear-gradient(135deg, #218838, #1ea085);
+            box-shadow: 0 4px 12px rgba(40, 167, 69, 0.3);
+        }
+
+        /* Botón Exportar */
+        .btn-excel-export {
+            background: linear-gradient(135deg, #007bff, #6610f2);
+            color: white;
+        }
+
+        .btn-excel-export:hover {
+            background: linear-gradient(135deg, #0056b3, #520dc2);
+            box-shadow: 0 4px 12px rgba(0, 123, 255, 0.3);
+        }
+
+        /* Iconos Excel */
+        .excel-icon {
+            font-size: 18px;
+            transition: transform 0.3s ease;
+        }
+
+        .btn-excel:hover .excel-icon {
+            transform: scale(1.1);
+        }
+
+        /* Tooltip personalizado */
+        .btn-excel::after {
+            content: attr(title);
+            position: absolute;
+            bottom: -35px;
+            left: 50%;
+            transform: translateX(-50%);
+            background: rgba(0, 0, 0, 0.8);
+            color: white;
+            padding: 6px 10px;
+            border-radius: 4px;
+            font-size: 12px;
+            white-space: nowrap;
+            opacity: 0;
+            visibility: hidden;
+            transition: all 0.3s ease;
+            z-index: 1000;
+            pointer-events: none;
+        }
+
+        .btn-excel:hover::after {
+            opacity: 1;
+            visibility: visible;
+        }
+
+        .comparison {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 30px;
+            margin-top: 40px;
+        }
+
+        .comparison-item {
+            padding: 20px;
+            border-radius: 12px;
+            border: 2px solid #e9ecef;
+        }
+
+        .comparison-item.old {
+            border-color: #dc3545;
+            background: #fff5f5;
+        }
+
+        .comparison-item.new {
+            border-color: #28a745;
+            background: #f8fff8;
+        }
+
+        .comparison-title {
+            font-weight: 600;
+            margin-bottom: 15px;
+            font-size: 16px;
+        }
+
+        .comparison-item.old .comparison-title {
+            color: #dc3545;
+        }
+
+        .comparison-item.new .comparison-title {
+            color: #28a745;
+        }
+
+        .features {
+            text-align: left;
+            margin-top: 20px;
+        }
+
+        .feature {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+
+        .feature-icon {
+            font-size: 16px;
+        }
+    </style>
+</head>
+<body>
+    <div class="demo-container">
+        <h1 class="demo-title">🎨 Nuevo Diseño de Botones Excel</h1>
+        <p class="demo-subtitle">
+            Diseño minimalista y elegante con solo iconos intuitivos
+        </p>
+
+        <div class="panel-actions">
+            <button class="btn-secondary-modern">
+                <span class="btn-icon">🔧</span>
+                <span class="btn-text">Filtros</span>
+            </button>
+            
+            <div class="excel-actions">
+                <button class="btn-excel btn-excel-import" title="Importar desde Excel">
+                    <span class="excel-icon">📊</span>
+                </button>
+                <button class="btn-excel btn-excel-export" title="Exportar a Excel">
+                    <span class="excel-icon">📤</span>
+                </button>
+            </div>
+            
+            <button class="btn-secondary-modern">
+                <span class="btn-icon">➕</span>
+                <span class="btn-text">Nuevo Coche</span>
+            </button>
+        </div>
+
+        <div class="comparison">
+            <div class="comparison-item old">
+                <div class="comparison-title">❌ Diseño Anterior</div>
+                <div class="features">
+                    <div class="feature">
+                        <span class="feature-icon">📏</span>
+                        <span>Botones grandes con texto</span>
+                    </div>
+                    <div class="feature">
+                        <span class="feature-icon">🎨</span>
+                        <span>Diseño estándar</span>
+                    </div>
+                    <div class="feature">
+                        <span class="feature-icon">📱</span>
+                        <span>Ocupa mucho espacio</span>
+                    </div>
+                </div>
+            </div>
+
+            <div class="comparison-item new">
+                <div class="comparison-title">✅ Nuevo Diseño</div>
+                <div class="features">
+                    <div class="feature">
+                        <span class="feature-icon">🎯</span>
+                        <span>Iconos intuitivos</span>
+                    </div>
+                    <div class="feature">
+                        <span class="feature-icon">✨</span>
+                        <span>Animaciones suaves</span>
+                    </div>
+                    <div class="feature">
+                        <span class="feature-icon">💡</span>
+                        <span>Tooltips informativos</span>
+                    </div>
+                    <div class="feature">
+                        <span class="feature-icon">📱</span>
+                        <span>Compacto y elegante</span>
+                    </div>
+                    <div class="feature">
+                        <span class="feature-icon">🌈</span>
+                        <span>Gradientes modernos</span>
+                    </div>
+                </div>
+            </div>
+        </div>
+
+        <div style="margin-top: 30px; padding: 20px; background: #e3f2fd; border-radius: 12px;">
+            <h3 style="color: #1976d2; margin-bottom: 15px;">🚀 Características del Nuevo Diseño</h3>
+            <div style="display: grid; grid-template-columns: repeat(2, 1fr); gap: 15px; text-align: left;">
+                <div>
+                    <strong>📊 Importar:</strong><br>
+                    <small>Verde con gradiente</small>
+                </div>
+                <div>
+                    <strong>📤 Exportar:</strong><br>
+                    <small>Azul con gradiente</small>
+                </div>
+                <div>
+                    <strong>🎨 Hover:</strong><br>
+                    <small>Elevación y sombra</small>
+                </div>
+                <div>
+                    <strong>💡 Tooltip:</strong><br>
+                    <small>Descripción al pasar</small>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>
+
+

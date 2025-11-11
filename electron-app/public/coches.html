@@ -32,6 +32,22 @@
             <!-- Estadísticas mejoradas -->
             <div class="stats-grid">
                 <div class="stat-card-modern">
+                    <div class="stat-icon-modern">🚗</div>
+                    <div class="stat-content-modern">
+                        <div class="stat-number-modern" id="total-disponibles">-</div>
+                        <div class="stat-label-modern">Disponibles</div>
+                    </div>
+                    <div class="stat-progress"></div>
+                </div>
+                <div class="stat-card-modern">
+                    <div class="stat-icon-modern">✅</div>
+                    <div class="stat-content-modern">
+                        <div class="stat-number-modern" id="total-vendidos">-</div>
+                        <div class="stat-label-modern">Vendidos</div>
+                    </div>
+                    <div class="stat-progress"></div>
+                </div>
+                <div class="stat-card-modern">
                     <div class="stat-icon-modern">📊</div>
                     <div class="stat-content-modern">
                         <div class="stat-number-modern" id="total-coches">-</div>
@@ -41,12 +57,12 @@
                 </div>
             </div>
 
-            <!-- Panel principal de coches -->
+            <!-- Panel de acciones -->
             <div class="clientes-panel">
                 <div class="panel-header">
                     <div class="panel-title">
-                        <span class="title-icon">📋</span>
-                        <h2>Lista de Coches</h2>
+                        <span class="title-icon">🔧</span>
+                        <h2>Acciones</h2>
                     </div>
                     <div class="panel-actions">
                         <div class="search-container">
@@ -57,6 +73,14 @@
                             <span class="btn-icon">🔧</span>
                             <span class="btn-text">Filtros</span>
                         </button>
+                        <div class="excel-actions">
+                            <button id="btn-importar-excel" class="btn-excel btn-excel-import" title="Importar desde Excel">
+                                <span class="excel-icon">📊</span>
+                            </button>
+                            <button id="btn-exportar-excel" class="btn-excel btn-excel-export" title="Exportar a Excel">
+                                <span class="excel-icon">📤</span>
+                            </button>
+                        </div>
                         <button id="btn-nuevo-coche" class="btn-primary-modern">
                             <span class="btn-icon">➕</span>
                             <span class="btn-text">Nuevo Coche</span>
@@ -66,12 +90,47 @@
                         </button>
                     </div>
                 </div>
+            </div>
+
+            <!-- Sección de Coches Disponibles -->
+            <div class="clientes-panel">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        <span class="title-icon">🚗</span>
+                        <h2>Coches Disponibles</h2>
+                    </div>
+                    <div class="panel-actions">
+                        <span class="coches-count" id="count-disponibles">0 coches</span>
+                    </div>
+                </div>
                 
                 <div class="clientes-content">
-                    <div class="clientes-list-modern" id="coches-list">
+                    <div class="clientes-list-modern" id="coches-disponibles-list">
                         <div class="loading-state">
                             <div class="loading-spinner-modern"></div>
-                            <p>Cargando coches...</p>
+                            <p>Cargando coches disponibles...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Sección de Coches Vendidos -->
+            <div class="clientes-panel">
+                <div class="panel-header">
+                    <div class="panel-title">
+                        <span class="title-icon">✅</span>
+                        <h2>Coches Vendidos</h2>
+                    </div>
+                    <div class="panel-actions">
+                        <span class="coches-count" id="count-vendidos">0 coches</span>
+                    </div>
+                </div>
+                
+                <div class="clientes-content">
+                    <div class="clientes-list-modern" id="coches-vendidos-list">
+                        <div class="loading-state">
+                            <div class="loading-spinner-modern"></div>
+                            <p>Cargando coches vendidos...</p>
                         </div>
                     </div>
                 </div>
@@ -149,6 +208,88 @@
             <div class="modal-footer-modern">
                 <button id="btn-cancelar" class="btn-cancelar-modern">Cancelar</button>
                 <button id="btn-guardar" class="btn-save-modern">Guardar</button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de Importación Excel -->
+    <div id="modal-importar-excel" class="modal-modern" style="display: none;">
+        <div class="modal-content-modern">
+            <div class="modal-header-modern">
+                <div class="modal-title-section">
+                    <span class="modal-icon">📊</span>
+                    <h3>Importar Coches desde Excel</h3>
+                </div>
+                <button id="btn-cerrar-modal-excel" class="btn-close-modern">✕</button>
+            </div>
+            <div class="modal-body-modern">
+                <div class="import-section">
+                    <div class="import-info">
+                        <h4>📋 Instrucciones:</h4>
+                        <ul>
+                            <li>Selecciona un archivo Excel (.xlsx o .xls)</li>
+                            <li>El archivo debe contener las columnas: Matricula, Chasis, Color, Kms, Modelo</li>
+                            <li>La primera fila debe contener los nombres de las columnas</li>
+                            <li>Los datos se importarán automáticamente</li>
+                        </ul>
+                    </div>
+                    
+                    <div class="file-upload-area" id="file-upload-area">
+                        <div class="upload-icon">📁</div>
+                        <p>Arrastra tu archivo Excel aquí o haz clic para seleccionar</p>
+                        <input type="file" id="file-input" accept=".xlsx,.xls" style="display: none;">
+                        <button type="button" id="btn-seleccionar-archivo" class="btn-secondary-modern">
+                            <span class="btn-icon">📂</span>
+                            <span class="btn-text">Seleccionar Archivo</span>
+                        </button>
+                    </div>
+                    
+                    <div class="file-info" id="file-info" style="display: none;">
+                        <div class="file-details">
+                            <span class="file-icon">📄</span>
+                            <span class="file-name" id="file-name"></span>
+                            <span class="file-size" id="file-size"></span>
+                        </div>
+                        <button type="button" id="btn-remover-archivo" class="btn-remove-modern">✕</button>
+                    </div>
+                    
+                    <div class="template-download">
+                        <h4>📥 Descargar Plantilla:</h4>
+                        <p>Si no tienes un archivo con el formato correcto, puedes descargar nuestra plantilla:</p>
+                        <button type="button" id="btn-descargar-plantilla" class="btn-secondary-modern">
+                            <span class="btn-icon">📥</span>
+                            <span class="btn-text">Descargar Plantilla</span>
+                        </button>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer-modern">
+                <button id="btn-cancelar-excel" class="btn-cancelar-modern">Cancelar</button>
+                <button id="btn-importar" class="btn-save-modern" disabled>
+                    <span class="btn-icon">📊</span>
+                    <span class="btn-text">Importar</span>
+                </button>
+            </div>
+        </div>
+    </div>
+
+    <!-- Modal de Resultados de Importación -->
+    <div id="modal-resultados-importacion" class="modal-modern" style="display: none;">
+        <div class="modal-content-modern">
+            <div class="modal-header-modern">
+                <div class="modal-title-section">
+                    <span class="modal-icon">✅</span>
+                    <h3>Resultados de Importación</h3>
+                </div>
+                <button id="btn-cerrar-resultados" class="btn-close-modern">✕</button>
+            </div>
+            <div class="modal-body-modern">
+                <div class="import-results" id="import-results">
+                    <!-- Los resultados se mostrarán aquí -->
+                </div>
+            </div>
+            <div class="modal-footer-modern">
+                <button id="btn-cerrar-resultados-footer" class="btn-primary-modern">Cerrar</button>
             </div>
         </div>
     </div>

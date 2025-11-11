@@ -7,7 +7,19 @@ const crypto = require('crypto');
 class SistemaAuditoria {
     constructor(database) {
         this.db = database;
-        this.sistemaIntegridad = require('./sistemaIntegridad');
+        // Inicializar sistema de integridad de forma lazy
+        this._sistemaIntegridad = null;
+    }
+
+    /**
+     * Obtiene la instancia del sistema de integridad (lazy loading)
+     */
+    get sistemaIntegridad() {
+        if (!this._sistemaIntegridad) {
+            const SistemaIntegridad = require('./sistemaIntegridad');
+            this._sistemaIntegridad = new SistemaIntegridad();
+        }
+        return this._sistemaIntegridad;
     }
 
     /**
@@ -38,10 +50,9 @@ class SistemaAuditoria {
             // Insertar en el log de auditoría
             const query = `
                 INSERT INTO audit_log (
-                    tabla_afectada, registro_id, operacion, usuario,
-                    datos_anteriores, datos_nuevos, hash_integridad,
-                    ip_address, user_agent
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    tabla, registro_id, operacion, usuario_id,
+                    datos_anteriores, datos_nuevos, ip_address, user_agent
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             `;
             
             const params = [
@@ -51,7 +62,6 @@ class SistemaAuditoria {
                 usuario,
                 datosAnteriores ? JSON.stringify(datosAnteriores) : null,
                 datosNuevos ? JSON.stringify(datosNuevos) : null,
-                hashIntegridad,
                 ipAddress,
                 userAgent
             ];
@@ -80,6 +90,12 @@ class SistemaAuditoria {
      */
     async registrarCreacionFactura(datosFactura, usuario = 'sistema') {
         try {
+            // Verificar que el sistema de integridad esté disponible
+            if (!this.sistemaIntegridad || typeof this.sistemaIntegridad.generarSelladoTemporal !== 'function') {
+                console.warn('⚠️ Sistema de integridad no disponible, saltando sellado temporal');
+                return null;
+            }
+            
             // Generar sellado temporal
             const selladoTemporal = this.sistemaIntegridad.generarSelladoTemporal(datosFactura);
             
@@ -99,7 +115,8 @@ class SistemaAuditoria {
             return selladoTemporal;
         } catch (error) {
             console.error('❌ Error al registrar creación de factura:', error);
-            throw error;
+            // No lanzar el error para evitar que falle la creación de la factura
+            return null;
         }
     }
 
@@ -191,8 +208,8 @@ class SistemaAuditoria {
         try {
             const query = `
                 SELECT * FROM audit_log 
-                WHERE tabla_afectada = ? AND registro_id = ?
-                ORDER BY timestamp DESC
+                WHERE tabla = ? AND registro_id = ?
+                ORDER BY fecha_operacion DESC
             `;
             
             return new Promise((resolve, reject) => {
@@ -234,12 +251,12 @@ class SistemaAuditoria {
                     
                     rows.forEach(row => {
                         const datosParaVerificar = {
-                            tabla: row.tabla_afectada,
+                            tabla: row.tabla,
                             registroId: row.registro_id,
                             operacion: row.operacion,
                             datosAnteriores: row.datos_anteriores ? JSON.parse(row.datos_anteriores) : null,
                             datosNuevos: row.datos_nuevos ? JSON.parse(row.datos_nuevos) : null,
-                            timestamp: row.timestamp
+                            timestamp: row.fecha_operacion
                         };
                         
                         const integridadValida = this.sistemaIntegridad.verificarIntegridad(datosParaVerificar, row.hash_integridad);

@@ -74,7 +74,30 @@ class DetectorCertificadosWindows {
     // Listar certificados usando PowerShell para obtener fechas reales
     listarCertificadosPowerShell() {
         return new Promise((resolve, reject) => {
-            exec('powershell -ExecutionPolicy Bypass -File get_certs_improved.ps1', { windowsHide: true }, (err, stdout, stderr) => {
+            // Comando PowerShell inline para evitar dependencia de archivos externos
+            const psCommand = `
+                Get-ChildItem -Path "Cert:\\CurrentUser\\My" | Where-Object { $_.Subject -match "CN=" } | ForEach-Object {
+                    $cert = $_
+                    $subject = $cert.Subject
+                    $commonName = if ($subject -match "CN=([^,]+)") { $matches[1] } else { "Sin nombre" }
+                    $cif = if ($subject -match "SERIALNUMBER=([^,]+)") { $matches[1] } else { "Sin CIF" }
+                    $validFrom = $cert.NotBefore.ToString("yyyy-MM-dd")
+                    $validTo = $cert.NotAfter.ToString("yyyy-MM-dd")
+                    $daysLeft = [math]::Max(0, ($cert.NotAfter - (Get-Date)).Days)
+                    
+                    [PSCustomObject]@{
+                        CommonName = $commonName
+                        CIF = $cif
+                        ValidFrom = $validFrom
+                        ValidTo = $validTo
+                        DaysLeft = $daysLeft
+                        Subject = $subject
+                        IsValid = $daysLeft -gt 0
+                    }
+                } | ConvertTo-Json
+            `;
+            
+            exec(`powershell -ExecutionPolicy Bypass -Command "${psCommand}"`, { windowsHide: true }, (err, stdout, stderr) => {
                 if (err) {
                     console.warn('⚠️ No se pudo ejecutar PowerShell:', err.message);
                     resolve([]);

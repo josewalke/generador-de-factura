@@ -130,6 +130,19 @@ ipcMain.handle('api-obtener-coches-disponibles', async () => {
     }
 });
 
+// Manejadores para coches vendidos
+ipcMain.handle('api-obtener-coches-vendidos', async () => {
+    console.log('✅ Obteniendo coches vendidos desde API...');
+    try {
+        const resultado = await apiService.obtenerCochesVendidos();
+        console.log('✅ Coches vendidos obtenidos:', resultado.data?.length || 0);
+        return resultado;
+    } catch (error) {
+        console.error('❌ Error al obtener coches vendidos:', error);
+        return { success: false, error: error.message };
+    }
+});
+
 // Manejador para crear producto desde coche
 ipcMain.handle('api-crear-producto-desde-coche', async (event, cocheId, precio, cantidad) => {
     console.log('🚗 Creando producto desde coche:', cocheId);

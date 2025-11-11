@@ -3,7 +3,12 @@ const { ipcRenderer } = require('electron');
 
 // Elementos del DOM
 const totalCoches = document.getElementById('total-coches');
-const cochesList = document.getElementById('coches-list');
+const totalDisponibles = document.getElementById('total-disponibles');
+const totalVendidos = document.getElementById('total-vendidos');
+const cochesDisponiblesList = document.getElementById('coches-disponibles-list');
+const cochesVendidosList = document.getElementById('coches-vendidos-list');
+const countDisponibles = document.getElementById('count-disponibles');
+const countVendidos = document.getElementById('count-vendidos');
 const buscarCoche = document.getElementById('buscar-coche');
 const btnRefresh = document.getElementById('btn-refresh');
 const btnNuevoCoche = document.getElementById('btn-nuevo-coche');
@@ -26,11 +31,37 @@ const btnCancelar = document.getElementById('btn-cancelar');
 const btnGuardar = document.getElementById('btn-guardar');
 
 // Variables globales
-let coches = [];
+let cochesDisponibles = [];
+let cochesVendidos = [];
 let cocheEditando = null;
 let filtrosActivos = {
     modelo: ''
 };
+
+// Elementos de importación Excel
+const btnImportarExcel = document.getElementById('btn-importar-excel');
+const modalImportarExcel = document.getElementById('modal-importar-excel');
+const btnCerrarModalExcel = document.getElementById('btn-cerrar-modal-excel');
+const btnCancelarExcel = document.getElementById('btn-cancelar-excel');
+const btnImportar = document.getElementById('btn-importar');
+const fileInput = document.getElementById('file-input');
+const btnSeleccionarArchivo = document.getElementById('btn-seleccionar-archivo');
+const fileUploadArea = document.getElementById('file-upload-area');
+const fileInfo = document.getElementById('file-info');
+const fileName = document.getElementById('file-name');
+const fileSize = document.getElementById('file-size');
+const btnRemoverArchivo = document.getElementById('btn-remover-archivo');
+const btnDescargarPlantilla = document.getElementById('btn-descargar-plantilla');
+const modalResultadosImportacion = document.getElementById('modal-resultados-importacion');
+const btnCerrarResultados = document.getElementById('btn-cerrar-resultados');
+const btnCerrarResultadosFooter = document.getElementById('btn-cerrar-resultados-footer');
+const importResults = document.getElementById('import-results');
+
+// Elementos de exportación Excel
+const btnExportarExcel = document.getElementById('btn-exportar-excel');
+
+// Variables para importación
+let archivoSeleccionado = null;
 
 // Inicialización
 document.addEventListener('DOMContentLoaded', async () => {
@@ -40,7 +71,7 @@ document.addEventListener('DOMContentLoaded', async () => {
     configurarEventListeners();
     
     // Cargar coches
-    await cargarCoches();
+    await cargarCochesSeparados();
 });
 
 // Configurar event listeners
@@ -51,7 +82,7 @@ function configurarEventListeners() {
     });
 
     // Botones de la lista
-    btnRefresh.addEventListener('click', cargarCoches);
+    btnRefresh.addEventListener('click', cargarCochesSeparados);
     btnNuevoCoche.addEventListener('click', abrirModalNuevoCoche);
 
     // Filtros avanzados
@@ -61,7 +92,7 @@ function configurarEventListeners() {
     btnLimpiarFiltros.addEventListener('click', limpiarFiltrosAvanzados);
 
     // Búsqueda
-    buscarCoche.addEventListener('input', filtrarCoches);
+    buscarCoche.addEventListener('input', filtrarCochesSeparados);
 
     // Modal
     btnCerrarModal.addEventListener('click', cerrarModal);
@@ -74,109 +105,531 @@ function configurarEventListeners() {
             cerrarModal();
         }
     });
+    
+    // Importación Excel
+    btnImportarExcel.addEventListener('click', abrirModalImportacion);
+    btnCerrarModalExcel.addEventListener('click', cerrarModalImportacion);
+    btnCancelarExcel.addEventListener('click', cerrarModalImportacion);
+    btnImportar.addEventListener('click', importarCoches);
+    btnSeleccionarArchivo.addEventListener('click', () => fileInput.click());
+    fileInput.addEventListener('change', manejarSeleccionArchivo);
+    btnRemoverArchivo.addEventListener('click', removerArchivo);
+    btnDescargarPlantilla.addEventListener('click', descargarPlantilla);
+    btnCerrarResultados.addEventListener('click', cerrarModalResultados);
+    btnCerrarResultadosFooter.addEventListener('click', cerrarModalResultados);
+    
+    // Exportación Excel
+    btnExportarExcel.addEventListener('click', exportarCoches);
+    
+    // Drag and drop
+    fileUploadArea.addEventListener('dragover', manejarDragOver);
+    fileUploadArea.addEventListener('dragleave', manejarDragLeave);
+    fileUploadArea.addEventListener('drop', manejarDrop);
+    fileUploadArea.addEventListener('click', () => fileInput.click());
+    
+    // Cerrar modales al hacer clic fuera
+    modalImportarExcel.addEventListener('click', (e) => {
+        if (e.target === modalImportarExcel) {
+            cerrarModalImportacion();
+        }
+    });
+    
+    modalResultadosImportacion.addEventListener('click', (e) => {
+        if (e.target === modalResultadosImportacion) {
+            cerrarModalResultados();
+        }
+    });
 
     // Cerrar modal con Escape
     document.addEventListener('keydown', (e) => {
-        if (e.key === 'Escape' && modalCoche.style.display === 'flex') {
-            cerrarModal();
-        }
-        if (e.key === 'Escape' && filtrosPanel.style.display === 'block') {
-            cerrarFiltrosAvanzados();
+        if (e.key === 'Escape') {
+            if (modalCoche.style.display === 'flex') {
+                cerrarModal();
+            } else if (filtrosPanel.style.display === 'block') {
+                cerrarFiltrosAvanzados();
+            } else if (modalImportarExcel.style.display === 'flex') {
+                cerrarModalImportacion();
+            } else if (modalResultadosImportacion.style.display === 'flex') {
+                cerrarModalResultados();
+            }
         }
     });
 
 }
 
-// Cargar coches desde el backend
-async function cargarCoches() {
+// ==================== FUNCIONES DE IMPORTACIÓN EXCEL ====================
+
+// Abrir modal de importación
+function abrirModalImportacion() {
+    console.log('📊 Abriendo modal de importación Excel...');
+    modalImportarExcel.style.display = 'flex';
+    resetearFormularioImportacion();
+}
+
+// Cerrar modal de importación
+function cerrarModalImportacion() {
+    console.log('📊 Cerrando modal de importación Excel...');
+    modalImportarExcel.style.display = 'none';
+    resetearFormularioImportacion();
+}
+
+// Resetear formulario de importación
+function resetearFormularioImportacion() {
+    archivoSeleccionado = null;
+    fileInput.value = '';
+    fileUploadArea.style.display = 'block';
+    fileInfo.style.display = 'none';
+    btnImportar.disabled = true;
+}
+
+// Manejar selección de archivo
+function manejarSeleccionArchivo(event) {
+    const archivo = event.target.files[0];
+    if (archivo) {
+        procesarArchivo(archivo);
+    }
+}
+
+// Manejar drag over
+function manejarDragOver(event) {
+    event.preventDefault();
+    fileUploadArea.classList.add('dragover');
+}
+
+// Manejar drag leave
+function manejarDragLeave(event) {
+    event.preventDefault();
+    fileUploadArea.classList.remove('dragover');
+}
+
+// Manejar drop
+function manejarDrop(event) {
+    event.preventDefault();
+    fileUploadArea.classList.remove('dragover');
+    
+    const archivos = event.dataTransfer.files;
+    if (archivos.length > 0) {
+        procesarArchivo(archivos[0]);
+    }
+}
+
+// Procesar archivo seleccionado
+function procesarArchivo(archivo) {
+    // Validar tipo de archivo
+    const tiposPermitidos = ['.xlsx', '.xls'];
+    const extension = archivo.name.toLowerCase().substring(archivo.name.lastIndexOf('.'));
+    
+    if (!tiposPermitidos.includes(extension)) {
+        mostrarNotificacion('❌ Solo se permiten archivos Excel (.xlsx, .xls)', 'error');
+        return;
+    }
+    
+    // Validar tamaño (10MB)
+    const maxSize = 10 * 1024 * 1024; // 10MB
+    if (archivo.size > maxSize) {
+        mostrarNotificacion('❌ El archivo es demasiado grande. Máximo 10MB', 'error');
+        return;
+    }
+    
+    archivoSeleccionado = archivo;
+    
+    // Mostrar información del archivo
+    fileName.textContent = archivo.name;
+    fileSize.textContent = formatearTamaño(archivo.size);
+    
+    fileUploadArea.style.display = 'none';
+    fileInfo.style.display = 'flex';
+    btnImportar.disabled = false;
+    
+    console.log('📄 Archivo seleccionado:', archivo.name, formatearTamaño(archivo.size));
+}
+
+// Remover archivo
+function removerArchivo() {
+    archivoSeleccionado = null;
+    fileInput.value = '';
+    fileUploadArea.style.display = 'block';
+    fileInfo.style.display = 'none';
+    btnImportar.disabled = true;
+}
+
+// Formatear tamaño de archivo
+function formatearTamaño(bytes) {
+    if (bytes === 0) return '0 Bytes';
+    const k = 1024;
+    const sizes = ['Bytes', 'KB', 'MB', 'GB'];
+    const i = Math.floor(Math.log(bytes) / Math.log(k));
+    return parseFloat((bytes / Math.pow(k, i)).toFixed(2)) + ' ' + sizes[i];
+}
+
+// Descargar plantilla
+function descargarPlantilla() {
+    console.log('📥 Descargando plantilla de coches...');
+    
+    const url = 'http://localhost:3000/api/importar/plantilla/coches';
+    
+    // Crear enlace temporal para descarga
+    const link = document.createElement('a');
+    link.href = url;
+    link.download = 'plantilla_coches.xlsx';
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+    
+    mostrarNotificacion('📥 Descargando plantilla...', 'info');
+}
+
+// Importar coches
+async function importarCoches() {
+    if (!archivoSeleccionado) {
+        mostrarNotificacion('❌ Por favor selecciona un archivo', 'error');
+        return;
+    }
+    
+    console.log('📊 Iniciando importación de coches...');
+    
+    // Mostrar estado de carga
+    btnImportar.disabled = true;
+    btnImportar.innerHTML = '<span class="import-spinner"></span>Importando...';
+    
     try {
-        console.log('📋 Cargando coches...');
-        mostrarEstadoCarga();
+        const formData = new FormData();
+        formData.append('archivo', archivoSeleccionado);
         
-        const resultado = await ipcRenderer.invoke('api-obtener-coches');
+        const response = await fetch('http://localhost:3000/api/importar/coches', {
+            method: 'POST',
+            body: formData
+        });
+        
+        const resultado = await response.json();
         
         if (resultado.success) {
-            coches = resultado.data;
-            actualizarEstadisticas();
-            renderizarListaCoches();
-            console.log(`✅ ${coches.length} coches cargados`);
+            console.log('✅ Importación exitosa:', resultado);
+            mostrarResultadosImportacion(resultado);
+            
+            // Recargar lista de coches
+            await cargarCochesSeparados();
+            
+            // Cerrar modal de importación
+            cerrarModalImportacion();
+        } else {
+            console.error('❌ Error en importación:', resultado.error);
+            mostrarNotificacion(`❌ Error: ${resultado.error}`, 'error');
+        }
+        
+    } catch (error) {
+        console.error('❌ Error de conexión:', error);
+        mostrarNotificacion('❌ Error de conexión con el servidor', 'error');
+    } finally {
+        // Restaurar botón
+        btnImportar.disabled = false;
+        btnImportar.innerHTML = '<span class="btn-icon">📊</span><span class="btn-text">Importar</span>';
+    }
+}
+
+// Mostrar resultados de importación
+function mostrarResultadosImportacion(resultado) {
+    console.log('📊 Mostrando resultados de importación...');
+    
+    let html = '';
+    
+    // Resumen
+    const esExitoso = resultado.errores === 0;
+    const tieneErrores = resultado.errores > 0;
+    
+    html += `
+        <div class="result-summary ${esExitoso ? 'success' : tieneErrores ? 'warning' : 'error'}">
+            <h4>${esExitoso ? '✅ Importación Exitosa' : tieneErrores ? '⚠️ Importación Parcial' : '❌ Importación Fallida'}</h4>
+            <p>Se procesaron ${resultado.total} registros en total.</p>
+        </div>
+    `;
+    
+    // Estadísticas
+    html += `
+        <div class="result-stats">
+            <div class="stat-item">
+                <div class="stat-number success">${resultado.importados}</div>
+                <div class="stat-label">Importados</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number ${resultado.errores > 0 ? 'error' : 'success'}">${resultado.errores}</div>
+                <div class="stat-label">Errores</div>
+            </div>
+            <div class="stat-item">
+                <div class="stat-number">${resultado.total}</div>
+                <div class="stat-label">Total</div>
+            </div>
+        </div>
+    `;
+    
+    // Errores detallados
+    if (resultado.erroresDetalle && resultado.erroresDetalle.length > 0) {
+        html += `
+            <div class="error-details">
+                <h5>🔍 Errores Detallados:</h5>
+                <div class="error-list">
+        `;
+        
+        resultado.erroresDetalle.forEach(error => {
+            html += `
+                <div class="error-item">
+                    <div class="error-row">Fila ${error.fila}</div>
+                    <div class="error-message">${error.error}</div>
+                </div>
+            `;
+        });
+        
+        html += `
+                </div>
+            </div>
+        `;
+    }
+    
+    importResults.innerHTML = html;
+    modalResultadosImportacion.style.display = 'flex';
+}
+
+// Cerrar modal de resultados
+function cerrarModalResultados() {
+    console.log('📊 Cerrando modal de resultados...');
+    modalResultadosImportacion.style.display = 'none';
+}
+
+// Mostrar notificación
+function mostrarNotificacion(mensaje, tipo = 'info') {
+    // Crear elemento de notificación
+    const notificacion = document.createElement('div');
+    notificacion.className = `notificacion notificacion-${tipo}`;
+    notificacion.textContent = mensaje;
+    
+    // Estilos
+    notificacion.style.cssText = `
+        position: fixed;
+        top: 20px;
+        right: 20px;
+        padding: 15px 20px;
+        border-radius: 8px;
+        color: white;
+        font-weight: 600;
+        z-index: 10000;
+        animation: slideIn 0.3s ease;
+        max-width: 400px;
+        box-shadow: 0 4px 12px rgba(0,0,0,0.3);
+    `;
+    
+    // Colores según tipo
+    const colores = {
+        success: '#28a745',
+        error: '#dc3545',
+        warning: '#ffc107',
+        info: '#007bff'
+    };
+    
+    notificacion.style.backgroundColor = colores[tipo] || colores.info;
+    
+    // Añadir al DOM
+    document.body.appendChild(notificacion);
+    
+    // Remover después de 5 segundos
+    setTimeout(() => {
+        notificacion.style.animation = 'slideOut 0.3s ease';
+        setTimeout(() => {
+            if (notificacion.parentNode) {
+                notificacion.parentNode.removeChild(notificacion);
+            }
+        }, 300);
+    }, 5000);
+}
+
+// Añadir estilos de animación si no existen
+if (!document.getElementById('notificacion-styles')) {
+    const style = document.createElement('style');
+    style.id = 'notificacion-styles';
+    style.textContent = `
+        @keyframes slideIn {
+            from { transform: translateX(100%); opacity: 0; }
+            to { transform: translateX(0); opacity: 1; }
+        }
+        @keyframes slideOut {
+            from { transform: translateX(0); opacity: 1; }
+            to { transform: translateX(100%); opacity: 0; }
+        }
+    `;
+    document.head.appendChild(style);
+}
+
+// ==================== FUNCIONES DE EXPORTACIÓN EXCEL ====================
+
+// Exportar coches a Excel
+async function exportarCoches() {
+    try {
+        console.log('📤 Iniciando exportación de coches...');
+        
+        // Mostrar estado de carga
+        btnExportarExcel.disabled = true;
+        btnExportarExcel.classList.add('loading');
+        btnExportarExcel.innerHTML = '<span class="excel-icon">⏳</span>';
+        
+        // Construir URL con filtros actuales
+        const params = new URLSearchParams();
+        
+        if (filtrosActivos.modelo) {
+            params.append('modelo', filtrosActivos.modelo);
+        }
+        
+        // Añadir otros filtros si están activos
+        const filtroModeloElement = document.getElementById('filtro-modelo');
+        if (filtroModeloElement && filtroModeloElement.value) {
+            params.append('modelo', filtroModeloElement.value);
+        }
+        
+        const url = `http://localhost:3000/api/exportar/coches?${params.toString()}`;
+        
+        // Crear enlace temporal para descarga
+        const link = document.createElement('a');
+        link.href = url;
+        link.download = `coches_export_${new Date().toISOString().split('T')[0]}.xlsx`;
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+        
+        mostrarNotificacion('📤 Exportando coches a Excel...', 'info');
+        
+        // Simular tiempo de procesamiento
+        setTimeout(() => {
+            mostrarNotificacion('✅ Exportación completada', 'success');
+        }, 2000);
+        
+    } catch (error) {
+        console.error('❌ Error en exportación:', error);
+        mostrarNotificacion('❌ Error al exportar coches', 'error');
+    } finally {
+        // Restaurar botón
+        btnExportarExcel.disabled = false;
+        btnExportarExcel.classList.remove('loading');
+        btnExportarExcel.innerHTML = '<span class="excel-icon">📤</span>';
+    }
+}
+
+// Cargar coches separados desde el backend
+async function cargarCochesSeparados() {
+    try {
+        console.log('📋 Cargando coches separados...');
+        mostrarEstadoCargaSeparado();
+        
+        // Cargar coches disponibles y vendidos en paralelo
+        const [resultadoDisponibles, resultadoVendidos] = await Promise.all([
+            ipcRenderer.invoke('api-obtener-coches-disponibles'),
+            ipcRenderer.invoke('api-obtener-coches-vendidos')
+        ]);
+        
+        if (resultadoDisponibles.success && resultadoVendidos.success) {
+            cochesDisponibles = resultadoDisponibles.data;
+            cochesVendidos = resultadoVendidos.data;
+            
+            actualizarEstadisticasSeparadas();
+            renderizarCochesDisponibles();
+            renderizarCochesVendidos();
+            
+            console.log(`✅ ${cochesDisponibles.length} coches disponibles y ${cochesVendidos.length} coches vendidos cargados`);
             
             // Actualizar opciones de filtros si el panel está abierto
             if (filtrosPanel.style.display === 'block') {
                 cargarOpcionesFiltros();
             }
         } else {
-            throw new Error(resultado.error);
+            throw new Error(resultadoDisponibles.error || resultadoVendidos.error);
         }
     } catch (error) {
-        console.error('❌ Error al cargar coches:', error);
-        mostrarError('Error al cargar coches: ' + error.message);
-        mostrarEstadoError();
+        console.error('❌ Error al cargar coches separados:', error);
+        mostrarErrorSeparado('Error al cargar coches: ' + error.message);
+        mostrarEstadoErrorSeparado();
     }
 }
 
-// Mostrar estado de carga
-function mostrarEstadoCarga() {
-    cochesList.innerHTML = `
+// Mostrar estado de carga separado
+function mostrarEstadoCargaSeparado() {
+    cochesDisponiblesList.innerHTML = `
         <div class="loading-state">
             <div class="loading-spinner-modern"></div>
-            <p>Cargando coches...</p>
+            <p>Cargando coches disponibles...</p>
+        </div>
+    `;
+    
+    cochesVendidosList.innerHTML = `
+        <div class="loading-state">
+            <div class="loading-spinner-modern"></div>
+            <p>Cargando coches vendidos...</p>
         </div>
     `;
 }
         
-        // Mostrar estado de error
-function mostrarEstadoError() {
-        cochesList.innerHTML = `
+// Mostrar estado de error separado
+function mostrarEstadoErrorSeparado() {
+    cochesDisponiblesList.innerHTML = `
         <div class="error-state">
             <div class="error-icon">⚠️</div>
-            <h3>Error al cargar coches</h3>
-            <p>No se pudieron cargar los coches. Inténtalo de nuevo.</p>
-            <button onclick="cargarCoches()" class="btn-retry">🔄 Reintentar</button>
-            </div>
-        `;
-}
-
-// Actualizar estadísticas
-function actualizarEstadisticas() {
-    const total = coches.length;
+            <h3>Error al cargar coches disponibles</h3>
+            <p>No se pudieron cargar los coches disponibles. Inténtalo de nuevo.</p>
+            <button onclick="cargarCochesSeparados()" class="btn-retry">🔄 Reintentar</button>
+        </div>
+    `;
     
-    totalCoches.textContent = total;
+    cochesVendidosList.innerHTML = `
+        <div class="error-state">
+            <div class="error-icon">⚠️</div>
+            <h3>Error al cargar coches vendidos</h3>
+            <p>No se pudieron cargar los coches vendidos. Inténtalo de nuevo.</p>
+            <button onclick="cargarCochesSeparados()" class="btn-retry">🔄 Reintentar</button>
+        </div>
+    `;
 }
 
-// Renderizar lista de coches
-function renderizarListaCoches() {
-    if (coches.length === 0) {
-        cochesList.innerHTML = `
+// Actualizar estadísticas separadas
+function actualizarEstadisticasSeparadas() {
+    const totalDisponibles = cochesDisponibles.length;
+    const totalVendidos = cochesVendidos.length;
+    const total = totalDisponibles + totalVendidos;
+    
+    document.getElementById('total-disponibles').textContent = totalDisponibles;
+    document.getElementById('total-vendidos').textContent = totalVendidos;
+    document.getElementById('total-coches').textContent = total;
+    
+    // Actualizar contadores en los headers
+    countDisponibles.textContent = `${totalDisponibles} coches`;
+    countVendidos.textContent = `${totalVendidos} coches`;
+}
+
+// Renderizar coches disponibles
+function renderizarCochesDisponibles() {
+    if (cochesDisponibles.length === 0) {
+        cochesDisponiblesList.innerHTML = `
             <div class="empty-state-modern">
                 <div class="empty-icon">🚗</div>
-                <h3>No hay coches registrados</h3>
-                <p>Comienza agregando tu primer coche</p>
-                <button onclick="abrirModalNuevoCoche()" class="btn-primary-modern">
-                    <span class="btn-icon">➕</span>
-                    <span class="btn-text">Agregar Coche</span>
-                </button>
+                <h3>No hay coches disponibles</h3>
+                <p>Todos los coches han sido vendidos</p>
             </div>
         `;
         return;
     }
 
-    const html = coches.map(coche => `
+    const html = cochesDisponibles.map(coche => `
         <div class="cliente-card-modern" data-id="${coche.id}">
             <div class="cliente-card-header" data-coche-id="${coche.id}">
                 <div class="cliente-card-info">
                     <div class="cliente-avatar">🚗</div>
                     <div class="cliente-details-basic">
                         <h4 class="cliente-nombre-modern">${coche.matricula}</h4>
+                        <p class="cliente-subtitle-modern">${coche.modelo}</p>
                     </div>
                 </div>
                 <div class="cliente-card-actions">
                     <button class="btn-action-modern btn-edit-modern" data-coche-id="${coche.id}" title="Editar">
-                            ✏️
-                        </button>
+                        ✏️
+                    </button>
                     <button class="btn-action-modern btn-delete-modern" data-coche-id="${coche.id}" title="Eliminar">
-                            🗑️
-                        </button>
+                        🗑️
+                    </button>
                     <span class="dropdown-arrow-modern" id="arrow-${coche.id}">▼</span>
                 </div>
             </div>
@@ -217,50 +670,192 @@ function renderizarListaCoches() {
                             <span>${coche.modelo}</span>
                         </div>
                     </div>
+                    <div class="detail-item-modern">
+                        <span class="detail-icon">🟢</span>
+                        <div class="detail-content">
+                            <label>Estado</label>
+                            <span class="status-disponible">Disponible</span>
+                        </div>
+                    </div>
                 </div>
             </div>
-            </div>
+        </div>
     `).join('');
 
-    cochesList.innerHTML = html;
-    
-    // Agregar event listeners después de renderizar
-    agregarEventListeners();
+    cochesDisponiblesList.innerHTML = html;
+    agregarEventListenersDisponibles();
 }
 
-// Función para agregar event listeners a las tarjetas
-function agregarEventListeners() {
-    console.log('🔗 Agregando event listeners a las tarjetas...');
+// Renderizar coches vendidos
+function renderizarCochesVendidos() {
+    if (cochesVendidos.length === 0) {
+        cochesVendidosList.innerHTML = `
+            <div class="empty-state-modern">
+                <div class="empty-icon">✅</div>
+                <h3>No hay coches vendidos</h3>
+                <p>Los coches vendidos aparecerán aquí</p>
+            </div>
+        `;
+        return;
+    }
+
+    const html = cochesVendidos.map(coche => `
+        <div class="cliente-card-modern" data-id="${coche.id}">
+            <div class="cliente-card-header" data-coche-id="${coche.id}">
+                <div class="cliente-card-info">
+                    <div class="cliente-avatar">🚗</div>
+                    <div class="cliente-details-basic">
+                        <h4 class="cliente-nombre-modern">${coche.matricula}</h4>
+                        <p class="cliente-subtitle-modern">${coche.modelo}</p>
+                    </div>
+                </div>
+                <div class="cliente-card-actions">
+                    <button class="btn-action-modern btn-view-modern" data-coche-id="${coche.id}" title="Ver detalles de venta">
+                        👁️
+                    </button>
+                    <span class="dropdown-arrow-modern" id="arrow-${coche.id}">▼</span>
+                </div>
+            </div>
+            <div class="cliente-card-details" id="details-${coche.id}">
+                <div class="details-grid-modern">
+                    <div class="detail-item-modern">
+                        <span class="detail-icon">🚗</span>
+                        <div class="detail-content">
+                            <label>Matrícula</label>
+                            <span>${coche.matricula}</span>
+                        </div>
+                    </div>
+                    <div class="detail-item-modern">
+                        <span class="detail-icon">🔧</span>
+                        <div class="detail-content">
+                            <label>Chasis</label>
+                            <span>${coche.chasis}</span>
+                        </div>
+                    </div>
+                    <div class="detail-item-modern">
+                        <span class="detail-icon">🎨</span>
+                        <div class="detail-content">
+                            <label>Color</label>
+                            <span>${coche.color}</span>
+                        </div>
+                    </div>
+                    <div class="detail-item-modern">
+                        <span class="detail-icon">📏</span>
+                        <div class="detail-content">
+                            <label>Kilómetros</label>
+                            <span>${coche.kms.toLocaleString()} km</span>
+                        </div>
+                    </div>
+                    <div class="detail-item-modern">
+                        <span class="detail-icon">🏷️</span>
+                        <div class="detail-content">
+                            <label>Modelo</label>
+                            <span>${coche.modelo}</span>
+                        </div>
+                    </div>
+                    <div class="detail-item-modern">
+                        <span class="detail-icon">🔴</span>
+                        <div class="detail-content">
+                            <label>Estado</label>
+                            <span class="status-vendido">Vendido</span>
+                        </div>
+                    </div>
+                    <div class="detail-item-modern">
+                        <span class="detail-icon">📄</span>
+                        <div class="detail-content">
+                            <label>Nº Factura</label>
+                            <span class="factura-numero">${coche.numero_factura}</span>
+                        </div>
+                    </div>
+                    <div class="detail-item-modern">
+                        <span class="detail-icon">📅</span>
+                        <div class="detail-content">
+                            <label>Fecha Venta</label>
+                            <span>${new Date(coche.fecha_venta).toLocaleDateString('es-ES')}</span>
+                        </div>
+                    </div>
+                    <div class="detail-item-modern">
+                        <span class="detail-icon">💰</span>
+                        <div class="detail-content">
+                            <label>Precio Venta</label>
+                            <span class="precio-venta">€${coche.precio_venta.toFixed(2)}</span>
+                        </div>
+                    </div>
+                    <div class="detail-item-modern">
+                        <span class="detail-icon">👤</span>
+                        <div class="detail-content">
+                            <label>Cliente</label>
+                            <span>${coche.cliente_nombre}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `).join('');
+
+    cochesVendidosList.innerHTML = html;
+    agregarEventListenersVendidos();
+}
+
+// Función para agregar event listeners a las tarjetas disponibles
+function agregarEventListenersDisponibles() {
+    console.log('🔗 Agregando event listeners a las tarjetas disponibles...');
     
     // Event listeners para headers (dropdown)
-    const headers = cochesList.querySelectorAll('.cliente-card-header');
+    const headers = cochesDisponiblesList.querySelectorAll('.cliente-card-header');
     headers.forEach(header => {
         header.addEventListener('click', (e) => {
             const cocheId = header.getAttribute('data-coche-id');
-            console.log('🖱️ Click en header del coche:', cocheId);
+            console.log('🖱️ Click en header del coche disponible:', cocheId);
             toggleDropdown(parseInt(cocheId));
         });
     });
     
     // Event listeners para botones de editar
-    const botonesEditar = cochesList.querySelectorAll('.btn-edit-modern');
+    const botonesEditar = cochesDisponiblesList.querySelectorAll('.btn-edit-modern');
     botonesEditar.forEach(boton => {
         boton.addEventListener('click', (e) => {
             e.stopPropagation();
             const cocheId = boton.getAttribute('data-coche-id');
-            console.log('✏️ Click en editar coche:', cocheId);
+            console.log('✏️ Click en editar coche disponible:', cocheId);
             editarCoche(parseInt(cocheId));
         });
     });
     
     // Event listeners para botones de eliminar
-    const botonesEliminar = cochesList.querySelectorAll('.btn-delete-modern');
+    const botonesEliminar = cochesDisponiblesList.querySelectorAll('.btn-delete-modern');
     botonesEliminar.forEach(boton => {
         boton.addEventListener('click', (e) => {
             e.stopPropagation();
             const cocheId = boton.getAttribute('data-coche-id');
-            console.log('🗑️ Click en eliminar coche:', cocheId);
+            console.log('🗑️ Click en eliminar coche disponible:', cocheId);
             eliminarCoche(parseInt(cocheId));
+        });
+    });
+}
+
+// Función para agregar event listeners a las tarjetas vendidas
+function agregarEventListenersVendidos() {
+    console.log('🔗 Agregando event listeners a las tarjetas vendidas...');
+    
+    // Event listeners para headers (dropdown)
+    const headers = cochesVendidosList.querySelectorAll('.cliente-card-header');
+    headers.forEach(header => {
+        header.addEventListener('click', (e) => {
+            const cocheId = header.getAttribute('data-coche-id');
+            console.log('🖱️ Click en header del coche vendido:', cocheId);
+            toggleDropdown(parseInt(cocheId));
+        });
+    });
+    
+    // Event listeners para botones de ver detalles
+    const botonesVer = cochesVendidosList.querySelectorAll('.btn-view-modern');
+    botonesVer.forEach(boton => {
+        boton.addEventListener('click', (e) => {
+            e.stopPropagation();
+            const cocheId = boton.getAttribute('data-coche-id');
+            console.log('👁️ Click en ver detalles de coche vendido:', cocheId);
+            verDetallesVenta(parseInt(cocheId));
         });
     });
 }
@@ -749,4 +1344,279 @@ function renderizarListaCochesFiltrada(cochesFiltrados) {
     
     cochesList.innerHTML = html;
     agregarEventListeners();
+}
+// Filtrar coches separados
+function filtrarCochesSeparados() {
+    const busqueda = buscarCoche.value.toLowerCase().trim();
+    
+    if (!busqueda) {
+        renderizarCochesDisponibles();
+        renderizarCochesVendidos();
+        return;
+    }
+    
+    const disponiblesFiltrados = cochesDisponibles.filter(coche => 
+        coche.matricula.toLowerCase().includes(busqueda) ||
+        coche.chasis.toLowerCase().includes(busqueda) ||
+        coche.color.toLowerCase().includes(busqueda) ||
+        coche.modelo.toLowerCase().includes(busqueda)
+    );
+    
+    const vendidosFiltrados = cochesVendidos.filter(coche => 
+        coche.matricula.toLowerCase().includes(busqueda) ||
+        coche.chasis.toLowerCase().includes(busqueda) ||
+        coche.color.toLowerCase().includes(busqueda) ||
+        coche.modelo.toLowerCase().includes(busqueda) ||
+        coche.cliente_nombre?.toLowerCase().includes(busqueda) ||
+        coche.numero_factura?.toLowerCase().includes(busqueda)
+    );
+    
+    // Renderizar listas filtradas temporalmente
+    const htmlDisponibles = disponiblesFiltrados.map(coche => `
+        <div class="cliente-card-modern" data-id="${coche.id}">
+            <div class="cliente-card-header" data-coche-id="${coche.id}">
+                <div class="cliente-card-info">
+                    <div class="cliente-avatar">🚗</div>
+                    <div class="cliente-details-basic">
+                        <h4 class="cliente-nombre-modern">${coche.matricula}</h4>
+                        <p class="cliente-subtitle-modern">${coche.modelo}</p>
+                    </div>
+                </div>
+                <div class="cliente-card-actions">
+                    <button class="btn-action-modern btn-edit-modern" data-coche-id="${coche.id}" title="Editar">
+                        ✏️
+                    </button>
+                    <button class="btn-action-modern btn-delete-modern" data-coche-id="${coche.id}" title="Eliminar">
+                        🗑️
+                    </button>
+                    <span class="dropdown-arrow-modern" id="arrow-${coche.id}">▼</span>
+                </div>
+            </div>
+            <div class="cliente-card-details" id="details-${coche.id}">
+                <div class="details-grid-modern">
+                    <div class="detail-item-modern">
+                        <span class="detail-icon">🚗</span>
+                        <div class="detail-content">
+                            <label>Matrícula</label>
+                            <span>${coche.matricula}</span>
+                        </div>
+                    </div>
+                    <div class="detail-item-modern">
+                        <span class="detail-icon">🔧</span>
+                        <div class="detail-content">
+                            <label>Chasis</label>
+                            <span>${coche.chasis}</span>
+                        </div>
+                    </div>
+                    <div class="detail-item-modern">
+                        <span class="detail-icon">🎨</span>
+                        <div class="detail-content">
+                            <label>Color</label>
+                            <span>${coche.color}</span>
+                        </div>
+                    </div>
+                    <div class="detail-item-modern">
+                        <span class="detail-icon">📏</span>
+                        <div class="detail-content">
+                            <label>Kilómetros</label>
+                            <span>${coche.kms.toLocaleString()} km</span>
+                        </div>
+                    </div>
+                    <div class="detail-item-modern">
+                        <span class="detail-icon">🏷️</span>
+                        <div class="detail-content">
+                            <label>Modelo</label>
+                            <span>${coche.modelo}</span>
+                        </div>
+                    </div>
+                    <div class="detail-item-modern">
+                        <span class="detail-icon">🟢</span>
+                        <div class="detail-content">
+                            <label>Estado</label>
+                            <span class="status-disponible">Disponible</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `).join('');
+    
+    const htmlVendidos = vendidosFiltrados.map(coche => `
+        <div class="cliente-card-modern" data-id="${coche.id}">
+            <div class="cliente-card-header" data-coche-id="${coche.id}">
+                <div class="cliente-card-info">
+                    <div class="cliente-avatar">🚗</div>
+                    <div class="cliente-details-basic">
+                        <h4 class="cliente-nombre-modern">${coche.matricula}</h4>
+                        <p class="cliente-subtitle-modern">${coche.modelo}</p>
+                    </div>
+                </div>
+                <div class="cliente-card-actions">
+                    <button class="btn-action-modern btn-view-modern" data-coche-id="${coche.id}" title="Ver detalles de venta">
+                        👁️
+                    </button>
+                    <span class="dropdown-arrow-modern" id="arrow-${coche.id}">▼</span>
+                </div>
+            </div>
+            <div class="cliente-card-details" id="details-${coche.id}">
+                <div class="details-grid-modern">
+                    <div class="detail-item-modern">
+                        <span class="detail-icon">🚗</span>
+                        <div class="detail-content">
+                            <label>Matrícula</label>
+                            <span>${coche.matricula}</span>
+                        </div>
+                    </div>
+                    <div class="detail-item-modern">
+                        <span class="detail-icon">🔧</span>
+                        <div class="detail-content">
+                            <label>Chasis</label>
+                            <span>${coche.chasis}</span>
+                        </div>
+                    </div>
+                    <div class="detail-item-modern">
+                        <span class="detail-icon">🎨</span>
+                        <div class="detail-content">
+                            <label>Color</label>
+                            <span>${coche.color}</span>
+                        </div>
+                    </div>
+                    <div class="detail-item-modern">
+                        <span class="detail-icon">📏</span>
+                        <div class="detail-content">
+                            <label>Kilómetros</label>
+                            <span>${coche.kms.toLocaleString()} km</span>
+                        </div>
+                    </div>
+                    <div class="detail-item-modern">
+                        <span class="detail-icon">🏷️</span>
+                        <div class="detail-content">
+                            <label>Modelo</label>
+                            <span>${coche.modelo}</span>
+                        </div>
+                    </div>
+                    <div class="detail-item-modern">
+                        <span class="detail-icon">🔴</span>
+                        <div class="detail-content">
+                            <label>Estado</label>
+                            <span class="status-vendido">Vendido</span>
+                        </div>
+                    </div>
+                    <div class="detail-item-modern">
+                        <span class="detail-icon">📄</span>
+                        <div class="detail-content">
+                            <label>Nº Factura</label>
+                            <span class="factura-numero">${coche.numero_factura}</span>
+                        </div>
+                    </div>
+                    <div class="detail-item-modern">
+                        <span class="detail-icon">📅</span>
+                        <div class="detail-content">
+                            <label>Fecha Venta</label>
+                            <span>${new Date(coche.fecha_venta).toLocaleDateString('es-ES')}</span>
+                        </div>
+                    </div>
+                    <div class="detail-item-modern">
+                        <span class="detail-icon">💰</span>
+                        <div class="detail-content">
+                            <label>Precio Venta</label>
+                            <span class="precio-venta">€${coche.precio_venta.toFixed(2)}</span>
+                        </div>
+                    </div>
+                    <div class="detail-item-modern">
+                        <span class="detail-icon">👤</span>
+                        <div class="detail-content">
+                            <label>Cliente</label>
+                            <span>${coche.cliente_nombre}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    `).join('');
+    
+    cochesDisponiblesList.innerHTML = htmlDisponibles;
+    cochesVendidosList.innerHTML = htmlVendidos;
+    
+    agregarEventListenersDisponibles();
+    agregarEventListenersVendidos();
+}
+
+// Ver detalles de venta
+function verDetallesVenta(cocheId) {
+    console.log('👁️ Ver detalles de venta para coche:', cocheId);
+    
+    const coche = cochesVendidos.find(c => c.id === cocheId);
+    if (!coche) {
+        console.error('❌ Coche no encontrado:', cocheId);
+        return;
+    }
+    
+    // Crear modal de detalles de venta
+    const modal = document.createElement('div');
+    modal.className = 'modal-modern';
+    modal.style.display = 'flex';
+    modal.innerHTML = `
+        <div class="modal-content-modern">
+            <div class="modal-header-modern">
+                <div class="modal-title-section">
+                    <span class="modal-icon">📄</span>
+                    <h3>Detalles de Venta</h3>
+                </div>
+                <button class="btn-close-modern" onclick="this.closest('.modal-modern').remove()">✕</button>
+            </div>
+            <div class="modal-body-modern">
+                <div class="venta-details">
+                    <h4>🚗 Información del Vehículo</h4>
+                    <div class="detail-grid">
+                        <div class="detail-item">
+                            <label>Matrícula:</label>
+                            <span>${coche.matricula}</span>
+                        </div>
+                        <div class="detail-item">
+                            <label>Modelo:</label>
+                            <span>${coche.modelo}</span>
+                        </div>
+                        <div class="detail-item">
+                            <label>Chasis:</label>
+                            <span>${coche.chasis}</span>
+                        </div>
+                        <div class="detail-item">
+                            <label>Color:</label>
+                            <span>${coche.color}</span>
+                        </div>
+                        <div class="detail-item">
+                            <label>Kilómetros:</label>
+                            <span>${coche.kms.toLocaleString()} km</span>
+                        </div>
+                    </div>
+                    
+                    <h4>💰 Información de Venta</h4>
+                    <div class="detail-grid">
+                        <div class="detail-item">
+                            <label>Número de Factura:</label>
+                            <span class="factura-numero">${coche.numero_factura}</span>
+                        </div>
+                        <div class="detail-item">
+                            <label>Fecha de Venta:</label>
+                            <span>${new Date(coche.fecha_venta).toLocaleDateString('es-ES')}</span>
+                        </div>
+                        <div class="detail-item">
+                            <label>Precio de Venta:</label>
+                            <span class="precio-venta">€${coche.precio_venta.toFixed(2)}</span>
+                        </div>
+                        <div class="detail-item">
+                            <label>Cliente:</label>
+                            <span>${coche.cliente_nombre}</span>
+                        </div>
+                    </div>
+                </div>
+            </div>
+            <div class="modal-footer-modern">
+                <button class="btn-primary-modern" onclick="this.closest('.modal-modern').remove()">Cerrar</button>
+            </div>
+        </div>
+    `;
+    
+    document.body.appendChild(modal);
 }

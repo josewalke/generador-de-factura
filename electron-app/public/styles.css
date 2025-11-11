@@ -1,3 +1,602 @@
+/* ==================== ESTILOS PARA IMPORTACIÓN EXCEL ==================== */
+
+/* Sección de importación */
+.import-section {
+    padding: 20px 0;
+}
+
+.import-info {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+    border-left: 4px solid #007bff;
+}
+
+.import-info h4 {
+    margin: 0 0 15px 0;
+    color: #333;
+    font-size: 16px;
+}
+
+.import-info ul {
+    margin: 0;
+    padding-left: 20px;
+}
+
+.import-info li {
+    margin-bottom: 8px;
+    color: #666;
+    line-height: 1.5;
+}
+
+/* Área de subida de archivos */
+.file-upload-area {
+    border: 2px dashed #007bff;
+    border-radius: 8px;
+    padding: 40px 20px;
+    text-align: center;
+    background: #f8f9ff;
+    transition: all 0.3s ease;
+    cursor: pointer;
+    margin-bottom: 20px;
+}
+
+.file-upload-area:hover {
+    border-color: #0056b3;
+    background: #e6f3ff;
+}
+
+.file-upload-area.dragover {
+    border-color: #28a745;
+    background: #e8f5e8;
+}
+
+.upload-icon {
+    font-size: 48px;
+    margin-bottom: 15px;
+    opacity: 0.7;
+}
+
+.file-upload-area p {
+    margin: 0 0 20px 0;
+    color: #666;
+    font-size: 16px;
+}
+
+/* Información del archivo */
+.file-info {
+    background: #e8f5e8;
+    border: 1px solid #28a745;
+    border-radius: 8px;
+    padding: 15px;
+    margin-bottom: 20px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+}
+
+.file-details {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.file-icon {
+    font-size: 24px;
+}
+
+.file-name {
+    font-weight: 600;
+    color: #333;
+}
+
+.file-size {
+    color: #666;
+    font-size: 14px;
+}
+
+.btn-remove-modern {
+    background: #dc3545;
+    color: white;
+    border: none;
+    border-radius: 50%;
+    width: 30px;
+    height: 30px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: background 0.3s ease;
+}
+
+.btn-remove-modern:hover {
+    background: #c82333;
+}
+
+/* Descarga de plantilla */
+.template-download {
+    background: #fff3cd;
+    border: 1px solid #ffeaa7;
+    border-radius: 8px;
+    padding: 20px;
+    margin-top: 20px;
+}
+
+.template-download h4 {
+    margin: 0 0 10px 0;
+    color: #856404;
+    font-size: 16px;
+}
+
+.template-download p {
+    margin: 0 0 15px 0;
+    color: #856404;
+    font-size: 14px;
+}
+
+/* Resultados de importación */
+.import-results {
+    padding: 20px 0;
+}
+
+.result-summary {
+    background: #f8f9fa;
+    border-radius: 8px;
+    padding: 20px;
+    margin-bottom: 20px;
+}
+
+.result-summary.success {
+    background: #d4edda;
+    border-left: 4px solid #28a745;
+}
+
+.result-summary.error {
+    background: #f8d7da;
+    border-left: 4px solid #dc3545;
+}
+
+.result-summary.warning {
+    background: #fff3cd;
+    border-left: 4px solid #ffc107;
+}
+
+.result-stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 15px;
+    margin-bottom: 20px;
+}
+
+.stat-item {
+    text-align: center;
+    padding: 15px;
+    background: white;
+    border-radius: 8px;
+    box-shadow: 0 2px 4px rgba(0,0,0,0.1);
+}
+
+.stat-number {
+    font-size: 24px;
+    font-weight: bold;
+    margin-bottom: 5px;
+}
+
+.stat-number.success {
+    color: #28a745;
+}
+
+.stat-number.error {
+    color: #dc3545;
+}
+
+.stat-number.warning {
+    color: #ffc107;
+}
+
+.stat-label {
+    color: #666;
+    font-size: 14px;
+}
+
+/* Errores detallados */
+.error-details {
+    margin-top: 20px;
+}
+
+.error-details h5 {
+    margin: 0 0 15px 0;
+    color: #dc3545;
+    font-size: 16px;
+}
+
+.error-list {
+    max-height: 200px;
+    overflow-y: auto;
+    background: white;
+    border: 1px solid #dee2e6;
+    border-radius: 8px;
+}
+
+.error-item {
+    padding: 10px 15px;
+    border-bottom: 1px solid #dee2e6;
+    font-size: 14px;
+}
+
+.error-item:last-child {
+    border-bottom: none;
+}
+
+.error-row {
+    font-weight: 600;
+    color: #333;
+}
+
+.error-message {
+    color: #dc3545;
+    margin-top: 5px;
+}
+
+/* Botones de importación */
+.btn-importar-modern {
+    background: linear-gradient(135deg, #007bff, #0056b3);
+    color: white;
+    border: none;
+    border-radius: 8px;
+    padding: 12px 24px;
+    font-size: 16px;
+    font-weight: 600;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.btn-importar-modern:hover:not(:disabled) {
+    background: linear-gradient(135deg, #0056b3, #004085);
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,123,255,0.3);
+}
+
+.btn-importar-modern:disabled {
+    background: #6c757d;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+/* Animaciones de carga */
+.import-loading {
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 40px;
+}
+
+.import-spinner {
+    width: 40px;
+    height: 40px;
+    border: 4px solid #f3f3f3;
+    border-top: 4px solid #007bff;
+    border-radius: 50%;
+    animation: spin 1s linear infinite;
+    margin-right: 15px;
+}
+
+@keyframes spin {
+    0% { transform: rotate(0deg); }
+    100% { transform: rotate(360deg); }
+}
+
+/* Responsive */
+@media (max-width: 768px) {
+    .file-upload-area {
+        padding: 30px 15px;
+    }
+    
+    .upload-icon {
+        font-size: 36px;
+    }
+    
+    .result-stats {
+        grid-template-columns: repeat(2, 1fr);
+    }
+    
+    .stat-item {
+        padding: 10px;
+    }
+    
+    .stat-number {
+        font-size: 20px;
+    }
+}
+
+/* ==================== ESTILOS PARA BOTONES EXCEL ==================== */
+
+/* Contenedor de acciones Excel */
+.excel-actions {
+    display: flex;
+    gap: 8px;
+    align-items: center;
+}
+
+/* Botones Excel base */
+.btn-excel {
+    width: 40px;
+    height: 40px;
+    border: none;
+    border-radius: 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    position: relative;
+    overflow: hidden;
+}
+
+.btn-excel:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 4px 12px rgba(0,0,0,0.15);
+}
+
+.btn-excel:active {
+    transform: translateY(0);
+}
+
+/* Botón Importar */
+.btn-excel-import {
+    background: linear-gradient(135deg, #28a745, #20c997);
+    color: white;
+}
+
+.btn-excel-import:hover {
+    background: linear-gradient(135deg, #218838, #1ea085);
+    box-shadow: 0 4px 12px rgba(40, 167, 69, 0.3);
+}
+
+.btn-excel-import:disabled {
+    background: #6c757d;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+/* Botón Exportar */
+.btn-excel-export {
+    background: linear-gradient(135deg, #007bff, #6610f2);
+    color: white;
+}
+
+.btn-excel-export:hover {
+    background: linear-gradient(135deg, #0056b3, #520dc2);
+    box-shadow: 0 4px 12px rgba(0, 123, 255, 0.3);
+}
+
+.btn-excel-export:disabled {
+    background: #6c757d;
+    cursor: not-allowed;
+    transform: none;
+    box-shadow: none;
+}
+
+/* Iconos Excel */
+.excel-icon {
+    font-size: 18px;
+    transition: transform 0.3s ease;
+}
+
+.btn-excel:hover .excel-icon {
+    transform: scale(1.1);
+}
+
+/* Efectos de carga */
+.btn-excel.loading {
+    pointer-events: none;
+}
+
+.btn-excel.loading .excel-icon {
+    animation: spin 1s linear infinite;
+}
+
+/* Tooltip personalizado */
+.btn-excel::after {
+    content: attr(title);
+    position: absolute;
+    bottom: -35px;
+    left: 50%;
+    transform: translateX(-50%);
+    background: rgba(0, 0, 0, 0.8);
+    color: white;
+    padding: 6px 10px;
+    border-radius: 4px;
+    font-size: 12px;
+    white-space: nowrap;
+    opacity: 0;
+    visibility: hidden;
+    transition: all 0.3s ease;
+    z-index: 1000;
+    pointer-events: none;
+}
+
+.btn-excel:hover::after {
+    opacity: 1;
+    visibility: visible;
+}
+
+/* Animación de pulso para indicar acción */
+.btn-excel.pulse {
+    animation: pulse 2s infinite;
+}
+
+@keyframes pulse {
+    0% {
+        box-shadow: 0 0 0 0 rgba(0, 123, 255, 0.7);
+    }
+    70% {
+        box-shadow: 0 0 0 10px rgba(0, 123, 255, 0);
+    }
+    100% {
+        box-shadow: 0 0 0 0 rgba(0, 123, 255, 0);
+    }
+}
+
+/* Responsive para botones Excel */
+@media (max-width: 768px) {
+    .excel-actions {
+        gap: 6px;
+    }
+    
+    .btn-excel {
+        width: 36px;
+        height: 36px;
+    }
+    
+    .excel-icon {
+        font-size: 16px;
+    }
+    
+    .btn-excel::after {
+        font-size: 11px;
+        padding: 4px 8px;
+    }
+}
+
+/* ==================== ESTILOS PARA ESTADO DE VENTA ==================== */
+
+/* Estados de coches */
+.status-vendido {
+    color: #28a745;
+    font-weight: 600;
+    background: #d4edda;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+.status-disponible {
+    color: #ffc107;
+    font-weight: 600;
+    background: #fff3cd;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+/* Número de factura */
+.factura-numero {
+    color: #007bff;
+    font-weight: 600;
+    font-family: 'Courier New', monospace;
+    background: #e3f2fd;
+    padding: 4px 8px;
+    border-radius: 4px;
+    font-size: 13px;
+}
+
+/* Precio de venta */
+.precio-venta {
+    color: #28a745;
+    font-weight: 700;
+    font-size: 16px;
+    background: #d4edda;
+    padding: 6px 10px;
+    border-radius: 6px;
+    display: inline-block;
+}
+
+/* Animación para elementos de venta */
+.detail-item-modern:has(.status-vendido) {
+    animation: fadeInSuccess 0.5s ease-in-out;
+}
+
+.detail-item-modern:has(.factura-numero) {
+    animation: fadeInInfo 0.5s ease-in-out;
+}
+
+.detail-item-modern:has(.precio-venta) {
+    animation: fadeInMoney 0.5s ease-in-out;
+}
+
+@keyframes fadeInSuccess {
+    from { opacity: 0; transform: translateY(-10px); }
+    to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fadeInInfo {
+    from { opacity: 0; transform: translateX(-10px); }
+    to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes fadeInMoney {
+    from { opacity: 0; transform: scale(0.9); }
+    to { opacity: 1; transform: scale(1); }
+}
+
+/* Responsive para estados de venta */
+@media (max-width: 768px) {
+    .status-vendido,
+    .status-disponible {
+        font-size: 11px;
+        padding: 3px 6px;
+    }
+    
+    .factura-numero {
+        font-size: 12px;
+        padding: 3px 6px;
+    }
+    
+    .precio-venta {
+        font-size: 14px;
+        padding: 4px 8px;
+    }
+}
+
+/* ==================== PARCHE PARA INPUT DE BÚSQUEDA ==================== */
+
+/* Asegurar que el input de búsqueda sea completamente funcional */
+#buscar-cliente {
+    pointer-events: auto !important;
+    user-select: text !important;
+    z-index: 1000 !important;
+    position: relative !important;
+    cursor: text !important;
+}
+
+#buscar-cliente:focus {
+    outline: 2px solid #007bff !important;
+    outline-offset: 2px !important;
+    box-shadow: 0 0 0 3px rgba(0, 123, 255, 0.25) !important;
+}
+
+/* Asegurar que no haya elementos superpuestos */
+.search-container {
+    position: relative !important;
+    z-index: 1000 !important;
+}
+
+.search-container::before,
+.search-container::after {
+    display: none !important;
+}
+
+/* Estilos para el estado activo */
+#buscar-cliente:active {
+    background: rgba(255, 255, 255, 1) !important;
+    border: 2px solid #007bff !important;
+}
+
+/* Responsive para móviles */
+@media (max-width: 768px) {
+    #buscar-cliente {
+        min-width: 200px !important;
+        font-size: 16px !important; /* Evita zoom en iOS */
+    }
+}
+
 /* Estilos para formulario normal de facturas */
 * {
     margin: 0;
@@ -6809,4 +7408,166 @@ button#btn-cambiar-empresa:focus-within {
     .section-icon {
         font-size: 1.7rem;
     }
+}
+
+/* Estilos para separación de coches disponibles y vendidos */
+.coches-count {
+    font-size: 0.9rem;
+    color: #666;
+    font-weight: 500;
+    padding: 8px 12px;
+    background: rgba(0, 0, 0, 0.05);
+    border-radius: 6px;
+    border: 1px solid rgba(0, 0, 0, 0.1);
+}
+
+/* Estilos para detalles de venta */
+.venta-details {
+    padding: 20px 0;
+}
+
+.venta-details h4 {
+    color: #333;
+    margin-bottom: 15px;
+    padding-bottom: 8px;
+    border-bottom: 2px solid #e9ecef;
+    font-size: 1.1rem;
+    font-weight: 600;
+}
+
+.detail-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(250px, 1fr));
+    gap: 15px;
+    margin-bottom: 25px;
+}
+
+.detail-item {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 12px 15px;
+    background: #f8f9fa;
+    border-radius: 8px;
+    border-left: 4px solid #007bff;
+}
+
+.detail-item label {
+    font-weight: 600;
+    color: #495057;
+    margin: 0;
+}
+
+.detail-item span {
+    color: #212529;
+    font-weight: 500;
+}
+
+/* Estilos específicos para botones de ver detalles */
+.btn-view-modern {
+    background: linear-gradient(135deg, #17a2b8, #138496);
+    color: white;
+    border: none;
+    padding: 8px 12px;
+    border-radius: 6px;
+    cursor: pointer;
+    transition: all 0.3s ease;
+    font-size: 0.9rem;
+    font-weight: 500;
+}
+
+.btn-view-modern:hover {
+    background: linear-gradient(135deg, #138496, #117a8b);
+    transform: translateY(-1px);
+    box-shadow: 0 4px 12px rgba(23, 162, 184, 0.3);
+}
+
+/* Mejoras para las secciones separadas */
+.clientes-panel {
+    margin-bottom: 25px;
+    background: white;
+    border-radius: 12px;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.1);
+    overflow: hidden;
+    transition: all 0.3s ease;
+}
+
+.clientes-panel:hover {
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.15);
+}
+
+.clientes-panel .panel-header {
+    background: linear-gradient(135deg, #f8f9fa, #e9ecef);
+    padding: 20px 25px;
+    border-bottom: 1px solid #dee2e6;
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.clientes-panel .panel-title {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+}
+
+.clientes-panel .panel-title h2 {
+    margin: 0;
+    color: #495057;
+    font-size: 1.3rem;
+    font-weight: 600;
+}
+
+.clientes-panel .title-icon {
+    font-size: 1.5rem;
+}
+
+/* Animaciones para las tarjetas */
+.cliente-card-modern {
+    transition: all 0.3s ease;
+    border: 1px solid #e9ecef;
+}
+
+.cliente-card-modern:hover {
+    transform: translateY(-2px);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.1);
+    border-color: #007bff;
+}
+
+/* Estados específicos para coches vendidos */
+.status-vendido {
+    color: #dc3545;
+    font-weight: 600;
+    background: rgba(220, 53, 69, 0.1);
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid rgba(220, 53, 69, 0.2);
+}
+
+.status-disponible {
+    color: #28a745;
+    font-weight: 600;
+    background: rgba(40, 167, 69, 0.1);
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid rgba(40, 167, 69, 0.2);
+}
+
+.factura-numero {
+    color: #007bff;
+    font-weight: 600;
+    background: rgba(0, 123, 255, 0.1);
+    padding: 4px 8px;
+    border-radius: 4px;
+    border: 1px solid rgba(0, 123, 255, 0.2);
+}
+
+.precio-venta {
+    color: #28a745;
+    font-weight: 700;
+    font-size: 1.1rem;
+    background: rgba(40, 167, 69, 0.1);
+    padding: 6px 10px;
+    border-radius: 6px;
+    border: 1px solid rgba(40, 167, 69, 0.2);
 }
