@@ -55,3 +55,34 @@ electron-app/build/
 
 # Archivos de PDF generados
 *.pdf
+
+# Archivos de prueba y scripts temporales
+backend/test_*.js
+backend/probar*.js
+backend/crear*.js
+backend/corregir*.js
+backend/verificar*.js
+backend/limpiar*.js
+backend/borrar*.js
+backend/investigar*.js
+backend/solucionar*.js
+backend/mostrar*.js
+backend/asociar*.js
+backend/guia*.js
+backend/venta*.js
+backend/demo*.js
+backend/debug*.js
+backend/reiniciar*.js
+backend/server.js.backup
+backend/server.js.broken
+backend/cert_output.txt
+backend/get_cert_*.ps1
+backend/install-improvements.*
+
+# Archivos Excel de prueba
+backend/test_*.xlsx
+backend/ejemplo_*.xlsx
+backend/demo_*.html
+
+# Archivos de documentación temporal
+backend/IMPORTACION_EXCEL_GUIA.md

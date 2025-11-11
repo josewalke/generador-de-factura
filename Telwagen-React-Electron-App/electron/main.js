@@ -36,7 +36,7 @@ function createWindow() {
           "style-src 'self' 'unsafe-inline' https:; " +
           "font-src 'self' https: data:; " +
           "img-src 'self' data: blob: https:; " +
-          "connect-src 'self' http://localhost:3000 https://localhost:3443 https:; " +
+          "connect-src 'self' http://localhost:3000 http://192.168.100.101:3000 https://localhost:3443 https:; " +
           "frame-src 'none'; " +
           "object-src 'none'; " +
           "base-uri 'self';"
