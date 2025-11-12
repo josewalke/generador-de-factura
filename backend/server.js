@@ -159,7 +159,7 @@ const requireRole = (roles) => {
     return authService.requireRole(roles);
 };
 
-// Middleware de seguridad
+// Middleware de seguridad mejorado
 if (config.get('security.helmet')) {
     app.use(helmet({
         contentSecurityPolicy: {
@@ -168,18 +168,26 @@ if (config.get('security.helmet')) {
                 styleSrc: ["'self'", "'unsafe-inline'"],
                 scriptSrc: ["'self'"],
                 imgSrc: ["'self'", "data:", "https:"],
-                connectSrc: ["'self'"],
+                connectSrc: ["'self'", "https:", "http:"], // Permitir conexiones HTTPS y HTTP
                 fontSrc: ["'self'"],
                 objectSrc: ["'none'"],
                 mediaSrc: ["'self'"],
                 frameSrc: ["'none'"],
             },
         },
-        crossOriginEmbedderPolicy: false
+        crossOriginEmbedderPolicy: false,
+        hsts: {
+            maxAge: 31536000, // 1 año
+            includeSubDomains: true,
+            preload: true
+        },
+        noSniff: true,
+        xssFilter: true,
+        referrerPolicy: { policy: "strict-origin-when-cross-origin" }
     }));
 }
 
-// Rate limiting
+// Rate limiting general
 const limiter = rateLimit({
     windowMs: config.get('security.rateLimit.windowMs'),
     max: config.get('security.rateLimit.max'),
@@ -197,6 +205,23 @@ const limiter = rateLimit({
 });
 
 app.use(limiter);
+
+// Rate limiting más estricto para login (protección contra fuerza bruta)
+const loginLimiter = rateLimit({
+    windowMs: config.get('security.rateLimit.loginWindowMs'),
+    max: config.get('security.rateLimit.loginMax'),
+    message: {
+        error: 'Demasiados intentos de login. Inténtelo de nuevo más tarde.',
+        retryAfter: Math.ceil(config.get('security.rateLimit.loginWindowMs') / 1000)
+    },
+    standardHeaders: true,
+    legacyHeaders: false,
+    skipSuccessfulRequests: true // No contar intentos exitosos
+});
+
+// Aplicar rate limiting estricto a endpoints de autenticación
+app.use('/api/auth/login', loginLimiter);
+app.use('/api/auth/register', loginLimiter);
 
 // Middleware de logging optimizado con monitoreo de seguridad
 app.use((req, res, next) => {
@@ -4279,7 +4304,51 @@ const server = app.listen(PORT, HOST, () => {
         configureFirewall(PORT);
     }
     
-    // Configurar HTTPS para aplicación de escritorio
+    // Configurar HTTPS para acceso desde Internet
+    const HTTPS_PORT = parseInt(process.env.HTTPS_PORT) || 8443;
+    const enableHTTPS = process.env.ENABLE_HTTPS !== 'false';
+    
+    if (enableHTTPS) {
+        try {
+            const httpsServer = httpsManager.createHTTPSServer(app, HTTPS_PORT);
+            if (httpsServer) {
+                logger.info(`🔒 Servidor HTTPS iniciado en puerto ${HTTPS_PORT}`, {}, 'general');
+                
+                // Configurar firewall para HTTPS
+                if (process.platform === 'win32') {
+                    configureFirewall(HTTPS_PORT);
+                }
+                
+                // Mostrar URLs HTTPS
+                if (localIPs.length > 0) {
+                    logger.info(`🔒 URLs HTTPS para acceso desde Internet:`, {}, 'general');
+                    localIPs.forEach(ip => {
+                        logger.info(`   • https://${ip}:${HTTPS_PORT}`, {}, 'general');
+                    });
+                    console.log(`\n🔒 URLs HTTPS:`);
+                    localIPs.forEach(ip => {
+                        console.log(`   • https://${ip}:${HTTPS_PORT}`);
+                    });
+                }
+                
+                // Mostrar IP pública HTTPS
+                try {
+                    const { execSync } = require('child_process');
+                    const publicIP = execSync('powershell -Command "(Invoke-WebRequest -Uri https://api.ipify.org -UseBasicParsing).Content"', { encoding: 'utf8' }).trim();
+                    console.log(`   • https://${publicIP}:${HTTPS_PORT}`);
+                    logger.info(`   • https://${publicIP}:${HTTPS_PORT}`, {}, 'general');
+                } catch (e) {
+                    console.log(`   • https://92.186.17.227:${HTTPS_PORT}`);
+                    logger.info(`   • https://92.186.17.227:${HTTPS_PORT}`, {}, 'general');
+                }
+            }
+        } catch (error) {
+            logger.error('Error iniciando servidor HTTPS', { error: error.message }, 'general');
+            console.error('⚠️  No se pudo iniciar servidor HTTPS, continuando solo con HTTP');
+        }
+    }
+    
+    // Configurar HTTPS para aplicación de escritorio (modo Electron)
     if (config.get('electron.electronMode')) {
         httpsManager.setupHTTPSForDesktop(app, 3443);
     }

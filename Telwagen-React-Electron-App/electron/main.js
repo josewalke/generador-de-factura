@@ -36,13 +36,25 @@ function createWindow() {
           "style-src 'self' 'unsafe-inline' https:; " +
           "font-src 'self' https: data:; " +
           "img-src 'self' data: blob: https:; " +
-          "connect-src 'self' http://localhost:* http://127.0.0.1:* http://192.168.100.101:* https://localhost:3443 https:; " +
+          "connect-src 'self' http://localhost:* http://127.0.0.1:* http://192.168.100.101:* https://localhost:* https://127.0.0.1:* https://192.168.100.101:* https://92.186.17.227:* https:; " +
           "frame-src 'none'; " +
           "object-src 'none'; " +
           "base-uri 'self';"
         ]
       }
     });
+  });
+
+  // Permitir certificados autofirmados para desarrollo
+  // IMPORTANTE: Solo para desarrollo con certificados autofirmados
+  app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
+    // Permitir certificados autofirmados solo para la IP del backend
+    if (url.includes('92.186.17.227:8443') || url.includes('192.168.100.101:8443') || url.includes('localhost:8443')) {
+      event.preventDefault();
+      callback(true); // Aceptar el certificado
+    } else {
+      callback(false); // Rechazar otros certificados inválidos
+    }
   });
 
   // Cargar la aplicación React

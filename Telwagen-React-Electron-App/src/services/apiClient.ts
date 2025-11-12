@@ -4,7 +4,7 @@ import { BACKEND_URL } from '../config/backend';
 // Crear instancia de axios con configuración base
 const apiClient = axios.create({
   baseURL: BACKEND_URL,
-  timeout: 10000,
+  timeout: 30000, // Aumentado a 30 segundos para conexiones de red
   headers: {
     'Content-Type': 'application/json',
   },

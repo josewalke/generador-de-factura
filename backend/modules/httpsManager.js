@@ -31,16 +31,37 @@ class HTTPSManager {
                 };
             }
 
-            console.log('🔐 Generando certificado SSL autofirmado para desarrollo local...');
+            console.log('🔐 Generando certificado SSL autofirmado...');
+
+            // Obtener IPs locales para incluir en el certificado
+            const os = require('os');
+            const networkInterfaces = os.networkInterfaces();
+            const altNames = [
+                { type: 2, value: 'localhost' },
+                { type: 7, ip: '127.0.0.1' },
+                { type: 7, ip: '::1' }
+            ];
+
+            // Agregar IPs de red local
+            Object.keys(networkInterfaces).forEach((interfaceName) => {
+                networkInterfaces[interfaceName].forEach((iface) => {
+                    if (iface.family === 'IPv4' && !iface.internal) {
+                        altNames.push({ type: 7, ip: iface.address });
+                    }
+                });
+            });
+
+            // Agregar IP pública conocida
+            altNames.push({ type: 7, ip: '92.186.17.227' });
 
             // Generar certificado autofirmado
             const attrs = [
-                { name: 'commonName', value: 'localhost' },
+                { name: 'commonName', value: 'telwagen-backend' },
                 { name: 'countryName', value: 'ES' },
                 { name: 'stateOrProvinceName', value: 'Las Palmas' },
                 { name: 'localityName', value: 'Las Palmas de Gran Canaria' },
-                { name: 'organizationName', value: 'Telwagen Desktop App' },
-                { name: 'organizationalUnitName', value: 'Development' }
+                { name: 'organizationName', value: 'Telwagen' },
+                { name: 'organizationalUnitName', value: 'Backend Server' }
             ];
 
             const options = {
@@ -62,20 +83,7 @@ class HTTPSManager {
                     },
                     {
                         name: 'subjectAltName',
-                        altNames: [
-                            {
-                                type: 2, // DNS
-                                value: 'localhost'
-                            },
-                            {
-                                type: 7, // IP
-                                ip: '127.0.0.1'
-                            },
-                            {
-                                type: 7, // IP
-                                ip: '::1'
-                            }
-                        ]
+                        altNames: altNames
                     }
                 ]
             };
@@ -89,6 +97,7 @@ class HTTPSManager {
             console.log('✅ Certificado SSL generado exitosamente');
             console.log(`📁 Certificado: ${this.certFile}`);
             console.log(`🔑 Clave privada: ${this.keyFile}`);
+            console.log('⚠️  Certificado autofirmado - para producción usa Let\'s Encrypt');
 
             return {
                 cert: pems.cert,
@@ -103,22 +112,48 @@ class HTTPSManager {
     /**
      * Crear servidor HTTPS
      * @param {Object} app - Aplicación Express
+     * @param {number} port - Puerto HTTPS
      * @returns {Object} Servidor HTTPS
      */
-    createHTTPSServer(app) {
+    createHTTPSServer(app, port = 8443) {
         try {
-            if (config.get('server.environment') === 'production') {
-                console.log('⚠️ En producción, usar certificados SSL reales');
-                return null;
+            let sslOptions;
+            
+            // Intentar cargar certificados reales primero
+            if (fs.existsSync(this.certFile) && fs.existsSync(this.keyFile)) {
+                try {
+                    sslOptions = {
+                        cert: fs.readFileSync(this.certFile),
+                        key: fs.readFileSync(this.keyFile)
+                    };
+                    console.log('✅ Certificados SSL cargados desde archivos');
+                } catch (error) {
+                    console.warn('⚠️ Error cargando certificados, generando autofirmado...');
+                    sslOptions = this.generateSelfSignedCert();
+                }
+            } else {
+                // Generar certificado autofirmado
+                console.log('🔐 Generando certificado SSL autofirmado...');
+                sslOptions = this.generateSelfSignedCert();
             }
-
-            const sslOptions = this.generateSelfSignedCert();
             
             const httpsServer = https.createServer(sslOptions, app);
             
-            console.log('🔒 Servidor HTTPS configurado para desarrollo local');
-            console.log('⚠️ IMPORTANTE: Este es un certificado autofirmado solo para desarrollo');
-            console.log('⚠️ En producción, usar certificados SSL reales de una CA confiable');
+            // Iniciar servidor HTTPS
+            httpsServer.listen(port, '0.0.0.0', () => {
+                console.log(`🔒 Servidor HTTPS ejecutándose en https://0.0.0.0:${port}`);
+                console.log(`🌐 Acceso desde Internet: https://92.186.17.227:${port}`);
+                console.log('⚠️ NOTA: Certificado autofirmado - los navegadores mostrarán advertencia');
+                console.log('   Para producción, usa certificados de Let\'s Encrypt');
+            });
+            
+            httpsServer.on('error', (error) => {
+                if (error.code === 'EADDRINUSE') {
+                    console.log(`⚠️ Puerto HTTPS ${port} ya está en uso`);
+                } else {
+                    console.error('❌ Error en servidor HTTPS:', error);
+                }
+            });
             
             return httpsServer;
         } catch (error) {

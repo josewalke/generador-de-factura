@@ -48,29 +48,10 @@ class ConfigManager {
                         // En desarrollo, mantener lista restrictiva
                         const isProduction = process.env.NODE_ENV === 'production';
                         
-                        if (isProduction) {
-                            // En producción, permitir todos los orígenes
-                            // (Puedes restringir esto más tarde si es necesario)
-                            callback(null, true);
-                        } else {
-                            // En desarrollo, lista restrictiva
-                            const allowedOrigins = [
-                                'http://localhost:5173',
-                                'http://localhost:3000',
-                                'http://127.0.0.1:5173',
-                                'http://127.0.0.1:3000',
-                                'file://'
-                            ];
-                            
-                            // También permitir cualquier IP local (192.168.x.x, 10.x.x.x, etc.)
-                            const isLocalNetwork = /^https?:\/\/(192\.168\.|10\.|172\.(1[6-9]|2[0-9]|3[01])\.|localhost|127\.0\.0\.1)/.test(origin);
-                            
-                            if (allowedOrigins.indexOf(origin) !== -1 || isLocalNetwork) {
-                                callback(null, true);
-                            } else {
-                                callback(new Error('No permitido por CORS'));
-                            }
-                        }
+                        // Permitir todos los orígenes para acceso desde Internet
+                        // En producción y desarrollo, permitir cualquier origen para facilitar acceso remoto
+                        // (Puedes restringir esto más tarde si es necesario para mayor seguridad)
+                        callback(null, true);
                     },
                     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
                     allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
@@ -104,7 +85,10 @@ class ConfigManager {
                 helmet: process.env.HELMET_ENABLED !== 'false',
                 rateLimit: {
                     windowMs: parseInt(process.env.RATE_LIMIT_WINDOW) || 900000, // 15 minutos
-                    max: parseInt(process.env.RATE_LIMIT_MAX) || 100
+                    max: parseInt(process.env.RATE_LIMIT_MAX) || 100,
+                    // Rate limiting más estricto para login
+                    loginWindowMs: parseInt(process.env.LOGIN_RATE_LIMIT_WINDOW) || 900000, // 15 minutos
+                    loginMax: parseInt(process.env.LOGIN_RATE_LIMIT_MAX) || 5 // Solo 5 intentos por 15 minutos
                 },
                 jwt: {
                     secret: process.env.JWT_SECRET || (() => {

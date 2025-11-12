@@ -1,18 +1,14 @@
 // URL base del backend
-// Usa la IP pública de red local para permitir conexiones desde otros ordenadores
-// Puedes cambiarla manualmente o usar la variable de entorno VITE_BACKEND_URL
+// Configurado para acceso desde Internet (cualquier lugar del mundo)
 const getBackendURL = (): string => {
   // Prioridad 1: Variable de entorno (si está definida)
   if (import.meta.env.VITE_BACKEND_URL) {
     return import.meta.env.VITE_BACKEND_URL;
   }
   
-  // Prioridad 2: IP pública configurada (192.168.100.101)
-  // Esta es la IP de red local para acceso desde otros ordenadores
-  const PUBLIC_IP = '192.168.100.101';
-  const PORT = '3000';
-  
-  return `http://${PUBLIC_IP}:${PORT}`;
+  // Prioridad 2: URL de producción (HTTPS)
+  // URL principal para acceso desde Internet
+  return 'https://92.186.17.227:8443';
 };
 
 export const BACKEND_URL = getBackendURL();
@@ -22,8 +18,8 @@ export const BACKEND_CONFIG = {
   // URL base del backend
   baseURL: BACKEND_URL,
   
-  // Configuración de timeout
-  timeout: 10000,
+  // Configuración de timeout (aumentado para conexiones de red)
+  timeout: 30000,
   
   // Headers por defecto
   headers: {
