@@ -1,0 +1,39 @@
+========================================
+  COMO INICIAR EL SERVIDOR
+========================================
+
+OPCION 1: Doble clic (MAS FACIL)
+---------------------------------
+1. Haz doble clic en: iniciar-todo.bat
+2. Espera a que termine
+3. Listo!
+
+
+OPCION 2: Desde PowerShell
+---------------------------
+1. Abre PowerShell en esta carpeta
+2. Ejecuta: .\iniciar-todo.ps1
+3. Listo!
+
+
+QUE HACE EL SCRIPT:
+-------------------
+- Inicia el backend (puerto 8443)
+- Inicia ngrok (crea URL publica)
+- Obtiene la URL externa
+- Actualiza el frontend automaticamente
+
+
+IMPORTANTE:
+-----------
+- Manten abiertas las ventanas que se abren
+- Si cierras ngrok, ejecuta el script de nuevo
+- La URL cambia cada vez que reinicias ngrok
+
+
+ARCHIVOS:
+---------
+- iniciar-todo.bat      -> Doble clic para iniciar
+- iniciar-todo.ps1      -> Script principal
+- ngrok-url.txt         -> URL actual guardada aqui
+

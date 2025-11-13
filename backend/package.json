@@ -10,6 +10,7 @@
     "dev:stable": "node server.js",
     "dev:watch": "nodemon --config nodemon.json server.js",
     "migrate:postgresql": "node migrar_a_postgresql.js",
+    "cert:generate": "node generar-certificado-valido.js",
     "pm2:start": "pm2 start ecosystem.config.js",
     "pm2:stop": "pm2 stop telwagen-backend",
     "pm2:restart": "pm2 restart telwagen-backend",

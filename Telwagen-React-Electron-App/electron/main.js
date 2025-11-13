@@ -36,7 +36,7 @@ function createWindow() {
           "style-src 'self' 'unsafe-inline' https:; " +
           "font-src 'self' https: data:; " +
           "img-src 'self' data: blob: https:; " +
-          "connect-src 'self' http://localhost:* http://127.0.0.1:* http://192.168.100.101:* https://localhost:* https://127.0.0.1:* https://192.168.100.101:* https://92.186.17.227:* https:; " +
+          "connect-src 'self' http://localhost:* http://127.0.0.1:* http://192.168.100.101:* http://192.168.*:* http://10.*:* http://172.16.*:* https:; " +
           "frame-src 'none'; " +
           "object-src 'none'; " +
           "base-uri 'self';"
@@ -45,11 +45,11 @@ function createWindow() {
     });
   });
 
-  // Permitir certificados autofirmados para desarrollo
+  // Permitir certificados autofirmados para desarrollo (si se usa HTTPS)
   // IMPORTANTE: Solo para desarrollo con certificados autofirmados
   app.on('certificate-error', (event, webContents, url, error, certificate, callback) => {
-    // Permitir certificados autofirmados solo para la IP del backend
-    if (url.includes('92.186.17.227:8443') || url.includes('192.168.100.101:8443') || url.includes('localhost:8443')) {
+    // Permitir certificados autofirmados solo para la IP del backend (si se usa HTTPS)
+    if (url.includes('192.168.100.101') || url.includes('localhost') || url.includes('127.0.0.1')) {
       event.preventDefault();
       callback(true); // Aceptar el certificado
     } else {

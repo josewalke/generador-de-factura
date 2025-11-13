@@ -7,12 +7,21 @@ const apiClient = axios.create({
   timeout: 30000, // Aumentado a 30 segundos para conexiones de red
   headers: {
     'Content-Type': 'application/json',
+    'ngrok-skip-browser-warning': 'true', // Saltar advertencia de ngrok
   },
 });
 
 // Interceptor para manejar errores globalmente
 apiClient.interceptors.response.use(
   (response) => {
+    // Verificar si la respuesta es HTML (página de advertencia de ngrok)
+    const contentType = response.headers['content-type'] || '';
+    if (contentType.includes('text/html') || (typeof response.data === 'string' && response.data.includes('<!DOCTYPE html>'))) {
+      console.error('❌ [apiClient] ngrok está mostrando página de advertencia en lugar del backend');
+      console.error('   Asegúrate de que el header ngrok-skip-browser-warning esté siendo enviado');
+      throw new Error('ngrok está bloqueando la petición. Verifica la configuración.');
+    }
+    
     console.log('🌐 [apiClient] API Response:', response.status, response.data);
     if (response.config.method === 'put') {
       console.log('🌐 [apiClient] PUT Request Details:', {

@@ -119,7 +119,7 @@ class HTTPSManager {
         try {
             let sslOptions;
             
-            // Intentar cargar certificados reales primero
+            // Intentar cargar certificados reales primero (mkcert o Let's Encrypt)
             if (fs.existsSync(this.certFile) && fs.existsSync(this.keyFile)) {
                 try {
                     sslOptions = {
@@ -127,14 +127,36 @@ class HTTPSManager {
                         key: fs.readFileSync(this.keyFile)
                     };
                     console.log('✅ Certificados SSL cargados desde archivos');
+                    
+                    // Verificar si es un certificado de mkcert (válido)
+                    const certContent = fs.readFileSync(this.certFile, 'utf8');
+                    if (certContent.includes('mkcert') || this.isValidCertificate(this.certFile)) {
+                        console.log('✅ Certificado válido detectado (mkcert o Let\'s Encrypt)');
+                        console.log('   No se mostrarán advertencias en navegadores con CA instalada');
+                    }
                 } catch (error) {
                     console.warn('⚠️ Error cargando certificados, generando autofirmado...');
                     sslOptions = this.generateSelfSignedCert();
                 }
             } else {
-                // Generar certificado autofirmado
-                console.log('🔐 Generando certificado SSL autofirmado...');
-                sslOptions = this.generateSelfSignedCert();
+                // Intentar generar con mkcert primero
+                if (this.tryGenerateMkcertCert()) {
+                    try {
+                        sslOptions = {
+                            cert: fs.readFileSync(this.certFile),
+                            key: fs.readFileSync(this.keyFile)
+                        };
+                        console.log('✅ Certificado generado con mkcert (válido)');
+                    } catch (error) {
+                        console.warn('⚠️ Error cargando certificado mkcert, generando autofirmado...');
+                        sslOptions = this.generateSelfSignedCert();
+                    }
+                } else {
+                    // Generar certificado autofirmado como fallback
+                    console.log('🔐 Generando certificado SSL autofirmado...');
+                    console.log('💡 Tip: Ejecuta "node generar-certificado-valido.js" para certificados válidos');
+                    sslOptions = this.generateSelfSignedCert();
+                }
             }
             
             const httpsServer = https.createServer(sslOptions, app);
@@ -227,6 +249,68 @@ class HTTPSManager {
         } catch (error) {
             console.error('Error obteniendo información del certificado:', error);
             return null;
+        }
+    }
+
+    /**
+     * Intentar generar certificado con mkcert
+     * @returns {boolean} True si se generó exitosamente
+     */
+    tryGenerateMkcertCert() {
+        try {
+            const { execSync } = require('child_process');
+            
+            // Verificar si mkcert está instalado
+            try {
+                execSync('mkcert -version', { stdio: 'ignore' });
+            } catch {
+                return false; // mkcert no está instalado
+            }
+            
+            // Obtener IPs locales
+            const os = require('os');
+            const networkInterfaces = os.networkInterfaces();
+            const ips = ['localhost', '127.0.0.1'];
+            
+            Object.keys(networkInterfaces).forEach((interfaceName) => {
+                networkInterfaces[interfaceName].forEach((iface) => {
+                    if (iface.family === 'IPv4' && !iface.internal) {
+                        ips.push(iface.address);
+                    }
+                });
+            });
+            
+            ips.push('92.186.17.227'); // IP pública
+            
+            // Crear directorio si no existe
+            if (!fs.existsSync(this.certPath)) {
+                fs.mkdirSync(this.certPath, { recursive: true });
+            }
+            
+            // Generar certificado con mkcert
+            const domains = [...new Set(ips)].join(' ');
+            const command = `mkcert -key-file "${this.keyFile}" -cert-file "${this.certFile}" ${domains}`;
+            
+            execSync(command, { stdio: 'pipe', cwd: this.certPath });
+            return true;
+        } catch (error) {
+            return false; // No se pudo generar con mkcert
+        }
+    }
+    
+    /**
+     * Verificar si un certificado es válido (no autofirmado)
+     * @param {string} certPath - Ruta al certificado
+     * @returns {boolean} True si es válido
+     */
+    isValidCertificate(certPath) {
+        try {
+            const cert = fs.readFileSync(certPath, 'utf8');
+            // Los certificados de mkcert o Let's Encrypt no tienen "self-signed" en el contenido
+            // Esta es una verificación básica
+            return !cert.includes('self-signed') && cert.includes('BEGIN CERTIFICATE');
+        } catch {
+            return false;
         }
     }
 

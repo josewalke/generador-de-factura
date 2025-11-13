@@ -142,7 +142,13 @@ const SecurityMonitor = require('./modules/securityMonitor');
 
 const app = express();
 const PORT = config.get('server.port');
-const HOST = config.get('server.host');
+let HOST = config.get('server.host');
+
+// Asegurar que el servidor escuche en todas las interfaces
+if (HOST === 'localhost' || HOST === '127.0.0.1' || HOST === '::1') {
+    logger.warn('🛠️ HOST configurado como localhost. Cambiando automáticamente a 0.0.0.0 para permitir acceso externo.', {}, 'general');
+    HOST = '0.0.0.0';
+}
 
 // Inicializar servicios de seguridad
 const authService = new AuthService();

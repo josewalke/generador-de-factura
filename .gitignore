@@ -14,7 +14,12 @@ backend/backups/
 backend/firmas/
 
 # Archivos de certificados (contienen claves privadas)
+backend/certificates/
 backend/certificados/
+
+# Archivos de ngrok
+backend/ngrok-url.txt
+mkcert.exe
 
 # Archivos temporales
 temp/

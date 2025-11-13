@@ -54,7 +54,7 @@ class ConfigManager {
                         callback(null, true);
                     },
                     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-                    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With'],
+                    allowedHeaders: ['Content-Type', 'Authorization', 'X-Requested-With', 'ngrok-skip-browser-warning'],
                     credentials: true,
                     maxAge: 86400 // 24 horas
                 }
