@@ -1,18 +1,68 @@
-// URL base del backend
-// Configurado para acceso desde cualquier lugar del mundo (Internet) usando ngrok
+// URL del backend - SOLO NGROK (sin fallbacks locales)
+const NGROK_URL = 'https://unencountered-fabiola-constrictedly.ngrok-free.dev';
+
+// Cache para la URL que funciona
+let workingBackendURL: string | null = null;
+let lastConnectionCheck: number = 0;
+const CONNECTION_CACHE_TTL = 60000; // 1 minuto
+
+// Función para detectar automáticamente la mejor URL disponible
+// SOLO USA NGROK - Sin pruebas de localhost ni otras IPs
+export const detectBestBackendURL = async (): Promise<string> => {
+  // Si tenemos una URL en caché que funcionó recientemente, usarla
+  const now = Date.now();
+  if (workingBackendURL && (now - lastConnectionCheck) < CONNECTION_CACHE_TTL) {
+    return workingBackendURL;
+  }
+
+  // USAR NGROK DIRECTAMENTE - Sin probar otras URLs
+  workingBackendURL = NGROK_URL;
+  lastConnectionCheck = now;
+  console.log('✅ Usando ngrok directamente:', NGROK_URL);
+  return NGROK_URL;
+};
+
+// URL base del backend - SOLO NGROK
 const getBackendURL = (): string => {
-  // Prioridad 1: Variable de entorno (si está definida)
+  // Prioridad 1: Variable de entorno (si está definida) - siempre usar esta si existe
   if (import.meta.env.VITE_BACKEND_URL) {
     return import.meta.env.VITE_BACKEND_URL;
   }
   
-  // Prioridad 2: URL para acceso desde Internet (ngrok)
-  // ngrok proporciona acceso desde cualquier lugar del mundo sin configurar routers
-  // Esta es la URL principal para acceso desde cualquier ordenador en el mundo
-  return 'https://unencountered-fabiola-constrictedly.ngrok-free.dev';
+  // Prioridad 2: URL en caché si está disponible
+  if (workingBackendURL) {
+    return workingBackendURL;
+  }
+  
+  // Prioridad 3: URL ngrok directamente (SIN FALLBACKS)
+  return NGROK_URL;
 };
 
-export const BACKEND_URL = getBackendURL();
+// Inicializar detección automática al cargar el módulo
+let backendURLPromise: Promise<string> | null = null;
+
+const initializeBackendURL = async (): Promise<string> => {
+  if (!backendURLPromise) {
+    backendURLPromise = detectBestBackendURL();
+  }
+  return backendURLPromise;
+};
+
+// Exportar URL inicial (se actualizará después de la detección)
+export let BACKEND_URL = getBackendURL();
+
+// Inicializar en segundo plano (no bloquea la carga)
+if (typeof window !== 'undefined') {
+  initializeBackendURL().then(url => {
+    BACKEND_URL = url;
+    // Actualizar apiClient si ya existe
+    if ((window as any).__updateBackendURL) {
+      (window as any).__updateBackendURL(url);
+    }
+  }).catch(error => {
+    console.error('Error inicializando URL del backend:', error);
+  });
+}
 
 // Log de la URL del backend (solo en desarrollo)
 if (import.meta.env.DEV) {
@@ -44,17 +94,46 @@ export const BACKEND_CONFIG = {
   }
 };
 
-// Función para verificar la conexión con el backend
-export const checkBackendConnection = async (): Promise<boolean> => {
+// Función para verificar la conexión con el backend (con reintentos y fallback)
+export const checkBackendConnection = async (retryCount: number = 0): Promise<boolean> => {
+  const MAX_RETRIES = 3;
+  
   try {
+    // Primero, asegurarse de que tenemos la mejor URL disponible
+    const bestURL = await initializeBackendURL();
+    if (bestURL !== BACKEND_URL) {
+      BACKEND_URL = bestURL;
+      // Notificar al apiClient para que actualice su URL
+      if ((window as any).__updateBackendURL) {
+        (window as any).__updateBackendURL(bestURL);
+      }
+    }
+
     // Usar apiClient para usar la misma configuración que las demás peticiones
     const { apiClient } = await import('../services/apiClient');
     const response = await apiClient.get('/', {
       timeout: 10000,
       validateStatus: (status) => status < 500, // Aceptar cualquier status < 500
     });
-    return response.status < 400;
+    
+    if (response.status < 400) {
+      // Conexión exitosa, actualizar caché
+      workingBackendURL = BACKEND_URL;
+      lastConnectionCheck = Date.now();
+      return true;
+    }
+    
+    return false;
   } catch (error: any) {
+    // Si falla, intentar detectar una nueva URL si no hemos reintentado mucho
+    if (retryCount < MAX_RETRIES) {
+      // Limpiar caché y reintentar con detección automática
+      workingBackendURL = null;
+      lastConnectionCheck = 0;
+      await new Promise(resolve => setTimeout(resolve, 1000 * (retryCount + 1))); // Backoff exponencial
+      return checkBackendConnection(retryCount + 1);
+    }
+    
     // Si es un error de red intermitente, no es crítico si las demás peticiones funcionan
     if (error.code === 'ERR_NETWORK' || error.message?.includes('Network Error')) {
       // No loguear errores de red intermitentes, solo retornar false

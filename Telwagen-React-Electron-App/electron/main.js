@@ -1,9 +1,12 @@
 const { app, BrowserWindow, Menu, ipcMain, dialog } = require('electron');
 const path = require('path');
+const { spawn } = require('child_process');
+const fs = require('fs');
 
 const isDev = process.env.NODE_ENV === 'development';
 
 let mainWindow;
+let backendProcess = null;
 
 function createWindow() {
   // Crear la ventana del navegador
@@ -25,7 +28,7 @@ function createWindow() {
     titleBarStyle: 'default',
   });
 
-  // Configurar Content Security Policy para permitir fuentes y recursos externos
+  // Configurar Content Security Policy - Solo permitir ngrok (https) y recursos locales
   mainWindow.webContents.session.webRequest.onHeadersReceived((details, callback) => {
     callback({
       responseHeaders: {
@@ -36,7 +39,7 @@ function createWindow() {
           "style-src 'self' 'unsafe-inline' https:; " +
           "font-src 'self' https: data:; " +
           "img-src 'self' data: blob: https:; " +
-          "connect-src 'self' http://localhost:* http://127.0.0.1:* http://192.168.100.101:* http://192.168.*:* http://10.*:* http://172.16.*:* https:; " +
+          "connect-src 'self' https://*.ngrok-free.dev https://*.ngrok.io https:; " +
           "frame-src 'none'; " +
           "object-src 'none'; " +
           "base-uri 'self';"
@@ -167,15 +170,185 @@ function createMenu() {
   Menu.setApplicationMenu(menu);
 }
 
+// Función para obtener la ruta del backend
+function getBackendPath() {
+  if (isDev) {
+    // En desarrollo, el backend está en la carpeta padre
+    return path.join(__dirname, '../../backend');
+  } else {
+    // En producción, el backend está en resources/backend
+    return path.join(process.resourcesPath, 'backend');
+  }
+}
+
+// Función para verificar si el backend está ejecutándose (local o remoto)
+async function checkBackendRunning(url = 'http://localhost:3000') {
+  return new Promise((resolve) => {
+    const http = require('http');
+    const https = require('https');
+    const urlObj = new URL(url);
+    const client = urlObj.protocol === 'https:' ? https : http;
+    
+    const req = client.get(url, { 
+      timeout: 3000,
+      headers: {
+        'ngrok-skip-browser-warning': 'true'
+      }
+    }, (res) => {
+      resolve(res.statusCode < 500);
+    });
+    req.on('error', () => resolve(false));
+    req.on('timeout', () => {
+      req.destroy();
+      resolve(false);
+    });
+  });
+}
+
+// Función para verificar si hay algún backend disponible (ngrok primero)
+async function checkAnyBackendAvailable() {
+  // PRIORIDAD: Verificar ngrok primero (backend remoto)
+  const ngrokURL = 'https://unencountered-fabiola-constrictedly.ngrok-free.dev';
+  const ngrokAvailable = await checkBackendRunning(ngrokURL);
+  
+  if (ngrokAvailable) {
+    console.log('✅ Backend ngrok disponible');
+    return true;
+  }
+  
+  // Si ngrok no está disponible, verificar localhost como fallback
+  const localhostAvailable = await checkBackendRunning('http://localhost:3000');
+  if (localhostAvailable) {
+    console.log('✅ Backend local disponible');
+    return true;
+  }
+  
+  return false;
+}
+
+// Función para iniciar el backend
+async function startBackend() {
+  // PRIMERO: Verificar si hay algún backend disponible (local o remoto)
+  const backendAvailable = await checkAnyBackendAvailable();
+  if (backendAvailable) {
+    console.log('✅ Backend disponible detectado (local o remoto)');
+    return true; // No necesitamos iniciar el backend local
+  }
+  
+  // Si no hay backend disponible, intentar iniciar el local
+  const backendPath = getBackendPath();
+  const serverPath = path.join(backendPath, 'server.js');
+  
+  // Verificar si el backend local ya está ejecutándose
+  const isLocalRunning = await checkBackendRunning('http://localhost:3000');
+  if (isLocalRunning) {
+    console.log('✅ Backend local ya está ejecutándose');
+    return true;
+  }
+
+  // Verificar que el archivo del servidor existe (solo si estamos en producción)
+  if (!isDev && !fs.existsSync(serverPath)) {
+    console.log('ℹ️ Backend local no disponible, pero el frontend intentará conectarse a un backend remoto');
+    return true; // No es un error, simplemente no hay backend local
+  }
+  
+  // En desarrollo, si no existe el backend, no es crítico
+  if (isDev && !fs.existsSync(serverPath)) {
+    console.log('ℹ️ Backend local no encontrado, el frontend usará detección automática');
+    return true; // No es un error
+  }
+
+  console.log('🚀 Iniciando backend desde:', backendPath);
+
+  try {
+    // Iniciar el backend como proceso hijo
+    backendProcess = spawn('node', [serverPath], {
+      cwd: backendPath,
+      env: {
+        ...process.env,
+        NODE_ENV: isDev ? 'development' : 'production',
+        PORT: '3000',
+        HOST: '0.0.0.0',
+      },
+      stdio: ['ignore', 'pipe', 'pipe'],
+    });
+
+    // Capturar salida del backend
+    backendProcess.stdout.on('data', (data) => {
+      console.log(`[Backend] ${data.toString().trim()}`);
+    });
+
+    backendProcess.stderr.on('data', (data) => {
+      console.error(`[Backend Error] ${data.toString().trim()}`);
+    });
+
+    backendProcess.on('error', (error) => {
+      console.error('❌ Error al iniciar el backend:', error);
+    });
+
+    backendProcess.on('exit', (code) => {
+      console.log(`Backend terminado con código ${code}`);
+      backendProcess = null;
+    });
+
+    // Esperar a que el backend esté listo (máximo 30 segundos)
+    for (let i = 0; i < 30; i++) {
+      await new Promise(resolve => setTimeout(resolve, 1000));
+      const isRunning = await checkBackendRunning();
+      if (isRunning) {
+        console.log('✅ Backend iniciado correctamente');
+        return true;
+      }
+    }
+
+    console.error('❌ Timeout esperando que el backend inicie');
+    return false;
+  } catch (error) {
+    console.error('❌ Error al iniciar el backend:', error);
+    return false;
+  }
+}
+
+// Función para detener el backend
+function stopBackend() {
+  if (backendProcess) {
+    console.log('🛑 Deteniendo backend...');
+    if (process.platform === 'win32') {
+      // En Windows, usar taskkill
+      spawn('taskkill', ['/pid', backendProcess.pid, '/f', '/t']);
+    } else {
+      // En Linux/Mac, usar kill
+      backendProcess.kill('SIGTERM');
+    }
+    backendProcess = null;
+  }
+}
+
 // Este método se llamará cuando Electron haya terminado de inicializar
-app.whenReady().then(createWindow);
+app.whenReady().then(async () => {
+  // Crear la ventana inmediatamente (no esperar al backend)
+  createWindow();
+  
+  // Verificar e intentar iniciar el backend en segundo plano (solo si es necesario)
+  // No mostrar errores si el backend está en otro ordenador
+  startBackend().catch(error => {
+    console.log('ℹ️ No se pudo iniciar backend local, pero el frontend intentará conectarse automáticamente');
+  });
+});
 
 // Salir cuando todas las ventanas estén cerradas
 app.on('window-all-closed', () => {
+  // Detener el backend antes de salir
+  stopBackend();
   // En macOS es común que las aplicaciones permanezcan activas hasta que se cierren explícitamente
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+// Detener el backend cuando la aplicación se cierre
+app.on('before-quit', () => {
+  stopBackend();
 });
 
 app.on('activate', () => {
@@ -205,6 +378,28 @@ ipcMain.handle('show-message-box', async (event, options) => {
   } catch (error) {
     console.error('Error showing message box:', error);
     return { response: 0 };
+  }
+});
+
+// Obtener IPs locales del sistema
+ipcMain.handle('get-local-ips', async () => {
+  try {
+    const os = require('os');
+    const interfaces = os.networkInterfaces();
+    const ips = [];
+    
+    for (const name of Object.keys(interfaces)) {
+      for (const iface of interfaces[name] || []) {
+        if (iface.family === 'IPv4' && !iface.internal) {
+          ips.push(iface.address);
+        }
+      }
+    }
+    
+    return ips;
+  } catch (error) {
+    console.error('Error getting local IPs:', error);
+    return [];
   }
 });
 

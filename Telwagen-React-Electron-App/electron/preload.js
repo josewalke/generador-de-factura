@@ -16,6 +16,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   // Información de la aplicación
   getAppVersion: () => ipcRenderer.invoke('get-app-version'),
   
+  // Obtener IPs locales
+  getLocalIPs: () => ipcRenderer.invoke('get-local-ips'),
+  
   // Diálogos del sistema
   showMessageBox: (options) => ipcRenderer.invoke('show-message-box', options),
   

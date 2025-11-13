@@ -1285,6 +1285,35 @@ app.post('/api/empresas', async (req, res) => {
         
         console.log('🏢 [POST /api/empresas] Datos recibidos:', { nombre, cif, direccion, telefono, email, firmaDigitalThumbprint });
         
+        // Validar campos obligatorios
+        if (!nombre || !cif) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'Campos obligatorios faltantes: nombre, cif'
+            });
+        }
+        
+        // Verificar que el CIF no esté duplicado
+        const empresaExistente = await new Promise((resolve, reject) => {
+            db.get('SELECT id FROM empresas WHERE cif = ?', [cif], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                resolve(row);
+            });
+        });
+        
+        if (empresaExistente) {
+            return res.status(409).json({ 
+                success: false,
+                error: 'El CIF ya existe',
+                message: `Ya existe una empresa con el CIF: ${cif}`,
+                code: 'DUPLICATE_CIF',
+                field: 'cif'
+            });
+        }
+        
         // Crear la empresa con el certificado si se proporciona
         const empresaId = await new Promise((resolve, reject) => {
             db.run(`
@@ -1348,29 +1377,70 @@ app.post('/api/empresas', async (req, res) => {
 app.put('/api/empresas/:id', async (req, res) => {
     try {
         const { id } = req.params;
+        const empresaId = parseInt(id, 10);
         const { nombre, cif, direccion, telefono, email, firmaDigitalThumbprint } = req.body;
         
+        // Validar ID
+        if (isNaN(empresaId) || empresaId <= 0) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'ID de empresa inválido',
+                received: id
+            });
+        }
+        
+        // Si se está actualizando el CIF, verificar que no esté duplicado
+        if (cif) {
+            const cifDuplicado = await new Promise((resolve, reject) => {
+                db.get('SELECT id FROM empresas WHERE cif = ? AND id != ?', [cif, empresaId], (err, row) => {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+                    resolve(!!row);
+                });
+            });
+            
+            if (cifDuplicado) {
+                return res.status(409).json({ 
+                    success: false,
+                    error: 'El CIF ya existe',
+                    message: `Ya existe otra empresa con el CIF: ${cif}`,
+                    code: 'DUPLICATE_CIF',
+                    field: 'cif'
+                });
+            }
+        }
+        
         // Actualizar datos básicos de la empresa
-        await new Promise((resolve, reject) => {
+        const changes = await new Promise((resolve, reject) => {
             db.run(`
                 UPDATE empresas 
                 SET nombre = ?, cif = ?, direccion = ?, telefono = ?, email = ?, certificado_thumbprint = ?
                 WHERE id = ?
-            `, [nombre, cif, direccion, telefono, email, firmaDigitalThumbprint || null, id], function(err) {
+            `, [nombre, cif, direccion, telefono, email, firmaDigitalThumbprint || null, empresaId], function(err) {
                 if (err) {
                     reject(err);
                 } else if (this.changes === 0) {
-                    reject(new Error('Empresa no encontrada'));
+                    resolve(null);
                 } else {
-                    resolve();
+                    resolve(this.changes);
                 }
             });
         });
         
+        // Si no se encontró la empresa, retornar error 404
+        if (changes === null) {
+            return res.status(404).json({ 
+                success: false,
+                error: 'Empresa no encontrada'
+            });
+        }
+        
         // Si se especifica una firma digital, asociarla con la empresa
         if (firmaDigitalThumbprint) {
             try {
-                const resultadoAsociacion = await sistemaFirmaDigital.asociarCertificadoConEmpresa(id, firmaDigitalThumbprint);
+                const resultadoAsociacion = await sistemaFirmaDigital.asociarCertificadoConEmpresa(empresaId, firmaDigitalThumbprint);
                 
                 if (resultadoAsociacion.success) {
                     console.log(`✅ Firma digital asociada con empresa ${nombre}: ${resultadoAsociacion.certificado.empresa}`);
@@ -1384,7 +1454,7 @@ app.put('/api/empresas/:id', async (req, res) => {
         
         // Obtener la empresa actualizada para devolverla
         const empresaActualizada = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM empresas WHERE id = ?', [id], (err, row) => {
+            db.get('SELECT * FROM empresas WHERE id = ?', [empresaId], (err, row) => {
                 if (err) {
                     reject(err);
                 } else {
@@ -1528,61 +1598,95 @@ app.get('/api/clientes', (req, res) => {
 
 // POST - Crear nuevo cliente
 app.post('/api/clientes', (req, res) => {
-    const startTime = Date.now();
-    const { nombre, direccion, codigo_postal, identificacion, email, telefono } = req.body;
-    
-    logger.debug('Creando nuevo cliente', { 
-        nombre, 
-        identificacion,
-        email: email ? '***' : null,
-        telefono: telefono ? '***' : null
-    }, 'operations');
-    
-    // Validar campos obligatorios
-    if (!nombre || !direccion || !identificacion) {
-        logger.warn('Intento de crear cliente sin campos obligatorios', { 
-            nombre: !!nombre, 
-            direccion: !!direccion, 
-            identificacion: !!identificacion 
-        }, 'operations');
-        return res.status(400).json({ 
-            error: 'Campos obligatorios faltantes: nombre, direccion, identificacion' 
-        });
-    }
-    
-    db.run(`
-        INSERT INTO clientes (nombre, direccion, codigo_postal, identificacion, email, telefono)
-        VALUES (?, ?, ?, ?, ?, ?)
-    `, [nombre, direccion, codigo_postal, identificacion, email, telefono], function(err) {
-        const duration = Date.now() - startTime;
-        
-        if (err) {
-            logger.error('Error creando cliente', { 
-                error: err.message, 
+    (async () => {
+        const startTime = Date.now();
+        try {
+            const { nombre, direccion, codigo_postal, identificacion, email, telefono } = req.body;
+            
+            logger.debug('Creando nuevo cliente', { 
+                nombre, 
                 identificacion,
+                email: email ? '***' : null,
+                telefono: telefono ? '***' : null
+            }, 'operations');
+            
+            // Validar campos obligatorios
+            if (!nombre || !direccion || !identificacion) {
+                logger.warn('Intento de crear cliente sin campos obligatorios', { 
+                    nombre: !!nombre, 
+                    direccion: !!direccion, 
+                    identificacion: !!identificacion 
+                }, 'operations');
+                return res.status(400).json({ 
+                    error: 'Campos obligatorios faltantes: nombre, direccion, identificacion' 
+                });
+            }
+            
+            // Verificar que la identificación no esté duplicada
+            const clienteExistente = await new Promise((resolve, reject) => {
+                db.get('SELECT id FROM clientes WHERE identificacion = ?', [identificacion], (err, row) => {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+                    resolve(row);
+                });
+            });
+            
+            if (clienteExistente) {
+                logger.warn('Intento de crear cliente con identificación duplicada', { identificacion }, 'operations');
+                return res.status(409).json({ 
+                    error: 'La identificación ya existe',
+                    message: `Ya existe un cliente con la identificación: ${identificacion}`,
+                    code: 'DUPLICATE_IDENTIFICACION',
+                    field: 'identificacion'
+                });
+            }
+            
+            // Insertar cliente
+            const result = await new Promise((resolve, reject) => {
+                db.run(`
+                    INSERT INTO clientes (nombre, direccion, codigo_postal, identificacion, email, telefono)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                `, [nombre, direccion, codigo_postal, identificacion, email, telefono], function(err) {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+                    resolve({ id: this.lastID });
+                });
+            });
+            
+            const duration = Date.now() - startTime;
+            logger.databaseQuery('INSERT INTO clientes', duration, 1, [nombre, direccion, identificacion]);
+            logger.operationCreate('cliente', result.id, { nombre, identificacion });
+            
+            res.json({ 
+                success: true, 
+                data: { 
+                    id: result.id, 
+                    nombre, 
+                    direccion, 
+                    codigo_postal,
+                    identificacion, 
+                    email, 
+                    telefono 
+                } 
+            });
+            
+        } catch (error) {
+            const duration = Date.now() - startTime;
+            logger.error('Error creando cliente', { 
+                error: error.message, 
+                identificacion: req.body.identificacion,
                 duration: `${duration}ms`
             }, 'database');
-            logger.databaseQuery('INSERT INTO clientes', duration, 0, [nombre, direccion, identificacion]);
-            res.status(500).json({ error: err.message });
-            return;
+            
+            if (!res.headersSent) {
+                res.status(500).json({ error: error.message || 'Error interno del servidor' });
+            }
         }
-        
-        logger.databaseQuery('INSERT INTO clientes', duration, 1, [nombre, direccion, identificacion]);
-        logger.operationCreate('cliente', this.lastID, { nombre, identificacion });
-        
-        res.json({ 
-            success: true, 
-            data: { 
-                id: this.lastID, 
-                nombre, 
-                direccion, 
-                codigo_postal,
-                identificacion, 
-                email, 
-                telefono 
-            } 
-        });
-    });
+    })();
 });
 
 // GET - Obtener cliente por ID
@@ -1604,37 +1708,95 @@ app.get('/api/clientes/:id', (req, res) => {
 
 // PUT - Actualizar cliente
 app.put('/api/clientes/:id', (req, res) => {
-    const { id } = req.params;
-    const { nombre, direccion, codigo_postal, identificacion, email, telefono } = req.body;
-    
-    db.run(`
-        UPDATE clientes 
-        SET nombre = ?, direccion = ?, codigo_postal = ?, identificacion = ?, email = ?, telefono = ?
-        WHERE id = ?
-    `, [nombre, direccion, codigo_postal, identificacion, email, telefono, id], function(err) {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        if (this.changes === 0) {
-            res.status(404).json({ error: 'Cliente no encontrado' });
-            return;
-        }
-        
-        // Obtener el cliente actualizado para devolverlo
-        db.get('SELECT * FROM clientes WHERE id = ?', [id], (err, row) => {
-            if (err) {
-                console.error('Error obteniendo cliente actualizado:', err.message);
-                return res.json({ success: true, message: 'Cliente actualizado correctamente' });
+    (async () => {
+        try {
+            const { id } = req.params;
+            const clienteId = parseInt(id, 10);
+            const { nombre, direccion, codigo_postal, identificacion, email, telefono } = req.body;
+            
+            // Validar ID
+            if (isNaN(clienteId) || clienteId <= 0) {
+                return res.status(400).json({ 
+                    error: 'ID de cliente inválido',
+                    received: id
+                });
             }
+            
+            // Si se está actualizando la identificación, verificar que no esté duplicada
+            if (identificacion) {
+                const identificacionDuplicada = await new Promise((resolve, reject) => {
+                    db.get('SELECT id FROM clientes WHERE identificacion = ? AND id != ?', [identificacion, clienteId], (err, row) => {
+                        if (err) {
+                            console.error('❌ [PUT /api/clientes/:id] Error verificando identificación:', err.message);
+                            reject(err);
+                            return;
+                        }
+                        resolve(!!row);
+                    });
+                });
+                
+                if (identificacionDuplicada) {
+                    console.log('❌ [PUT /api/clientes/:id] Identificación duplicada:', identificacion);
+                    return res.status(409).json({ 
+                        error: 'La identificación ya existe',
+                        message: `Ya existe otro cliente con la identificación: ${identificacion}`,
+                        code: 'DUPLICATE_IDENTIFICACION',
+                        field: 'identificacion'
+                    });
+                }
+            }
+            
+            // Ejecutar UPDATE
+            const changes = await new Promise((resolve, reject) => {
+                db.run(`
+                    UPDATE clientes 
+                    SET nombre = ?, direccion = ?, codigo_postal = ?, identificacion = ?, email = ?, telefono = ?
+                    WHERE id = ?
+                `, [nombre, direccion, codigo_postal, identificacion, email, telefono, clienteId], function(err) {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+                    if (this.changes === 0) {
+                        resolve(null);
+                        return;
+                    }
+                    resolve(this.changes);
+                });
+            });
+            
+            // Si no se encontró el cliente, retornar error 404
+            if (changes === null) {
+                return res.status(404).json({ error: 'Cliente no encontrado' });
+            }
+            
+            // Obtener el cliente actualizado para devolverlo
+            const clienteActualizado = await new Promise((resolve, reject) => {
+                db.get('SELECT * FROM clientes WHERE id = ?', [clienteId], (err, row) => {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+                    resolve(row);
+                });
+            });
             
             res.json({ 
                 success: true, 
                 message: 'Cliente actualizado correctamente',
-                data: row
+                data: clienteActualizado
             });
-        });
-    });
+            
+        } catch (error) {
+            console.error('❌ [PUT /api/clientes/:id] Error inesperado:', error);
+            if (!res.headersSent) {
+                res.status(500).json({ 
+                    error: 'Error interno del servidor',
+                    details: error.message
+                });
+            }
+        }
+    })();
 });
 
 // DELETE - Desactivar cliente (soft delete)
@@ -1821,40 +1983,61 @@ app.get('/api/coches/:id', (req, res) => {
 
 // POST - Crear nuevo coche
 app.post('/api/coches', (req, res) => {
-    try {
-        console.log('🔍 [POST /api/coches] Datos recibidos:', req.body);
-        
-        const { matricula, chasis, color, kms, modelo } = req.body;
-        
-        // Validar datos requeridos
-        if (!matricula || !chasis || !color || kms === undefined || kms === null || !modelo) {
-            console.log('❌ [POST /api/coches] Datos faltantes:', { matricula, chasis, color, kms, modelo });
-            return res.status(400).json({ 
-                error: 'Faltan datos requeridos',
-                required: ['matricula', 'chasis', 'color', 'kms', 'modelo'],
-                received: { matricula, chasis, color, kms, modelo }
-            });
-        }
-        
-        console.log('🔍 [POST /api/coches] Ejecutando INSERT con datos:', [matricula, chasis, color, kms, modelo]);
-        
-        // Insertar directamente sin verificar duplicados
-        db.run(`
-            INSERT INTO coches (matricula, chasis, color, kms, modelo)
-            VALUES (?, ?, ?, ?, ?)
-        `, [matricula, chasis, color, kms, modelo], function(err) {
-            if (err) {
-                console.error('❌ [POST /api/coches] Error en INSERT:', err.message);
-                console.error('❌ [POST /api/coches] Error completo:', err);
-                
-                return res.status(500).json({ 
-                    error: 'Error interno del servidor',
-                    details: err.message,
-                    code: err.code
+    (async () => {
+        try {
+            console.log('🔍 [POST /api/coches] Datos recibidos:', req.body);
+            
+            const { matricula, chasis, color, kms, modelo } = req.body;
+            
+            // Validar datos requeridos
+            if (!matricula || !chasis || !color || kms === undefined || kms === null || !modelo) {
+                console.log('❌ [POST /api/coches] Datos faltantes:', { matricula, chasis, color, kms, modelo });
+                return res.status(400).json({ 
+                    error: 'Faltan datos requeridos',
+                    required: ['matricula', 'chasis', 'color', 'kms', 'modelo'],
+                    received: { matricula, chasis, color, kms, modelo }
                 });
             }
             
-            console.log('✅ [POST /api/coches] Coche creado exitosamente con ID:', this.lastID);
+            // Verificar que la matrícula no esté duplicada
+            const matriculaDuplicada = await new Promise((resolve, reject) => {
+                db.get('SELECT id FROM coches WHERE matricula = ? AND activo = 1', [matricula], (err, row) => {
+                    if (err) {
+                        console.error('❌ [POST /api/coches] Error verificando matrícula:', err.message);
+                        reject(err);
+                        return;
+                    }
+                    resolve(!!row);
+                });
+            });
+            
+            if (matriculaDuplicada) {
+                console.log('❌ [POST /api/coches] Matrícula duplicada:', matricula);
+                return res.status(409).json({ 
+                    error: 'La matrícula ya existe',
+                    message: `Ya existe un coche activo con la matrícula: ${matricula}`,
+                    code: 'DUPLICATE_MATRICULA',
+                    field: 'matricula'
+                });
+            }
+            
+            console.log('🔍 [POST /api/coches] Ejecutando INSERT con datos:', [matricula, chasis, color, kms, modelo]);
+            
+            // Insertar coche
+            const result = await new Promise((resolve, reject) => {
+                db.run(`
+                    INSERT INTO coches (matricula, chasis, color, kms, modelo)
+                    VALUES (?, ?, ?, ?, ?)
+                `, [matricula, chasis, color, kms, modelo], function(err) {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+                    resolve({ id: this.lastID });
+                });
+            });
+            
+            console.log('✅ [POST /api/coches] Coche creado exitosamente con ID:', result.id);
             
             // Invalidar caché de coches
             if (global.cacheManager) {
@@ -1865,7 +2048,7 @@ app.post('/api/coches', (req, res) => {
             res.json({ 
                 success: true, 
                 data: { 
-                    id: this.lastID, 
+                    id: result.id, 
                     matricula, 
                     chasis, 
                     color, 
@@ -1873,42 +2056,62 @@ app.post('/api/coches', (req, res) => {
                     modelo 
                 } 
             });
-        });
-    } catch (error) {
-        console.error('❌ [POST /api/coches] Error inesperado:', error);
-        res.status(500).json({ 
-            error: 'Error interno del servidor',
-            details: error.message
-        });
-    }
+            
+        } catch (error) {
+            console.error('❌ [POST /api/coches] Error inesperado:', error);
+            if (!res.headersSent) {
+                res.status(500).json({ 
+                    error: 'Error interno del servidor',
+                    details: error.message
+                });
+            }
+        }
+    })();
 });
 
 // PUT - Actualizar coche
 app.put('/api/coches/:id', (req, res) => {
-    try {
-        const { id } = req.params;
-        const { matricula, chasis, color, kms, modelo } = req.body;
-        
-        console.log('🔍 [PUT /api/coches/:id] Actualizando coche ID:', id);
-        console.log('🔍 [PUT /api/coches/:id] Datos recibidos:', req.body);
-        
-        // Validar que al menos un campo esté presente
-        if (!matricula && !chasis && !color && kms === undefined && !modelo) {
-            return res.status(400).json({ 
-                error: 'Al menos un campo debe ser proporcionado para actualizar',
-                received: { matricula, chasis, color, kms, modelo }
-            });
-        }
-        
-        // Si se está actualizando la matrícula, verificar que no esté duplicada
-        if (matricula) {
-            db.get('SELECT id FROM coches WHERE matricula = ? AND id != ? AND activo = 1', [matricula, id], (err, row) => {
-                if (err) {
-                    console.error('❌ [PUT /api/coches/:id] Error verificando matrícula:', err.message);
-                    return res.status(500).json({ error: 'Error interno del servidor' });
-                }
+    // Convertir a async para manejar mejor la asincronía
+    (async () => {
+        try {
+            const { id } = req.params;
+            const cocheId = parseInt(id, 10); // Convertir ID a número
+            const { matricula, chasis, color, kms, modelo } = req.body;
+            
+            console.log('🔍 [PUT /api/coches/:id] Actualizando coche ID:', cocheId);
+            console.log('🔍 [PUT /api/coches/:id] Datos recibidos:', req.body);
+            
+            // Validar ID
+            if (isNaN(cocheId) || cocheId <= 0) {
+                return res.status(400).json({ 
+                    error: 'ID de coche inválido',
+                    received: id
+                });
+            }
+            
+            // Validar que al menos un campo esté presente
+            if (!matricula && !chasis && !color && kms === undefined && !modelo) {
+                return res.status(400).json({ 
+                    error: 'Al menos un campo debe ser proporcionado para actualizar',
+                    received: { matricula, chasis, color, kms, modelo }
+                });
+            }
+            
+            // Si se está actualizando la matrícula, verificar que no esté duplicada
+            if (matricula) {
+                const matriculaDuplicada = await new Promise((resolve, reject) => {
+                    db.get('SELECT id FROM coches WHERE matricula = ? AND id != ? AND activo = 1', [matricula, cocheId], (err, row) => {
+                        if (err) {
+                            console.error('❌ [PUT /api/coches/:id] Error verificando matrícula:', err.message);
+                            reject(err);
+                            return;
+                        }
+                        
+                        resolve(!!row); // Retornar true si existe, false si no
+                    });
+                });
                 
-                if (row) {
+                if (matriculaDuplicada) {
                     console.log('❌ [PUT /api/coches/:id] Matrícula duplicada:', matricula);
                     return res.status(409).json({ 
                         error: 'La matrícula ya existe',
@@ -1917,16 +2120,8 @@ app.put('/api/coches/:id', (req, res) => {
                         field: 'matricula'
                     });
                 }
-                
-                // Continuar con la actualización
-                performUpdate();
-            });
-        } else {
-            // Si no se actualiza la matrícula, proceder directamente
-            performUpdate();
-        }
-        
-        function performUpdate() {
+            }
+            
             // Construir la consulta dinámicamente basada en los campos proporcionados
             const updates = [];
             const values = [];
@@ -1952,42 +2147,61 @@ app.put('/api/coches/:id', (req, res) => {
                 values.push(modelo);
             }
             
-            values.push(id); // ID al final para el WHERE
+            // Validar que haya campos para actualizar
+            if (updates.length === 0) {
+                return res.status(400).json({ 
+                    error: 'No hay campos válidos para actualizar'
+                });
+            }
+            
+            values.push(cocheId); // ID al final para el WHERE
             
             const query = `UPDATE coches SET ${updates.join(', ')} WHERE id = ? AND activo = 1`;
             
             console.log('🔍 [PUT /api/coches/:id] Query:', query);
             console.log('🔍 [PUT /api/coches/:id] Values:', values);
             
-            db.run(query, values, function(err) {
-                if (err) {
-                    console.error('❌ [PUT /api/coches/:id] Error en UPDATE:', err.message);
-                    console.error('❌ [PUT /api/coches/:id] Error completo:', err);
-                    return res.status(500).json({ 
-                        error: 'Error interno del servidor',
-                        details: err.message,
-                        code: err.code
-                    });
-                }
-                
-                if (this.changes === 0) {
-                    console.log('❌ [PUT /api/coches/:id] Coche no encontrado o inactivo:', id);
-                    return res.status(404).json({ error: 'Coche no encontrado o inactivo' });
-                }
-                
-                console.log('✅ [PUT /api/coches/:id] Coche actualizado exitosamente:', id);
-                
-                // Invalidar caché de coches
-                if (global.cacheManager) {
-                    global.cacheManager.invalidatePattern('coches:*');
-                    console.log('🗑️ [PUT /api/coches/:id] Caché de coches invalidado');
-                }
-                
-                // Obtener el coche actualizado para devolverlo
-                db.get('SELECT * FROM coches WHERE id = ?', [id], (err, row) => {
+            // Ejecutar UPDATE
+            const changes = await new Promise((resolve, reject) => {
+                db.run(query, values, function(err) {
+                    if (err) {
+                        console.error('❌ [PUT /api/coches/:id] Error en UPDATE:', err.message);
+                        console.error('❌ [PUT /api/coches/:id] Error completo:', err);
+                        reject(err);
+                        return;
+                    }
+                    
+                    if (this.changes === 0) {
+                        console.log('❌ [PUT /api/coches/:id] Coche no encontrado o inactivo:', cocheId);
+                        resolve(null); // Retornar null para indicar que no se encontró
+                        return;
+                    }
+                    
+                    console.log('✅ [PUT /api/coches/:id] Coche actualizado exitosamente:', cocheId);
+                    resolve(this.changes);
+                });
+            });
+            
+            // Si no se encontró el coche, retornar error 404
+            if (changes === null) {
+                return res.status(404).json({ error: 'Coche no encontrado o inactivo' });
+            }
+            
+            // Invalidar caché de coches
+            if (global.cacheManager) {
+                global.cacheManager.invalidatePattern('coches:*');
+                console.log('🗑️ [PUT /api/coches/:id] Caché de coches invalidado');
+            }
+            
+            // Obtener el coche actualizado para devolverlo
+            await new Promise((resolve, reject) => {
+                db.get('SELECT * FROM coches WHERE id = ?', [cocheId], (err, row) => {
                     if (err) {
                         console.error('❌ [PUT /api/coches/:id] Error obteniendo coche actualizado:', err.message);
-                        return res.json({ success: true, message: 'Coche actualizado correctamente' });
+                        // Aún así devolver éxito si la actualización fue exitosa
+                        res.json({ success: true, message: 'Coche actualizado correctamente' });
+                        resolve();
+                        return;
                     }
                     
                     res.json({ 
@@ -1995,17 +2209,21 @@ app.put('/api/coches/:id', (req, res) => {
                         message: 'Coche actualizado correctamente',
                         data: row
                     });
+                    resolve();
                 });
             });
+            
+        } catch (error) {
+            console.error('❌ [PUT /api/coches/:id] Error inesperado:', error);
+            // Solo enviar respuesta si aún no se ha enviado
+            if (!res.headersSent) {
+                res.status(500).json({ 
+                    error: 'Error interno del servidor',
+                    details: error.message
+                });
+            }
         }
-        
-    } catch (error) {
-        console.error('❌ [PUT /api/coches/:id] Error inesperado:', error);
-        res.status(500).json({ 
-            error: 'Error interno del servidor',
-            details: error.message
-        });
-    }
+    })();
 });
 
 // DELETE - Desactivar coche (soft delete)
@@ -2045,66 +2263,148 @@ app.get('/api/productos', (req, res) => {
 
 // POST - Crear nuevo producto
 app.post('/api/productos', (req, res) => {
-    const { codigo, descripcion, precio, stock, categoria } = req.body;
-    
-    db.run(`
-        INSERT INTO productos (codigo, descripcion, precio, stock, categoria)
-        VALUES (?, ?, ?, ?, ?)
-    `, [codigo, descripcion, precio, stock, categoria], function(err) {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        res.json({ 
-            success: true, 
-            data: { 
-                id: this.lastID, 
-                codigo, 
-                descripcion, 
-                precio, 
-                stock, 
-                categoria 
-            } 
-        });
-    });
-});
-
-// POST - Crear producto desde coche
-app.post('/api/productos/desde-coche', (req, res) => {
-    const { coche_id, precio, cantidad = 1 } = req.body;
-    
-    // Primero obtener los datos del coche
-    db.get('SELECT * FROM coches WHERE id = ? AND activo = 1', [coche_id], (err, coche) => {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        
-        if (!coche) {
-            res.status(404).json({ error: 'Coche no encontrado' });
-            return;
-        }
-        
-        // Generar código único basado en la matrícula
-        const codigo = `COCHE-${coche.matricula.replace(/[^A-Z0-9]/g, '')}`;
-        
-        // Generar descripción automática
-        const descripcion = `${coche.modelo} - ${coche.color} - ${coche.kms.toLocaleString()} km - Chasis: ${coche.chasis}`;
-        
-        // Crear el producto
-        db.run(`
-            INSERT INTO productos (codigo, descripcion, precio, stock, categoria)
-            VALUES (?, ?, ?, ?, ?)
-        `, [codigo, descripcion, precio, cantidad, 'vehiculo'], function(err) {
-            if (err) {
-                res.status(500).json({ error: err.message });
-                return;
+    (async () => {
+        try {
+            const { codigo, descripcion, precio, stock, categoria } = req.body;
+            
+            // Validar campos obligatorios
+            if (!codigo || !descripcion || precio === undefined) {
+                return res.status(400).json({ 
+                    error: 'Campos obligatorios faltantes: codigo, descripcion, precio'
+                });
             }
+            
+            // Verificar que el código no esté duplicado
+            const productoExistente = await new Promise((resolve, reject) => {
+                const dbType = config.get('database.type') || 'postgresql';
+                const activoValue = dbType === 'postgresql' ? 'true' : '1';
+                db.get(`SELECT id FROM productos WHERE codigo = ? AND activo = ${activoValue}`, [codigo], (err, row) => {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+                    resolve(row);
+                });
+            });
+            
+            if (productoExistente) {
+                return res.status(409).json({ 
+                    error: 'El código ya existe',
+                    message: `Ya existe un producto activo con el código: ${codigo}`,
+                    code: 'DUPLICATE_CODIGO',
+                    field: 'codigo'
+                });
+            }
+            
+            // Insertar producto
+            const result = await new Promise((resolve, reject) => {
+                db.run(`
+                    INSERT INTO productos (codigo, descripcion, precio, stock, categoria)
+                    VALUES (?, ?, ?, ?, ?)
+                `, [codigo, descripcion, precio, stock, categoria], function(err) {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+                    resolve({ id: this.lastID });
+                });
+            });
             
             res.json({ 
                 success: true, 
                 data: { 
-                    id: this.lastID, 
+                    id: result.id, 
+                    codigo, 
+                    descripcion, 
+                    precio, 
+                    stock, 
+                    categoria 
+                } 
+            });
+            
+        } catch (error) {
+            console.error('❌ [POST /api/productos] Error:', error);
+            if (!res.headersSent) {
+                res.status(500).json({ error: error.message || 'Error interno del servidor' });
+            }
+        }
+    })();
+});
+
+// POST - Crear producto desde coche
+app.post('/api/productos/desde-coche', (req, res) => {
+    (async () => {
+        try {
+            const { coche_id, precio, cantidad = 1 } = req.body;
+            
+            // Validar campos obligatorios
+            if (!coche_id || precio === undefined) {
+                return res.status(400).json({ 
+                    error: 'Campos obligatorios faltantes: coche_id, precio'
+                });
+            }
+            
+            // Obtener los datos del coche
+            const coche = await new Promise((resolve, reject) => {
+                db.get('SELECT * FROM coches WHERE id = ? AND activo = 1', [coche_id], (err, row) => {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+                    resolve(row);
+                });
+            });
+            
+            if (!coche) {
+                return res.status(404).json({ error: 'Coche no encontrado o inactivo' });
+            }
+            
+            // Generar código único basado en la matrícula
+            const codigo = coche.matricula; // Usar directamente la matrícula como código
+            
+            // Verificar que el código no esté duplicado
+            const productoExistente = await new Promise((resolve, reject) => {
+                const dbType = config.get('database.type') || 'postgresql';
+                const activoValue = dbType === 'postgresql' ? 'true' : '1';
+                db.get(`SELECT id FROM productos WHERE codigo = ? AND activo = ${activoValue}`, [codigo], (err, row) => {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+                    resolve(row);
+                });
+            });
+            
+            if (productoExistente) {
+                return res.status(409).json({ 
+                    error: 'Ya existe un producto para este coche',
+                    message: `Ya existe un producto activo con el código: ${codigo}`,
+                    code: 'DUPLICATE_PRODUCTO_COCHE',
+                    field: 'codigo'
+                });
+            }
+            
+            // Generar descripción automática
+            const descripcion = `${coche.modelo} - ${coche.matricula} - ${coche.color} - ${coche.kms.toLocaleString()} km`;
+            
+            // Crear el producto
+            const result = await new Promise((resolve, reject) => {
+                db.run(`
+                    INSERT INTO productos (codigo, descripcion, precio, stock, categoria)
+                    VALUES (?, ?, ?, ?, ?)
+                `, [codigo, descripcion, precio, cantidad, 'vehiculo'], function(err) {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+                    resolve({ id: this.lastID });
+                });
+            });
+            
+            res.json({ 
+                success: true, 
+                data: { 
+                    id: result.id, 
                     codigo, 
                     descripcion, 
                     precio, 
@@ -2113,8 +2413,14 @@ app.post('/api/productos/desde-coche', (req, res) => {
                     coche: coche
                 } 
             });
-        });
-    });
+            
+        } catch (error) {
+            console.error('❌ [POST /api/productos/desde-coche] Error:', error);
+            if (!res.headersSent) {
+                res.status(500).json({ error: error.message || 'Error interno del servidor' });
+            }
+        }
+    })();
 });
 
 // GET - Obtener todas las facturas (con paginación y caché)
@@ -2983,19 +3289,35 @@ app.get('/api/facturas/:id/auditoria', async (req, res) => {
 // PUT - Marcar factura como pagada
 app.put('/api/facturas/:id/marcar-pagada', async (req, res) => {
     try {
-        const facturaId = req.params.id;
+        const { id } = req.params;
+        const facturaId = parseInt(id, 10);
         const { metodo_pago, referencia_operacion, fecha_pago } = req.body;
+        
+        // Validar ID
+        if (isNaN(facturaId) || facturaId <= 0) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'ID de factura inválido',
+                received: id
+            });
+        }
         
         // Obtener factura actual
         const factura = await new Promise((resolve, reject) => {
             db.get('SELECT * FROM facturas WHERE id = ?', [facturaId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                resolve(row);
             });
         });
         
         if (!factura) {
-            return res.status(404).json({ error: 'Factura no encontrada' });
+            return res.status(404).json({ 
+                success: false,
+                error: 'Factura no encontrada' 
+            });
         }
         
         // Actualizar factura como pagada
@@ -3003,23 +3325,38 @@ app.put('/api/facturas/:id/marcar-pagada', async (req, res) => {
         const metodoPago = metodo_pago || 'transferencia';
         const referenciaOperacion = referencia_operacion || '';
         
-        db.run(`
-            UPDATE facturas 
-            SET estado = 'pagada', 
-                estado_fiscal = 'pagada',
-                metodo_pago = ?,
-                referencia_operacion = ?,
-                fecha_operacion = ?
-            WHERE id = ?
-        `, [metodoPago, referenciaOperacion, fechaPago, facturaId], function(err) {
-            if (err) {
-                console.error('❌ Error al marcar factura como pagada:', err.message);
-                res.status(500).json({ error: 'Error al actualizar la factura' });
-                return;
-            }
-            
-            // Registrar en auditoría
-            sistemaAuditoria.registrarOperacion(
+        const changes = await new Promise((resolve, reject) => {
+            db.run(`
+                UPDATE facturas 
+                SET estado = 'pagada', 
+                    estado_fiscal = 'pagada',
+                    metodo_pago = ?,
+                    referencia_operacion = ?,
+                    fecha_operacion = ?
+                WHERE id = ?
+            `, [metodoPago, referenciaOperacion, fechaPago, facturaId], function(err) {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                if (this.changes === 0) {
+                    resolve(null);
+                    return;
+                }
+                resolve(this.changes);
+            });
+        });
+        
+        if (changes === null) {
+            return res.status(404).json({ 
+                success: false,
+                error: 'Factura no encontrada o no se pudo actualizar' 
+            });
+        }
+        
+        // Registrar en auditoría (no bloqueante)
+        try {
+            await sistemaAuditoria.registrarOperacion(
                 'facturas',
                 facturaId,
                 'UPDATE',
@@ -3027,58 +3364,97 @@ app.put('/api/facturas/:id/marcar-pagada', async (req, res) => {
                 { estado: 'pagada', estado_fiscal: 'pagada', metodo_pago: metodoPago, referencia_operacion: referenciaOperacion, fecha_operacion: fechaPago },
                 'sistema'
             );
-            
-            console.log('✅ Factura marcada como pagada:', facturaId);
-            res.json({ 
-                success: true, 
-                message: 'Factura marcada como pagada exitosamente',
-                data: {
-                    id: facturaId,
-                    estado: 'pagada',
-                    fecha_pago: fechaPago,
-                    metodo_pago: metodoPago
-                }
-            });
+        } catch (auditError) {
+            console.warn('⚠️ Error al registrar en auditoría (no crítico):', auditError.message);
+        }
+        
+        console.log('✅ Factura marcada como pagada:', facturaId);
+        res.json({ 
+            success: true, 
+            message: 'Factura marcada como pagada exitosamente',
+            data: {
+                id: facturaId,
+                estado: 'pagada',
+                fecha_pago: fechaPago,
+                metodo_pago: metodoPago
+            }
         });
         
     } catch (error) {
         console.error('❌ Error al marcar factura como pagada:', error);
-        res.status(500).json({ error: 'Error interno del servidor' });
+        if (!res.headersSent) {
+            res.status(500).json({ 
+                success: false,
+                error: 'Error interno del servidor',
+                details: error.message
+            });
+        }
     }
 });
 
 // PUT - Marcar factura como pendiente (revertir pago)
 app.put('/api/facturas/:id/marcar-pendiente', async (req, res) => {
     try {
-        const facturaId = req.params.id;
+        const { id } = req.params;
+        const facturaId = parseInt(id, 10);
+        
+        // Validar ID
+        if (isNaN(facturaId) || facturaId <= 0) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'ID de factura inválido',
+                received: id
+            });
+        }
         
         // Obtener factura actual
         const factura = await new Promise((resolve, reject) => {
             db.get('SELECT * FROM facturas WHERE id = ?', [facturaId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                resolve(row);
             });
         });
         
         if (!factura) {
-            return res.status(404).json({ error: 'Factura no encontrada' });
+            return res.status(404).json({ 
+                success: false,
+                error: 'Factura no encontrada' 
+            });
         }
         
         // Actualizar factura como pendiente
-        db.run(`
-            UPDATE facturas 
-            SET estado = 'pendiente', 
-                estado_fiscal = 'pendiente'
-            WHERE id = ?
-        `, [facturaId], function(err) {
-            if (err) {
-                console.error('❌ Error al marcar factura como pendiente:', err.message);
-                res.status(500).json({ error: 'Error al actualizar la factura' });
-                return;
-            }
-            
-            // Registrar en auditoría
-            sistemaAuditoria.registrarOperacion(
+        const changes = await new Promise((resolve, reject) => {
+            db.run(`
+                UPDATE facturas 
+                SET estado = 'pendiente', 
+                    estado_fiscal = 'pendiente'
+                WHERE id = ?
+            `, [facturaId], function(err) {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                if (this.changes === 0) {
+                    resolve(null);
+                    return;
+                }
+                resolve(this.changes);
+            });
+        });
+        
+        if (changes === null) {
+            return res.status(404).json({ 
+                success: false,
+                error: 'Factura no encontrada o no se pudo actualizar' 
+            });
+        }
+        
+        // Registrar en auditoría (no bloqueante)
+        try {
+            await sistemaAuditoria.registrarOperacion(
                 'facturas',
                 facturaId,
                 'UPDATE',
@@ -3086,21 +3462,29 @@ app.put('/api/facturas/:id/marcar-pendiente', async (req, res) => {
                 { estado: 'pendiente', estado_fiscal: 'pendiente' },
                 'sistema'
             );
-            
-            console.log('✅ Factura marcada como pendiente:', facturaId);
-            res.json({ 
-                success: true, 
-                message: 'Factura marcada como pendiente exitosamente',
-                data: {
-                    id: facturaId,
-                    estado: 'pendiente'
-                }
-            });
+        } catch (auditError) {
+            console.warn('⚠️ Error al registrar en auditoría (no crítico):', auditError.message);
+        }
+        
+        console.log('✅ Factura marcada como pendiente:', facturaId);
+        res.json({ 
+            success: true, 
+            message: 'Factura marcada como pendiente exitosamente',
+            data: {
+                id: facturaId,
+                estado: 'pendiente'
+            }
         });
         
     } catch (error) {
         console.error('❌ Error al marcar factura como pendiente:', error);
-        res.status(500).json({ error: 'Error interno del servidor' });
+        if (!res.headersSent) {
+            res.status(500).json({ 
+                success: false,
+                error: 'Error interno del servidor',
+                details: error.message
+            });
+        }
     }
 });
 

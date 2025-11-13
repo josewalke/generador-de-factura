@@ -1,6 +1,6 @@
 {
   "name": "telwagen-generador-facturas",
-  "version": "1.0.0",
+  "version": "1.0.2",
   "description": "Aplicación de escritorio Telwagen con React y Electron",
   "main": "electron/main.js",
   "homepage": "./",
@@ -8,11 +8,18 @@
     "dev": "vite",
     "dev:react": "vite",
     "dev:electron": "wait-on http://localhost:5173 && electron .",
+    "version:increment": "node increment-version.js",
     "build": "npm run build:react && npm run build:electron",
     "build:react": "vite build",
     "build:electron": "electron-builder",
+    "build:win": "npm run version:increment && npm run build:react && electron-builder --win",
+    "build:mac": "npm run version:increment && npm run build:react && electron-builder --mac",
+    "build:linux": "npm run version:increment && npm run build:react && electron-builder --linux",
     "pack": "electron-builder --dir",
-    "dist": "electron-builder",
+    "dist": "npm run version:increment && electron-builder",
+    "dist:win": "npm run version:increment && npm run build:react && electron-builder --win --publish never",
+    "dist:mac": "npm run version:increment && npm run build:react && electron-builder --mac --publish never",
+    "dist:linux": "npm run version:increment && npm run build:react && electron-builder --linux --publish never",
     "start": "electron ."
   },
   "keywords": [
@@ -86,8 +93,11 @@
     "concurrently": "^8.2.2",
     "electron": "^28.0.0",
     "electron-builder": "^24.9.1",
+    "electron-icon-maker": "^0.0.5",
     "postcss": "^8.4.31",
+    "sharp": "^0.34.5",
     "tailwindcss": "^3.3.5",
+    "to-ico": "^1.1.5",
     "typescript": "^5.2.2",
     "vite": "6.3.5",
     "wait-on": "^7.2.0"
@@ -95,13 +105,15 @@
   "build": {
     "appId": "com.telwagen.generador-facturas",
     "productName": "Generador de Facturas Telwagen",
+    "copyright": "Copyright © 2024 Telwagen Car Ibérica, S.L.",
     "directories": {
-      "output": "dist"
+      "output": "dist",
+      "buildResources": "build"
     },
     "files": [
       "electron/**/*",
       "dist/**/*",
-      "node_modules/**/*"
+      "package.json"
     ],
     "extraResources": [
       {
@@ -109,25 +121,93 @@
         "to": "backend",
         "filter": [
           "**/*",
-          "!node_modules/**/*"
+          "!node_modules/**/*",
+          "!logs/**/*",
+          "!temp/**/*",
+          "!backups/**/*",
+          "!*.log",
+          "!*.db-shm",
+          "!*.db-wal",
+          "!.git/**/*",
+          "!tests/**/*"
         ]
       }
     ],
     "mac": {
       "category": "public.app-category.business",
-      "icon": "assets/icon.png"
+      "icon": "assets/icon.png",
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "x64",
+            "arm64"
+          ]
+        }
+      ],
+      "hardenedRuntime": true,
+      "gatekeeperAssess": false
     },
     "win": {
-      "target": "nsis",
-      "icon": "assets/icon.png"
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.png",
+      "publisherName": "Telwagen Car Ibérica, S.L."
     },
     "linux": {
-      "target": "AppImage",
-      "icon": "assets/icon.png"
+      "target": [
+        {
+          "target": "AppImage",
+          "arch": [
+            "x64"
+          ]
+        },
+        {
+          "target": "deb",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "assets/icon.png",
+      "category": "Office"
     },
     "nsis": {
       "oneClick": false,
-      "allowToChangeInstallationDirectory": true
+      "allowToChangeInstallationDirectory": true,
+      "allowElevation": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Telwagen Facturas",
+      "installerIcon": "assets/icon.ico",
+      "uninstallerIcon": "assets/icon.ico",
+      "installerHeaderIcon": "assets/icon.ico",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true,
+      "menuCategory": "Business"
+    },
+    "dmg": {
+      "title": "${productName} ${version}",
+      "icon": "assets/icon.png",
+      "background": null,
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
     }
   }
 }

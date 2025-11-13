@@ -11,6 +11,17 @@ const apiClient = axios.create({
   },
 });
 
+// Función para actualizar la URL del backend dinámicamente
+export const updateBackendURL = (newURL: string) => {
+  apiClient.defaults.baseURL = newURL;
+  console.log('🔄 URL del backend actualizada a:', newURL);
+};
+
+// Exponer función globalmente para que backend.ts pueda usarla
+if (typeof window !== 'undefined') {
+  (window as any).__updateBackendURL = updateBackendURL;
+}
+
 // Interceptor para manejar errores globalmente
 apiClient.interceptors.response.use(
   (response) => {
@@ -33,8 +44,26 @@ apiClient.interceptors.response.use(
     }
     return response;
   },
-  (error) => {
+  async (error) => {
     console.error('🌐 [apiClient] API Error:', error);
+    
+    // Si es un error de conexión, intentar detectar una nueva URL
+    if (!error.response && error.request) {
+      try {
+        const { detectBestBackendURL } = await import('../config/backend');
+        const newURL = await detectBestBackendURL();
+        if (newURL !== apiClient.defaults.baseURL) {
+          updateBackendURL(newURL);
+          // Reintentar la petición con la nueva URL
+          if (error.config) {
+            error.config.baseURL = newURL;
+            return apiClient.request(error.config);
+          }
+        }
+      } catch (detectionError) {
+        console.warn('No se pudo detectar una nueva URL:', detectionError);
+      }
+    }
     
     if (error.response) {
       // El servidor respondió con un código de error
