@@ -3,7 +3,7 @@ import { Badge } from './ui/badge';
 import { Button } from './ui/button';
 import { Alert, AlertDescription } from './ui/alert';
 import { AlertCircle, CheckCircle, RefreshCw, Wifi, WifiOff } from 'lucide-react';
-import { checkBackendConnection, getBackendInfo } from '../config/backend';
+import { checkBackendConnection, getBackendInfo, BACKEND_URL } from '../config/backend';
 
 interface BackendStatusProps {
   className?: string;
@@ -109,6 +109,7 @@ export function BackendStatus({ className }: BackendStatusProps) {
 
       {backendInfo && isConnected && (
         <div className="mt-2 text-xs text-gray-600">
+          <div className="font-semibold text-blue-600">URL: {BACKEND_URL}</div>
           <div>Backend: {backendInfo.message}</div>
           <div>Versión: {backendInfo.version}</div>
           {backendInfo.features && (
