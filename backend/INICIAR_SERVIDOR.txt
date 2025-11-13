@@ -1,0 +1,26 @@
+========================================
+  CÓMO INICIAR EL SERVIDOR BACKEND
+========================================
+
+1. Abre PowerShell en el directorio backend:
+   cd backend
+
+2. Inicia el servidor:
+   npm run start:prod
+
+3. Espera a ver estos mensajes:
+   ✅ Servidor HTTP ejecutándose en http://0.0.0.0:3000
+   ✅ Servidor HTTPS ejecutándose en https://0.0.0.0:8443
+
+4. Una vez que veas esos mensajes, el servidor está listo.
+
+5. Recarga el frontend en el navegador.
+
+========================================
+  URL DEL BACKEND
+========================================
+
+https://92.186.17.227:8443
+
+========================================
+
