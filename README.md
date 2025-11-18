@@ -51,6 +51,19 @@ npm install
    npm run pm2:logs
    ```
 
+### 2.1 Exponer el backend con ngrok
+
+1. Inicia sesión en ngrok y configura tu token (una sola vez):  
+   ```bash
+   ngrok config add-authtoken TU_TOKEN
+   ```
+2. Desde la carpeta `backend`, levanta el túnel apuntando al HTTPS interno del servidor (8443):  
+   ```bash
+   cd backend
+   ngrok http https://localhost:8443 --host-header=rewrite
+   ```
+3. Copia la URL pública que muestra ngrok (algo como `https://xxxxx.ngrok-free.dev`) y actualiza `Telwagen-React-Electron-App/src/config/backend.ts` o las variables de entorno que uses para que el frontend apunte a esa URL. Recuerda mantener el header `ngrok-skip-browser-warning: true` en tus peticiones (ya lo hace el cliente actual).
+
 ---
 
 ## 3. Configurar el frontend/Electron (`/Telwagen-React-Electron-App`)
