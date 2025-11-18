@@ -40,7 +40,12 @@ class ReporteService {
     
     // Calcular estadísticas
     const totalFacturas = facturasMesActual.length;
-    const totalIngresos = facturasMesActual.reduce((sum, f) => sum + f.total, 0);
+    const totalIngresos = facturasMesActual.reduce((sum, f) => {
+      const total = f.total || 0;
+      // Asegurar que sea un número, no un string
+      const totalNum = typeof total === 'number' ? total : parseFloat(total) || 0;
+      return sum + totalNum;
+    }, 0);
     
     // LÓGICA CORREGIDA: Si existe una factura, significa que ya se pagó
     // Por lo tanto, todas las facturas existentes se consideran pagadas
@@ -449,7 +454,7 @@ class ReporteService {
             <!-- Header -->
             <div class="header">
                 <h1>📊 REPORTE MENSUAL</h1>
-                <h2>${reporte.mes} ${reporte.año}</h2>
+                <h2 style="white-space: nowrap;">${reporte.mes}&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;&nbsp;${reporte.año}</h2>
                 <p>Telwagen Car Ibérica, S.L.</p>
             </div>
             
@@ -460,7 +465,7 @@ class ReporteService {
                     <div class="stat-label">Total Facturas</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-value">€${reporte.totalIngresos.toLocaleString()}</div>
+                    <div class="stat-value">€${reporte.totalIngresos.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                     <div class="stat-label">Total Ingresos</div>
                 </div>
                 <div class="stat-card">
@@ -468,7 +473,7 @@ class ReporteService {
                     <div class="stat-label">Facturas Pagadas</div>
                 </div>
                 <div class="stat-card">
-                    <div class="stat-value">€${reporte.promedioFactura.toLocaleString()}</div>
+                    <div class="stat-value">€${isNaN(reporte.promedioFactura) ? '0,00' : reporte.promedioFactura.toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</div>
                     <div class="stat-label">Promedio por Factura</div>
                 </div>
             </div>
@@ -501,7 +506,7 @@ class ReporteService {
                             <td>${factura.numero}</td>
                             <td>${new Date(factura.fecha).toLocaleDateString('es-ES')}</td>
                             <td>${factura.cliente}</td>
-                            <td>€${factura.total.toLocaleString()}</td>
+                            <td>€${(typeof factura.total === 'number' ? factura.total : parseFloat(factura.total) || 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</td>
                             <td style="color: #4caf50; font-weight: bold;">✅ Pagada</td>
                         </tr>
                     `).join('')}

@@ -1,6 +1,8 @@
 const XLSX = require('xlsx');
 const fs = require('fs');
 const path = require('path');
+const config = require('../config/config');
+const database = require('./database');
 
 class ImportadorExcel {
     constructor(db) {
@@ -29,31 +31,182 @@ class ImportadorExcel {
      */
     async importarCoches(filePath, sheetName = null) {
         try {
+            console.log('\n📖 ========== LECTURA DE ARCHIVO EXCEL ==========');
+            console.log('📁 Ruta del archivo:', filePath);
+            console.log('📄 Verificando existencia del archivo...');
+            
+            // Verificar que el archivo existe
+            if (!fs.existsSync(filePath)) {
+                throw new Error(`El archivo no existe en la ruta: ${filePath}`);
+            }
+            
+            const fileStats = fs.statSync(filePath);
+            console.log('📊 Información del archivo:', {
+                size: `${fileStats.size} bytes`,
+                modified: fileStats.mtime
+            });
+            
             // Leer archivo Excel
+            console.log('📖 Leyendo archivo Excel...');
             const workbook = XLSX.readFile(filePath);
+            console.log('📋 Hojas encontradas:', workbook.SheetNames);
+            
             const sheet = sheetName ? workbook.Sheets[sheetName] : workbook.Sheets[workbook.SheetNames[0]];
+            if (!sheet) {
+                throw new Error(`No se encontró la hoja "${sheetName || workbook.SheetNames[0]}" en el archivo Excel`);
+            }
+            
+            // Obtener rango de la hoja
+            const range = XLSX.utils.decode_range(sheet['!ref'] || 'A1');
+            console.log('📐 Rango de la hoja:', {
+                inicio: `A${range.s.r + 1}`,
+                fin: `${String.fromCharCode(65 + range.e.c)}${range.e.r + 1}`,
+                filas: range.e.r + 1,
+                columnas: range.e.c + 1
+            });
             
             // Convertir a JSON
-            const data = XLSX.utils.sheet_to_json(sheet);
+            // Primero intentar leer con headers automáticos
+            console.log('🔄 Intentando leer con headers automáticos...');
+            let data = XLSX.utils.sheet_to_json(sheet);
+            console.log('📊 Resultado lectura automática:', {
+                filasEncontradas: data.length,
+                primeraFila: data.length > 0 ? Object.keys(data[0]) : null
+            });
             
-            // Debug: mostrar las primeras filas para diagnóstico
-            console.log('📊 Datos leídos del Excel:');
-            console.log('Total filas:', data.length);
-            if (data.length > 0) {
-                console.log('Primera fila (headers):', Object.keys(data[0]));
-                console.log('Primera fila (datos):', data[0]);
-                if (data.length > 1) {
-                    console.log('Segunda fila:', data[1]);
+            // Si no hay datos, intentar leer con headers en la primera fila
+            if (!data || data.length === 0) {
+                console.log('⚠️ No se encontraron datos con lectura automática.');
+                console.log('🔄 Intentando leer con headers explícitos en primera fila...');
+                const rawData = XLSX.utils.sheet_to_json(sheet, { header: 1, defval: null });
+                console.log('📋 Datos raw (array de arrays):', {
+                    totalFilas: rawData.length,
+                    primeraFila: rawData[0],
+                    todasLasFilas: rawData
+                });
+                
+                if (rawData && rawData.length > 1) {
+                    // Si hay más de una fila, usar la primera como headers
+                    const headers = rawData[0];
+                    const rows = rawData.slice(1);
+                    
+                    console.log('📋 Headers detectados:', headers);
+                    console.log('📋 Filas de datos encontradas:', rows.length);
+                    
+                    // Convertir a objetos con los headers como claves
+                    data = rows.map((row, rowIndex) => {
+                        const obj = {};
+                        headers.forEach((header, index) => {
+                            if (header) {
+                                obj[header] = row[index] || null;
+                            }
+                        });
+                        return obj;
+                    }).filter(row => {
+                        // Filtrar filas completamente vacías
+                        const hasData = Object.values(row).some(val => val !== null && val !== undefined && val !== '');
+                        if (!hasData) {
+                            console.log('⚠️ Fila vacía filtrada:', row);
+                        }
+                        return hasData;
+                    });
+                    
+                    console.log('📊 Datos convertidos desde raw:', data.length, 'filas válidas');
+                    if (data.length > 0) {
+                        console.log('📊 Primera fila de datos:', data[0]);
+                    }
+                } else if (rawData && rawData.length === 1) {
+                    // Solo hay headers, no hay datos
+                    console.log('❌ PROBLEMA DETECTADO: El archivo solo contiene encabezados');
+                    console.log('📋 Headers encontrados:', rawData[0]);
+                    console.log('📊 Análisis del archivo:');
+                    console.log('   - Total de filas en el archivo: 1 (solo encabezados)');
+                    console.log('   - Filas de datos: 0');
+                    console.log('   - Columnas detectadas:', rawData[0].length);
+                    console.log('   - Nombres de columnas:', rawData[0].filter(h => h).join(', '));
+                    
+                    const headersList = rawData[0].filter(h => h).join(', ');
+                    throw new Error(`El archivo Excel solo contiene encabezados (${headersList}). Debe tener al menos una fila de datos después de los encabezados. Formato esperado: Fila 1 = Encabezados (Matrícula, Modelo, Color, Chasis, Kilómetros), Fila 2+ = Datos de coches. Nota: La columna "Estado" es opcional y se ignorará si existe.`);
+                } else if (!rawData || rawData.length === 0) {
+                    console.log('❌ El archivo Excel está completamente vacío');
+                    throw new Error('El archivo Excel está completamente vacío. Verifica que el archivo tenga contenido.');
                 }
             }
+            
+            console.log('📖 ========== FIN LECTURA DE ARCHIVO EXCEL ==========\n');
+            
+            // Debug: mostrar las primeras filas para diagnóstico
+            console.log('\n📊 ========== ANÁLISIS DE DATOS LEÍDOS ==========');
+            console.log('📈 Total de filas de datos encontradas:', data.length);
+            
+            if (data.length > 0) {
+                console.log('✅ Se encontraron datos en el archivo');
+                console.log('📋 Columnas detectadas en primera fila:', Object.keys(data[0]));
+                console.log('📄 Primera fila completa:', JSON.stringify(data[0], null, 2));
+                
+                if (data.length > 1) {
+                    console.log('📄 Segunda fila:', JSON.stringify(data[1], null, 2));
+                }
+                
+                if (data.length > 2) {
+                    console.log(`📄 ... y ${data.length - 2} filas más`);
+                }
+            } else {
+                console.log('❌ No se encontraron datos después del procesamiento');
+                // Si no hay datos, intentar leer con header en la primera fila
+                console.log('🔄 Reintentando lectura con método alternativo...');
+                const dataWithHeaders = XLSX.utils.sheet_to_json(sheet, { header: 1 });
+                console.log('📋 Datos con headers (método alternativo):', {
+                    totalFilas: dataWithHeaders.length,
+                    contenido: dataWithHeaders
+                });
+                
+                if (!dataWithHeaders || dataWithHeaders.length === 0) {
+                    throw new Error('El archivo Excel está vacío o no contiene datos. Asegúrate de que el archivo tenga al menos una fila de datos además de los encabezados.');
+                }
+                
+                if (dataWithHeaders.length === 1) {
+                    throw new Error('El archivo Excel solo contiene encabezados. Debe tener al menos una fila de datos.');
+                }
+                
+                throw new Error('No se pudieron leer los datos del archivo Excel. Verifica que el archivo tenga el formato correcto con columnas: Matrícula, Modelo, Color, Chasis, Kilómetros. La columna "Estado" es opcional y se ignorará si existe.');
+            }
+            
+            console.log('📊 ========== FIN ANÁLISIS DE DATOS ==========\n');
             
             let importados = 0;
             let errores = 0;
             const erroresDetalle = [];
 
+            // Validar que haya al menos una fila de datos
+            if (!data || data.length === 0) {
+                throw new Error('El archivo Excel está vacío. Debe contener al menos una fila de datos.');
+            }
+
+            // Validar que la primera fila tenga datos válidos
+            if (!data[0] || typeof data[0] !== 'object') {
+                throw new Error('El formato del archivo Excel no es válido. La primera fila debe contener los encabezados de las columnas.');
+            }
+
             // Detectar automáticamente los nombres de las columnas
             const columnasDetectadas = this.detectarColumnasCoches(data[0]);
             console.log('🔍 Columnas detectadas:', columnasDetectadas);
+            
+            // Verificar si existe columna "Estado" (se ignorará si existe)
+            const tieneEstado = Object.keys(data[0]).some(col => 
+                col.toLowerCase().includes('estado') || 
+                col.toLowerCase().includes('state') ||
+                col.toLowerCase().includes('status')
+            );
+            if (tieneEstado) {
+                console.log('ℹ️ Se detectó columna "Estado" en el archivo. Esta columna será ignorada (no se usa en la base de datos).');
+            }
+            
+            // Validar que se hayan detectado las columnas mínimas necesarias
+            if (!columnasDetectadas.matricula && !columnasDetectadas.chasis && !columnasDetectadas.modelo) {
+                console.log('⚠️ No se detectaron columnas principales. Columnas disponibles:', Object.keys(data[0]));
+                throw new Error(`No se pudieron detectar las columnas necesarias en el archivo Excel. Columnas encontradas: ${Object.keys(data[0]).join(', ')}. Se requieren al menos: Matrícula, Modelo, Color, Chasis. La columna "Estado" es opcional y se ignorará si existe.`);
+            }
             
             for (let i = 0; i < data.length; i++) {
                 const row = data[i];
@@ -62,6 +215,7 @@ class ImportadorExcel {
                     console.log(`\n🔍 Procesando fila ${i + 2}:`, row);
                     
                     // Mapear campos del Excel usando las columnas detectadas
+                    // Nota: La columna "Estado" se ignora si existe, no se usa en la BD
                     const coche = {
                         matricula: this.obtenerValor(row, columnasDetectadas.matricula),
                         chasis: this.obtenerValor(row, columnasDetectadas.chasis),
@@ -70,7 +224,7 @@ class ImportadorExcel {
                         modelo: this.obtenerValor(row, columnasDetectadas.modelo)
                     };
                     
-                    console.log('📋 Datos mapeados:', coche);
+                    console.log('📋 Datos mapeados (sin Estado):', coche);
 
                     // Validar campos obligatorios con mensajes específicos
                     const camposFaltantes = [];
@@ -102,23 +256,68 @@ class ImportadorExcel {
                         coche.kms = 0;
                     }
 
-                    // Insertar en la base de datos
-                    await new Promise((resolve, reject) => {
-                        this.db.run(`
-                            INSERT OR REPLACE INTO coches (matricula, chasis, color, kms, modelo, activo)
-                            VALUES (?, ?, ?, ?, ?, 1)
-                        `, [coche.matricula, coche.chasis, coche.color, coche.kms, coche.modelo], (err) => {
-                            if (err) reject(err);
-                            else resolve();
+                    // Insertar en la base de datos (compatible con SQLite y PostgreSQL)
+                    const dbType = config.get('database.type') || 'postgresql';
+                    const isPostgreSQL = dbType === 'postgresql';
+                    
+                    if (isPostgreSQL) {
+                        // PostgreSQL: usar ON CONFLICT
+                        // Acceder directamente a database para usar query
+                        try {
+                            await database.query(`
+                                INSERT INTO coches (matricula, chasis, color, kms, modelo, activo)
+                                VALUES ($1, $2, $3, $4, $5, true)
+                                ON CONFLICT (matricula) 
+                                DO UPDATE SET 
+                                    chasis = EXCLUDED.chasis,
+                                    color = EXCLUDED.color,
+                                    kms = EXCLUDED.kms,
+                                    modelo = EXCLUDED.modelo,
+                                    activo = true
+                            `, [coche.matricula, coche.chasis, coche.color, coche.kms, coche.modelo]);
+                        } catch (dbError) {
+                            // Si falla por falta de constraint UNIQUE, intentar UPDATE
+                            if (dbError.message.includes('duplicate key') || dbError.message.includes('unique constraint') || dbError.message.includes('violates unique constraint')) {
+                                // Verificar si existe primero
+                                const existing = await database.query(`SELECT id FROM coches WHERE matricula = $1`, [coche.matricula]);
+                                if (existing.rows && existing.rows.length > 0) {
+                                    // Actualizar en lugar de insertar
+                                    await database.query(`
+                                        UPDATE coches 
+                                        SET chasis = $1, color = $2, kms = $3, modelo = $4, activo = true
+                                        WHERE matricula = $5
+                                    `, [coche.chasis, coche.color, coche.kms, coche.modelo, coche.matricula]);
+                                } else {
+                                    // Si no existe, intentar insertar sin ON CONFLICT
+                                    await database.query(`
+                                        INSERT INTO coches (matricula, chasis, color, kms, modelo, activo)
+                                        VALUES ($1, $2, $3, $4, $5, true)
+                                    `, [coche.matricula, coche.chasis, coche.color, coche.kms, coche.modelo]);
+                                }
+                            } else {
+                                throw dbError;
+                            }
+                        }
+                    } else {
+                        // SQLite: usar INSERT OR REPLACE
+                        await new Promise((resolve, reject) => {
+                            this.db.run(`
+                                INSERT OR REPLACE INTO coches (matricula, chasis, color, kms, modelo, activo)
+                                VALUES (?, ?, ?, ?, ?, 1)
+                            `, [coche.matricula, coche.chasis, coche.color, coche.kms, coche.modelo], (err) => {
+                                if (err) reject(err);
+                                else resolve();
+                            });
                         });
-                    });
+                    }
 
                     importados++;
                 } catch (error) {
                     errores++;
                     erroresDetalle.push({
                         fila: i + 2, // +2 porque Excel empieza en 1 y la primera fila son headers
-                        error: error.message,
+                        mensaje: error.message,
+                        error: error.message, // Mantener ambos para compatibilidad
                         datos: row
                     });
                     console.log(`❌ Error en fila ${i + 2}:`, error.message);
@@ -336,6 +535,11 @@ class ImportadorExcel {
      * @returns {Object} - Objeto con los nombres de columnas detectados
      */
     detectarColumnasCoches(primeraFila) {
+        // Validar que primeraFila sea un objeto válido
+        if (!primeraFila || typeof primeraFila !== 'object') {
+            throw new Error('La primera fila del archivo Excel no contiene datos válidos');
+        }
+
         const columnas = {
             matricula: null,
             chasis: null,

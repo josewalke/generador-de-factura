@@ -40,6 +40,8 @@ export interface ProductoFactura {
   tipo_impuesto?: string;
   categoria?: string;
   stock?: number;
+  coche_id?: string | number | null;
+  cocheId?: string | number | null;
   // Datos del coche desde la tabla coches
   marca?: string;
   modelo?: string;
@@ -83,6 +85,12 @@ export interface FacturaPaginatedResponse {
     totalPages: number;
   };
   cached: boolean;
+  resumen?: {
+    totalFacturas: number;
+    ingresos: number;
+    ingresosTotales: number;
+    promedio: number;
+  };
 }
 
 export interface FacturaFilters {
@@ -120,7 +128,15 @@ class FacturaService {
       });
       
       const response = await apiClient.get(`/api/facturas?${params}`);
-      return handlePaginatedResponse(response);
+      const result = handlePaginatedResponse(response);
+      
+      // Mapear 'igic' del backend a 'impuestos' para compatibilidad
+      result.data = result.data.map((factura: any) => ({
+        ...factura,
+        impuestos: factura.igic || factura.impuestos || 0
+      }));
+      
+      return result;
     } catch (error) {
       console.error('Error al obtener facturas:', error);
       throw error;
@@ -148,6 +164,8 @@ class FacturaService {
       const params = new URLSearchParams({
         page: page.toString(),
         limit: limit.toString(),
+        include_detalles: 'true',
+        include_resumen: 'true',
         ...(filters.search && { search: filters.search }),
         ...(filters.empresa_id && { empresa_id: filters.empresa_id }),
         ...(filters.cliente_id && { cliente_id: filters.cliente_id }),
@@ -158,60 +176,40 @@ class FacturaService {
       const response = await apiClient.get(`/api/facturas?${params}`);
       const result = handlePaginatedResponse(response);
       
-      // Obtener productos para cada factura
-      const facturasConProductos = await Promise.all(
-        result.data.map(async (factura) => {
-          try {
-            // Obtener detalles de la factura individual
-            const facturaDetalle = await this.getById(factura.id);
-            
-                    // Transformar los detalles a productos con datos del coche
-                    const productos = facturaDetalle.detalles?.map((detalle: any) => ({
-                      id: detalle.id?.toString(),
-                      descripcion: detalle.descripcion || 'Producto sin descripción',
-                      cantidad: detalle.cantidad || 1,
-                      precio: detalle.precio_unitario || 0,
-                      precioUnitario: detalle.precio_unitario || 0,
-                      subtotal: detalle.subtotal || 0,
-                      impuesto: detalle.igic || 0,
-                      total: detalle.total || 0,
-                      tipoImpuesto: detalle.tipo_impuesto || 'igic',
-                      tipo_impuesto: detalle.tipo_impuesto || 'igic',
-                      categoria: 'vehiculo',
-                      stock: 0,
-                      // Datos del coche desde la tabla coches
-                      marca: detalle.coche_modelo ? detalle.coche_modelo.split(' ')[0] : '',
-                      modelo: detalle.coche_modelo || '',
-                      matricula: detalle.coche_matricula || '',
-                      color: detalle.coche_color || '',
-                      kilometros: detalle.coche_kms ? detalle.coche_kms.toString() : '',
-                      chasis: detalle.coche_chasis || ''
-                    })) || [];
-            
-            return {
-              ...factura,
-              numero: factura.numero_factura,
-              fecha: factura.fecha_emision,
-              cliente: factura.cliente_nombre || 'Cliente no especificado',
-              empresa: factura.empresa_nombre || 'Empresa no especificada',
-              impuesto: factura.impuestos,
-              productos: productos
-            };
-          } catch (error) {
-            console.error(`Error al obtener productos para factura ${factura.id}:`, error);
-            // Si hay error, devolver la factura sin productos
-            return {
-              ...factura,
-              numero: factura.numero_factura,
-              fecha: factura.fecha_emision,
-              cliente: factura.cliente_nombre || 'Cliente no especificado',
-              empresa: factura.empresa_nombre || 'Empresa no especificada',
-              impuesto: factura.impuestos,
-              productos: []
-            };
-          }
-        })
-      );
+      const facturasConProductos = (result.data || []).map((factura: any) => {
+        const productos = (factura.detalles || []).map((detalle: any) => ({
+          id: detalle.id?.toString(),
+          descripcion: detalle.descripcion || 'Producto sin descripción',
+          cantidad: detalle.cantidad || 1,
+          precio: detalle.precio_unitario || 0,
+          precioUnitario: detalle.precio_unitario || 0,
+          subtotal: detalle.subtotal || 0,
+          impuesto: detalle.igic || 0,
+          total: detalle.total || 0,
+          tipoImpuesto: detalle.tipo_impuesto || 'igic',
+          tipo_impuesto: detalle.tipo_impuesto || 'igic',
+          categoria: 'vehiculo',
+          stock: 0,
+          coche_id: detalle.coche_id || null,
+          cocheId: detalle.coche_id || null,
+          marca: detalle.coche_modelo ? detalle.coche_modelo.split(' ')[0] : '',
+          modelo: detalle.coche_modelo || '',
+          matricula: detalle.coche_matricula || '',
+          color: detalle.coche_color || '',
+          kilometros: detalle.coche_kms ? detalle.coche_kms.toString() : '',
+          chasis: detalle.coche_chasis || ''
+        }));
+        
+        return {
+          ...factura,
+          numero: factura.numero_factura,
+          fecha: factura.fecha_emision,
+          cliente: factura.cliente_nombre || 'Cliente no especificado',
+          empresa: factura.empresa_nombre || 'Empresa no especificada',
+          impuesto: (factura as any).igic || factura.impuestos || 0,
+          productos
+        };
+      });
       
       return {
         ...result,
@@ -311,6 +309,34 @@ class FacturaService {
       };
     } catch (error) {
       console.error('Error al calcular estadísticas de facturas:', error);
+      throw error;
+    }
+  }
+
+  async getResumen(filters: FacturaFilters = {}): Promise<{ totalFacturas: number; ingresos: number; ingresosTotales: number; promedio: number }> {
+    try {
+      const params = new URLSearchParams({
+        ...(filters.search && { search: filters.search }),
+        ...(filters.empresa_id && { empresa_id: filters.empresa_id }),
+        ...(filters.cliente_id && { cliente_id: filters.cliente_id }),
+        ...(filters.fecha_desde && { fecha_desde: filters.fecha_desde }),
+        ...(filters.fecha_hasta && { fecha_hasta: filters.fecha_hasta })
+      });
+      
+      const response = await apiClient.get(`/api/facturas/resumen?${params}`);
+      return handleApiResponse(response);
+    } catch (error) {
+      console.error('Error al obtener resumen de facturas:', error);
+      throw error;
+    }
+  }
+
+  async getYears(): Promise<string[]> {
+    try {
+      const response = await apiClient.get('/api/facturas/anios');
+      return handleApiResponse(response);
+    } catch (error) {
+      console.error('Error al obtener años de facturas:', error);
       throw error;
     }
   }

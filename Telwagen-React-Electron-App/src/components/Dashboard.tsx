@@ -8,10 +8,11 @@ import { Screen } from '../App';
 import { BackendStatus } from './BackendStatus';
 import { clienteService } from '../services/clienteService';
 import { cocheService } from '../services/cocheService';
-import { facturaService } from '../services/facturaService';
 import { empresaService } from '../services/empresaService';
+import { statsService } from '../services/statsService';
 import { SelectorCertificado } from './ui/SelectorCertificado';
 import { CertificadoDigital } from '../services/certificadoService';
+import { RefreshCw, Trash2, Users, Car, Building2, BarChart3, Zap } from 'lucide-react';
 
 interface DashboardProps {
   onNavigate: (screen: Screen) => void;
@@ -47,51 +48,11 @@ export function Dashboard({ onNavigate }: DashboardProps) {
       try {
         setLoading(true);
         
-        // Obtener datos de clientes
-        const clientesResponse = await clienteService.getAll();
-        const totalClientes = clientesResponse.length;
+        const resumen = await statsService.getResumen();
         
-        // Obtener datos de coches
-        const cochesResponse = await cocheService.getAll();
-        const totalCoches = cochesResponse.length;
+        setStats(resumen);
         
-        // Obtener datos de facturas
-        const facturasResponse = await facturaService.getAll();
-        const facturas = facturasResponse.data || [];
-        const totalFacturas = facturas.length;
-        
-        // Obtener datos de empresas
-        const empresasResponse = await empresaService.getAll();
-        const empresas = empresasResponse.data || [];
-        const totalEmpresas = empresas.length;
-        
-        // Calcular ingresos del mes actual
-        const mesActual = new Date().getMonth();
-        const añoActual = new Date().getFullYear();
-        const ingresosMes = facturas
-          .filter(factura => {
-            const fechaFactura = new Date(factura.fecha_emision);
-            return fechaFactura.getMonth() === mesActual && 
-                   fechaFactura.getFullYear() === añoActual &&
-                   factura.estado === 'pagada';
-          })
-          .reduce((total, factura) => total + (factura.total || 0), 0);
-        
-        setStats({
-          totalClientes,
-          totalCoches,
-          totalFacturas,
-          totalEmpresas,
-          ingresosMes
-        });
-        
-        console.log('📊 Estadísticas del dashboard cargadas:', {
-          clientes: totalClientes,
-          coches: totalCoches,
-          facturas: totalFacturas,
-          empresas: totalEmpresas,
-          ingresosMes
-        });
+        console.log('📊 Estadísticas del dashboard cargadas:', resumen);
         
       } catch (error) {
         console.error('❌ Error cargando estadísticas del dashboard:', error);
@@ -141,51 +102,10 @@ export function Dashboard({ onNavigate }: DashboardProps) {
     try {
       setLoading(true);
       
-      // Obtener datos de clientes
-      const clientesResponse = await clienteService.getAll();
-      const totalClientes = clientesResponse.length;
+      const resumen = await statsService.getResumen();
+      setStats(resumen);
       
-      // Obtener datos de coches
-      const cochesResponse = await cocheService.getAll();
-      const totalCoches = cochesResponse.length;
-      
-      // Obtener datos de facturas
-      const facturasResponse = await facturaService.getAll();
-      const facturas = facturasResponse.data || [];
-      const totalFacturas = facturas.length;
-      
-      // Obtener datos de empresas
-      const empresasResponse = await empresaService.getAll();
-      const empresas = empresasResponse.data || [];
-      const totalEmpresas = empresas.length;
-      
-      // Calcular ingresos del mes actual
-      const mesActual = new Date().getMonth();
-      const añoActual = new Date().getFullYear();
-      const ingresosMes = facturas
-        .filter(factura => {
-          const fechaFactura = new Date(factura.fecha_emision);
-          return fechaFactura.getMonth() === mesActual && 
-                 fechaFactura.getFullYear() === añoActual &&
-                 factura.estado === 'pagada';
-        })
-        .reduce((total, factura) => total + (factura.total || 0), 0);
-      
-      setStats({
-        totalClientes,
-        totalCoches,
-        totalFacturas,
-        totalEmpresas,
-        ingresosMes
-      });
-      
-      console.log('🔄 Estadísticas actualizadas:', {
-        clientes: totalClientes,
-        coches: totalCoches,
-        facturas: totalFacturas,
-        empresas: totalEmpresas,
-        ingresosMes
-      });
+      console.log('🔄 Estadísticas actualizadas:', resumen);
       
     } catch (error) {
       console.error('❌ Error actualizando estadísticas:', error);
@@ -211,7 +131,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
   };
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-blue-50 to-gray-100">
+    <div className="min-h-screen bg-gray-50">
       {/* Header */}
       <header className="bg-white shadow-sm border-b border-gray-200">
         <div className="max-w-7xl mx-auto px-6 py-4">
@@ -228,15 +148,17 @@ export function Dashboard({ onNavigate }: DashboardProps) {
                 disabled={loading}
                 className="text-blue-600 border-blue-300 hover:bg-blue-50"
               >
-                {loading ? '🔄' : '🔄'} Actualizar
+                <RefreshCw className={`w-4 h-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
+                Actualizar
               </Button>
               <Button 
                 onClick={clearCache}
                 variant="outline" 
                 size="sm"
-                className="text-red-600 border-red-300 hover:bg-red-50"
+                className="text-blue-600 border-blue-300 hover:bg-blue-50"
               >
-                🧹 Limpiar Caché
+                <Trash2 className="w-4 h-4 mr-2" />
+                Limpiar Caché
               </Button>
               <BackendStatus />
             </div>
@@ -249,7 +171,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
           {/* Main Content Area */}
           <div className="lg:col-span-3 space-y-6">
             {/* Alerts Section */}
-            <Alert className="border-orange-200 bg-orange-50">
+            <Alert className="border-blue-200 bg-blue-50">
               <AlertDescription>
                 Certificado digital caduca en 30 días. Renovar antes del 15 de octubre.
               </AlertDescription>
@@ -279,7 +201,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
               <Card className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => onNavigate('clientes')}>
                 <CardHeader className="pb-3">
                   <CardTitle className="flex items-center space-x-2">
-                    <span className="text-xl">👥</span>
+                    <Users className="w-5 h-5" />
                     <span>Clientes</span>
                   </CardTitle>
                 </CardHeader>
@@ -294,7 +216,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
               <Card className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => onNavigate('coches')}>
                 <CardHeader className="pb-3">
                   <CardTitle className="flex items-center space-x-2">
-                    <span className="text-xl">🚗</span>
+                    <Car className="w-5 h-5" />
                     <span>Coches</span>
                   </CardTitle>
                 </CardHeader>
@@ -309,7 +231,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
               <Card className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => onNavigate('empresas')}>
                 <CardHeader className="pb-3">
                   <CardTitle className="flex items-center space-x-2">
-                    <span className="text-xl">🏢</span>
+                    <Building2 className="w-5 h-5" />
                     <span>Empresas</span>
                   </CardTitle>
                 </CardHeader>
@@ -324,7 +246,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
               <Card className="hover:shadow-md transition-shadow cursor-pointer" onClick={() => onNavigate('historial')}>
                 <CardHeader className="pb-3">
                   <CardTitle className="flex items-center space-x-2">
-                    <span className="text-xl">📊</span>
+                    <BarChart3 className="w-5 h-5" />
                     <span>Historial</span>
                   </CardTitle>
                 </CardHeader>
@@ -344,7 +266,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center space-x-2">
-                  <span className="text-lg">📈</span>
+                  <BarChart3 className="w-5 h-5" />
                   <span>Estadísticas</span>
                 </CardTitle>
               </CardHeader>
@@ -368,8 +290,8 @@ export function Dashboard({ onNavigate }: DashboardProps) {
                 <div className="pt-2 border-t">
                   <div className="flex justify-between items-center">
                     <span className="text-gray-600">Ingresos del Mes</span>
-                    <span className="font-bold text-green-600">
-                      {loading ? '...' : `€${stats.ingresosMes.toLocaleString()}`}
+                    <span className="font-bold text-blue-600">
+                      {loading ? '...' : stats.ingresosMes.toLocaleString('es-ES', { style: 'currency', currency: 'EUR' })}
                     </span>
                   </div>
                 </div>
@@ -380,7 +302,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center space-x-2">
-                  <span className="text-lg">⚡</span>
+                  <Zap className="w-5 h-5" />
                   <span>Acciones Rápidas</span>
                 </CardTitle>
               </CardHeader>
@@ -424,7 +346,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
                       variant="outline" 
                       className="w-full justify-start"
                     >
-                      <span className="mr-2">🚗</span>
+                      <Car className="w-4 h-4 mr-2" />
                       Nuevo Coche
                     </Button>
                   </DialogTrigger>
@@ -457,7 +379,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
                       variant="outline" 
                       className="w-full justify-start"
                     >
-                      <span className="mr-2">🏢</span>
+                      <Building2 className="w-4 h-4 mr-2" />
                       Nueva Empresa
                     </Button>
                   </DialogTrigger>
@@ -773,14 +695,14 @@ function FormularioEmpresa({ onSubmit, onCancel }: FormularioEmpresaProps) {
           <div className="space-y-2">
             <label className="block text-sm font-medium mb-1">Certificado Asignado</label>
             {certificadoAsignado ? (
-              <div className="p-3 border rounded-lg bg-green-50">
+              <div className="p-3 border rounded-lg bg-blue-50 border-blue-200">
                 <div className="flex items-center justify-between">
                   <div>
-                    <p className="font-medium text-green-800">{certificadoAsignado.CommonName}</p>
+                    <p className="font-medium text-blue-800">{certificadoAsignado.CommonName}</p>
                     {certificadoAsignado.CIF && (
-                      <p className="text-sm text-green-600">CIF: {certificadoAsignado.CIF}</p>
+                      <p className="text-sm text-blue-600">CIF: {certificadoAsignado.CIF}</p>
                     )}
-                    <p className="text-xs text-green-600">
+                    <p className="text-xs text-blue-600">
                       Válido hasta: {certificadoAsignado.NotAfter ? new Date(certificadoAsignado.NotAfter).toLocaleDateString('es-ES') : 'N/A'}
                     </p>
                   </div>

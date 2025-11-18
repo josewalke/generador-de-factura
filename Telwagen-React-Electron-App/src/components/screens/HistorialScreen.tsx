@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -9,11 +9,12 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger, Dialog
 import { Badge } from '../ui/badge';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '../ui/pagination';
-import { Eye } from 'lucide-react';
+import { Eye, BarChart3, FileText, DollarSign, Search, Download, Plus, AlertCircle, Mail, Home, Zap, CalendarDays, RefreshCw } from 'lucide-react';
 import { Screen } from '../../App';
 import { facturaPDFService } from '../../services/facturaPDFService';
 import { reporteService } from '../../services/reporteService';
 import { facturaService, Factura } from '../../services/facturaService';
+import { empresaService, Empresa } from '../../services/empresaService';
 
 interface HistorialScreenProps {
   onNavigate: (screen: Screen) => void;
@@ -29,66 +30,175 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
   const [facturaDetalle, setFacturaDetalle] = useState<Factura | null>(null);
   const [facturas, setFacturas] = useState<Factura[]>([]);
   const [loading, setLoading] = useState(true);
+  const [loadingTabla, setLoadingTabla] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [pagination, setPagination] = useState<{ page: number; totalPages: number; totalCount: number }>({ page: 1, totalPages: 1, totalCount: 0 });
+  const [stats, setStats] = useState<{ totalFacturas: number; ingresos: number; ingresosTotales: number; promedio: number }>({
+    totalFacturas: 0,
+    ingresos: 0,
+    ingresosTotales: 0,
+    promedio: 0
+  });
+  const [resumenSeleccionado, setResumenSeleccionado] = useState<{ facturas: number; ingresos: number; promedio: number }>({
+    facturas: 0,
+    ingresos: 0,
+    promedio: 0
+  });
+  const [selectedYear, setSelectedYear] = useState<string>(new Date().getFullYear().toString());
+  const [selectedMonth, setSelectedMonth] = useState<string>(new Date().getMonth().toString());
+  const [añosDisponibles, setAñosDisponibles] = useState<string[]>([new Date().getFullYear().toString()]);
+  const [empresasDisponibles, setEmpresasDisponibles] = useState<Empresa[]>([]);
+  const [initialLoadComplete, setInitialLoadComplete] = useState(false);
+  const filtrosRef = useRef<string>('');
+  const paginaRef = useRef<number>(1);
 
   const itemsPorPagina = 10;
 
-  // Cargar facturas directamente desde el servicio
-  const cargarFacturas = async () => {
+  const monthOptions = [
+    { label: 'Todos los meses', value: 'todos' },
+    { label: 'Enero', value: '0' },
+    { label: 'Febrero', value: '1' },
+    { label: 'Marzo', value: '2' },
+    { label: 'Abril', value: '3' },
+    { label: 'Mayo', value: '4' },
+    { label: 'Junio', value: '5' },
+    { label: 'Julio', value: '6' },
+    { label: 'Agosto', value: '7' },
+    { label: 'Septiembre', value: '8' },
+    { label: 'Octubre', value: '9' },
+    { label: 'Noviembre', value: '10' },
+    { label: 'Diciembre', value: '11' },
+  ];
+
+  const getDateRange = useCallback((year: string, month: string) => {
+    const parsedYear = parseInt(year, 10);
+    if (isNaN(parsedYear)) return null;
+    
+    if (month === 'todos') {
+      const inicio = new Date(parsedYear, 0, 1);
+      const fin = new Date(parsedYear, 11, 31);
+      return {
+        desde: inicio.toISOString().split('T')[0],
+        hasta: fin.toISOString().split('T')[0]
+      };
+    }
+    
+    const parsedMonth = parseInt(month, 10);
+    if (isNaN(parsedMonth)) return null;
+    
+    const inicio = new Date(parsedYear, parsedMonth, 1);
+    const fin = new Date(parsedYear, parsedMonth + 1, 0);
+    return {
+      desde: inicio.toISOString().split('T')[0],
+      hasta: fin.toISOString().split('T')[0]
+    };
+  }, []);
+  
+  const filtrosActuales = useMemo(() => {
+    const rango = getDateRange(selectedYear, selectedMonth);
+    return {
+      search: busqueda || undefined,
+      empresa_id: filtroEmpresa !== 'todos' ? filtroEmpresa : undefined,
+      cliente_id: filtroCliente !== 'todos' ? filtroCliente : undefined,
+      fecha_desde: rango?.desde,
+      fecha_hasta: rango?.hasta
+    };
+  }, [busqueda, filtroEmpresa, filtroCliente, selectedYear, selectedMonth, getDateRange]);
+  
+  const cargarFacturas = useCallback(async ({ soloTabla = false }: { soloTabla?: boolean } = {}) => {
     try {
-      setLoading(true);
+      if (soloTabla) {
+        setLoadingTabla(true);
+      } else {
+        setLoading(true);
+      }
       setError(null);
-      const response = await facturaService.getAllWithProducts(paginaActual, itemsPorPagina, {
-        search: busqueda,
-        empresa_id: filtroEmpresa !== 'todos' ? filtroEmpresa : undefined,
-        cliente_id: filtroCliente !== 'todos' ? filtroCliente : undefined
+      
+      const response = await facturaService.getAllWithProducts(paginaActual, itemsPorPagina, filtrosActuales);
+      setFacturas(response.data || []);
+      setPagination({
+        page: response.pagination?.page || paginaActual,
+        totalPages: response.pagination?.totalPages || 1,
+        totalCount: response.pagination?.totalCount ? Number(response.pagination.totalCount) : (response.data?.length || 0)
       });
-      setFacturas(response.data);
+      
+      if (response.resumen) {
+        const resumen = response.resumen;
+        const ingresosTotales = resumen.ingresosTotales ?? resumen.ingresos ?? 0;
+        setStats({
+          totalFacturas: resumen.totalFacturas || 0,
+          ingresos: resumen.ingresos || 0,
+          ingresosTotales,
+          promedio: resumen.promedio || 0
+        });
+        setResumenSeleccionado({
+          facturas: resumen.totalFacturas || 0,
+          ingresos: ingresosTotales,
+          promedio: resumen.promedio || 0
+        });
+      }
+      
+      if (!initialLoadComplete) {
+        setInitialLoadComplete(true);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al cargar facturas');
       console.error('Error fetching facturas:', err);
     } finally {
-      setLoading(false);
+      if (soloTabla) {
+        setLoadingTabla(false);
+      } else {
+        setLoading(false);
+      }
     }
-  };
-
-  useEffect(() => {
-    cargarFacturas();
-  }, [paginaActual, busqueda, filtroEmpresa, filtroCliente]);
-
-  // Usar datos reales
-  const facturasParaMostrar = facturas || [];
+  }, [filtrosActuales, paginaActual, itemsPorPagina, initialLoadComplete]);
   
-  const facturasFiltradas = facturasParaMostrar.filter(factura => {
-    const matchesBusqueda = 
-      (factura.numero || '').toLowerCase().includes(busqueda.toLowerCase()) ||
-      (factura.cliente || '').toLowerCase().includes(busqueda.toLowerCase());
+  const filtrosKey = JSON.stringify(filtrosActuales);
+  
+  useEffect(() => {
+    const soloTabla = filtrosRef.current === filtrosKey && paginaRef.current !== paginaActual;
+    cargarFacturas({ soloTabla });
+    filtrosRef.current = filtrosKey;
+    paginaRef.current = paginaActual;
+  }, [cargarFacturas, filtrosKey, paginaActual]);
+  
+  useEffect(() => {
+    setPaginaActual(1);
+  }, [busqueda, filtroEmpresa, filtroCliente, selectedMonth, selectedYear]);
+  
+  useEffect(() => {
+    const loadInitialData = async () => {
+      try {
+        const [anios, empresasResp] = await Promise.all([
+          facturaService.getYears().catch(() => []),
+          empresaService.getAll(1, 100).catch(() => ({ data: [] }))
+        ]);
+        
+        if (Array.isArray(anios) && anios.length > 0) {
+          setAñosDisponibles(anios);
+          if (!anios.includes(selectedYear)) {
+            setSelectedYear(anios[0]);
+          }
+        }
+        
+        if (empresasResp && Array.isArray(empresasResp.data)) {
+          setEmpresasDisponibles(empresasResp.data);
+        }
+      } catch (error) {
+        console.error('Error cargando datos iniciales de historial:', error);
+      }
+    };
     
-    const matchesCliente = filtroCliente === 'todos' || factura.cliente === filtroCliente;
-    const matchesEmpresa = filtroEmpresa === 'todos' || factura.empresa === filtroEmpresa;
-    const matchesEstado = filtroEstado === 'todos' || factura.estado === filtroEstado;
-    
-    return matchesBusqueda && matchesCliente && matchesEmpresa && matchesEstado;
-  });
-
-  const totalPaginas = Math.ceil(facturasFiltradas.length / itemsPorPagina);
-  const facturasPaginadas = facturasFiltradas.slice(
-    (paginaActual - 1) * itemsPorPagina,
-    paginaActual * itemsPorPagina
-  );
-
-  const stats = {
-    totalFacturas: facturasParaMostrar.length,
-    ingresosMes: facturasParaMostrar
-      .filter(f => f.fecha && new Date(f.fecha).getMonth() === new Date().getMonth())
-      .reduce((sum, f) => sum + (f.total || 0), 0),
-    pagadas: facturasParaMostrar.filter(f => f.estado === 'pagada').length,
-    pendientes: facturasParaMostrar.filter(f => f.estado === 'pendiente').length,
-    vencidas: facturasParaMostrar.filter(f => f.estado === 'vencida').length
-  };
-
-  const clientesUnicos = [...new Set(facturasParaMostrar.map(f => f.cliente))];
-  const empresasUnicas = [...new Set(facturasParaMostrar.map(f => f.empresa))];
+    loadInitialData();
+  }, []);
+  
+  const totalPaginas = pagination.totalPages || 1;
+  const facturasParaMostrar = facturas || [];
+  const facturasPaginadas = useMemo(() => facturasParaMostrar, [facturasParaMostrar]);
+  
+  const mesSeleccionadoLabel = selectedMonth === 'todos'
+    ? 'Todos los meses'
+    : (monthOptions.find(month => month.value === selectedMonth)?.label || 'Mes seleccionado');
 
   const getEstadoBadge = (estado: string) => {
     switch (estado) {
@@ -154,8 +264,10 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
     }
   };
 
-  // Mostrar estado de carga o error
-  if (loading) {
+  const mostrarPantallaCarga = !initialLoadComplete && (loading || loadingTabla);
+
+  // Mostrar estado de carga inicial
+  if (mostrarPantallaCarga) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
@@ -170,7 +282,7 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
     return (
       <div className="min-h-screen bg-gray-50 flex items-center justify-center">
         <div className="text-center">
-          <div className="text-red-600 text-6xl mb-4">⚠️</div>
+          <AlertCircle className="w-16 h-16 text-red-600 mx-auto mb-4" />
           <h2 className="text-xl font-semibold text-gray-800 mb-2">Error al cargar facturas</h2>
           <p className="text-gray-600 mb-4">{error}</p>
           <Button onClick={() => cargarFacturas()}>
@@ -193,17 +305,26 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
                 onClick={() => onNavigate('dashboard')}
                 className="flex items-center space-x-2"
               >
-                <span>🏠</span>
+                <Home className="w-4 h-4" />
                 <span>Home</span>
               </Button>
               <div>
                 <h1 className="text-2xl font-bold text-gray-900 flex items-center space-x-2">
-                  <span className="text-2xl">📊</span>
+                  <BarChart3 className="w-6 h-6" />
                   <span>Historial de Facturas</span>
                 </h1>
                 <p className="text-gray-600">Registro de todas las facturas generadas</p>
               </div>
             </div>
+            <Button 
+              variant="outline" 
+              onClick={() => cargarFacturas()}
+              className="flex items-center space-x-2"
+              disabled={loading}
+            >
+              <RefreshCw className={`w-4 h-4 ${loading ? 'animate-spin' : ''}`} />
+              <span>Actualizar</span>
+            </Button>
           </div>
         </div>
       </header>
@@ -218,7 +339,7 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
                 <CardContent className="p-4">
                   <div className="flex items-center space-x-3">
                     <div className="bg-blue-100 p-2 rounded-lg">
-                      <span className="text-2xl">📄</span>
+                      <FileText className="w-6 h-6 text-blue-600" />
                     </div>
                     <div>
                       <p className="text-sm text-gray-600">Total Facturas</p>
@@ -231,12 +352,14 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
               <Card>
                 <CardContent className="p-4">
                   <div className="flex items-center space-x-3">
-                    <div className="bg-green-100 p-2 rounded-lg">
-                      <span className="text-2xl">💰</span>
+                    <div className="bg-blue-100 p-2 rounded-lg">
+                      <DollarSign className="w-6 h-6 text-blue-600" />
                     </div>
                     <div>
-                      <p className="text-sm text-gray-600">Ingresos del Mes</p>
-                      <p className="text-xl font-bold text-green-600">€{(stats.ingresosMes || 0).toLocaleString()}</p>
+                      <p className="text-sm text-gray-600">Ingresos del periodo</p>
+                      <p className="text-xl font-bold text-blue-600">
+                        €{(stats.ingresosTotales || 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                      </p>
                     </div>
                   </div>
                 </CardContent>
@@ -248,18 +371,21 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <CardTitle className="flex items-center space-x-2">
-                    <span className="text-lg">🔍</span>
+                    <Search className="w-5 h-5" />
                     <span>Historial de Facturas</span>
                   </CardTitle>
                   <Tabs value={vistaActual} onValueChange={(value) => setVistaActual(value as 'tabla' | 'tarjetas')}>
                     <TabsList>
-                      <TabsTrigger value="tabla">📊 Tabla</TabsTrigger>
-                      <TabsTrigger value="tarjetas">🃏 Tarjetas</TabsTrigger>
+                      <TabsTrigger value="tabla">
+                        <BarChart3 className="w-4 h-4 mr-2" />
+                        Tabla
+                      </TabsTrigger>
+                      <TabsTrigger value="tarjetas">Tarjetas</TabsTrigger>
                     </TabsList>
                   </Tabs>
                 </div>
                 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-4">
                   <Input
                     placeholder="Buscar por número o cliente..."
                     value={busqueda}
@@ -272,8 +398,32 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
                     </SelectTrigger>
                     <SelectContent>
                       <SelectItem value="todos">Todas las Empresas</SelectItem>
-                      {empresasUnicas.map(empresa => (
-                        <SelectItem key={empresa} value={empresa}>{empresa}</SelectItem>
+                      {empresasDisponibles.map(empresa => (
+                        <SelectItem key={empresa.id} value={empresa.id.toString()}>
+                          {empresa.nombre}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  <Select value={selectedMonth} onValueChange={(value) => { setSelectedMonth(value); setPaginaActual(1); }}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Mes" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {monthOptions.map(month => (
+                        <SelectItem key={month.value} value={month.value}>{month.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  <Select value={selectedYear} onValueChange={(value) => { setSelectedYear(value); setPaginaActual(1); }}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Año" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {añosDisponibles.map(año => (
+                        <SelectItem key={año} value={año}>{año}</SelectItem>
                       ))}
                     </SelectContent>
                   </Select>
@@ -283,104 +433,113 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
               <CardContent>
                 <Tabs value={vistaActual}>
                   <TabsContent value="tabla" className="space-y-4">
-                    <Table>
-                      <TableHeader>
-                        <TableRow>
-                          <TableHead className="px-2 py-2 text-sm">Número</TableHead>
-                          <TableHead className="px-2 py-2 text-sm">Fecha</TableHead>
-                          <TableHead className="px-2 py-2 text-sm">Cliente</TableHead>
-                          <TableHead className="px-2 py-2 text-sm text-right">Subtotal</TableHead>
-                          <TableHead className="px-2 py-2 text-sm text-right">Impuesto</TableHead>
-                          <TableHead className="px-2 py-2 text-sm text-right">Total</TableHead>
-                          <TableHead className="px-2 py-2 text-sm text-center">Acciones</TableHead>
-                        </TableRow>
-                      </TableHeader>
-                      <TableBody>
-                        {facturasPaginadas.map(factura => (
-                          <TableRow key={factura.id} className="align-top">
-                            <TableCell className="px-2 py-2 whitespace-nowrap">
-                              <p className="font-semibold text-sm">{factura.numero}</p>
-                            </TableCell>
-                            <TableCell className="px-2 py-2 whitespace-nowrap">
-                              <p className="text-sm">{new Date(factura.fecha).toLocaleDateString()}</p>
-                            </TableCell>
-                            <TableCell className="px-2 py-2 break-words">
-                              <div className="font-medium leading-tight text-sm">
-                                {factura.cliente}
-                              </div>
-                              <div className="text-muted-foreground text-xs leading-tight">
-                                {factura.empresa}
-                              </div>
-                            </TableCell>
-                            <TableCell className="px-2 py-2 text-right whitespace-nowrap">
-                              <p className="text-sm">€{(factura.subtotal || 0).toLocaleString()}</p>
-                            </TableCell>
-                            <TableCell className="px-2 py-2 text-right whitespace-nowrap">
-                              <p className="text-sm">€{(factura.impuesto || 0).toLocaleString()}</p>
-                            </TableCell>
-                            <TableCell className="px-2 py-2 text-right font-semibold text-emerald-600 whitespace-nowrap">
-                              <p className="text-sm">€{(factura.total || 0).toLocaleString()}</p>
-                            </TableCell>
-                            <TableCell className="px-2 py-2 text-center">
-                              <div className="inline-flex gap-1">
-                                <Dialog>
-                                  <DialogTrigger asChild>
-                                    <Button 
-                                      variant="outline" 
-                                      size="sm"
-                                      className="w-8 h-8 p-0"
-                                      onClick={() => setFacturaDetalle(factura)}
-                                    >
-                                      <Eye className="size-4" />
-                                    </Button>
-                                  </DialogTrigger>
-                                  <DialogContent className="max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-                                    <DialogHeader>
-                                      <DialogTitle>Detalle de Factura {factura.numero}</DialogTitle>
-                                      <DialogDescription>
-                                        Ver la información completa y detalle de productos de la factura seleccionada.
-                                      </DialogDescription>
-                                    </DialogHeader>
-                                    {facturaDetalle && (
-                                      <DetalleFactura 
-                                        factura={facturaDetalle} 
-                                        onDescargarPDF={handleDescargarPDF}
-                                      />
-                                    )}
-                                  </DialogContent>
-                                </Dialog>
-                                <Button 
-                                  variant="outline" 
-                                  size="sm"
-                                  className="w-8 h-8 p-0"
-                                  onClick={() => handleDescargarPDF(factura)}
-                                >
-                                  📥
-                                </Button>
-                              </div>
-                            </TableCell>
+                    <div className="relative">
+                      {loadingTabla && (
+                        <div className="absolute inset-0 bg-white/75 backdrop-blur-[1px] z-10 flex flex-col items-center justify-center">
+                          <RefreshCw className="w-6 h-6 text-blue-500 animate-spin mb-2" />
+                          <span className="text-sm text-blue-600">Actualizando página...</span>
+                        </div>
+                      )}
+                      <Table className={loadingTabla ? 'opacity-50 pointer-events-none' : ''}>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="px-2 py-2 text-sm">Número</TableHead>
+                            <TableHead className="px-2 py-2 text-sm">Fecha</TableHead>
+                            <TableHead className="px-2 py-2 text-sm">Cliente</TableHead>
+                            <TableHead className="px-2 py-2 text-sm text-right">Subtotal</TableHead>
+                            <TableHead className="px-2 py-2 text-sm text-right">Impuesto</TableHead>
+                            <TableHead className="px-2 py-2 text-sm text-right">Total</TableHead>
+                            <TableHead className="px-2 py-2 text-sm text-center">Acciones</TableHead>
                           </TableRow>
-                        ))}
-                      </TableBody>
-                    </Table>
+                        </TableHeader>
+                        <TableBody>
+                          {facturasPaginadas.map(factura => (
+                            <TableRow key={factura.id} className="align-top">
+                              <TableCell className="px-2 py-2 whitespace-nowrap">
+                                <p className="font-semibold text-sm">{factura.numero}</p>
+                              </TableCell>
+                              <TableCell className="px-2 py-2 whitespace-nowrap">
+                                <p className="text-sm">{new Date(factura.fecha).toLocaleDateString()}</p>
+                              </TableCell>
+                              <TableCell className="px-2 py-2 break-words">
+                                <div className="font-medium leading-tight text-sm">
+                                  {factura.cliente}
+                                </div>
+                                <div className="text-muted-foreground text-xs leading-tight">
+                                  {factura.empresa}
+                                </div>
+                              </TableCell>
+                              <TableCell className="px-2 py-2 text-right whitespace-nowrap">
+                                <p className="text-sm">€{(factura.subtotal || 0).toLocaleString()}</p>
+                              </TableCell>
+                              <TableCell className="px-2 py-2 text-right whitespace-nowrap">
+                                <p className="text-sm">€{(factura.impuesto || 0).toLocaleString()}</p>
+                              </TableCell>
+                              <TableCell className="px-2 py-2 text-right font-semibold text-blue-600 whitespace-nowrap">
+                                <p className="text-sm">€{(factura.total || 0).toLocaleString()}</p>
+                              </TableCell>
+                              <TableCell className="px-2 py-2 text-center">
+                                <div className="inline-flex gap-1">
+                                  <Dialog>
+                                    <DialogTrigger asChild>
+                                      <Button 
+                                        variant="outline" 
+                                        size="sm"
+                                        className="w-8 h-8 p-0"
+                                        onClick={() => setFacturaDetalle(factura)}
+                                      >
+                                        <Eye className="size-4" />
+                                      </Button>
+                                    </DialogTrigger>
+                                    <DialogContent className="max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+                                      <DialogHeader>
+                                        <DialogTitle>Detalle de Factura {factura.numero}</DialogTitle>
+                                        <DialogDescription>
+                                          Ver la información completa y detalle de productos de la factura seleccionada.
+                                        </DialogDescription>
+                                      </DialogHeader>
+                                      {facturaDetalle && (
+                                        <DetalleFactura 
+                                          factura={facturaDetalle} 
+                                          onDescargarPDF={handleDescargarPDF}
+                                        />
+                                      )}
+                                    </DialogContent>
+                                  </Dialog>
+                                  <Button 
+                                    variant="outline" 
+                                    size="sm"
+                                    className="w-8 h-8 p-0"
+                                    onClick={() => handleDescargarPDF(factura)}
+                                  >
+                                    <Download className="w-4 h-4" />
+                                  </Button>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                          ))}
+                        </TableBody>
+                      </Table>
+                    </div>
 
                     {/* Paginación */}
-                    <div className="flex justify-center mt-6">
-                      <Pagination>
-                        <PaginationContent>
+                    {totalPaginas > 1 && (
+                      <div className="flex justify-center mt-6">
+                        <Pagination>
+                          <PaginationContent>
                           <PaginationItem>
                             <PaginationPrevious 
-                              onClick={() => setPaginaActual(Math.max(1, paginaActual - 1))}
-                              className={paginaActual === 1 ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                              onClick={() => !loadingTabla && setPaginaActual(Math.max(1, paginaActual - 1))}
+                              className={paginaActual === 1 || loadingTabla ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
                             />
                           </PaginationItem>
                           
                           {[...Array(totalPaginas)].map((_, i) => (
                             <PaginationItem key={i + 1}>
                               <PaginationLink
-                                onClick={() => setPaginaActual(i + 1)}
+                                onClick={() => !loadingTabla && setPaginaActual(i + 1)}
                                 isActive={paginaActual === i + 1}
-                                className="cursor-pointer"
+                                className={loadingTabla ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
                               >
                                 {i + 1}
                               </PaginationLink>
@@ -389,17 +548,29 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
                           
                           <PaginationItem>
                             <PaginationNext 
-                              onClick={() => setPaginaActual(Math.min(totalPaginas, paginaActual + 1))}
-                              className={paginaActual === totalPaginas ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                              onClick={() => {
+                                if (!loadingTabla && paginaActual < totalPaginas) {
+                                  setPaginaActual(paginaActual + 1);
+                                }
+                              }}
+                              className={paginaActual >= totalPaginas || loadingTabla ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
                             />
                           </PaginationItem>
-                        </PaginationContent>
-                      </Pagination>
-                    </div>
+                          </PaginationContent>
+                        </Pagination>
+                      </div>
+                    )}
                   </TabsContent>
                   
                   <TabsContent value="tarjetas" className="space-y-4">
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <div className="relative">
+                      {loadingTabla && (
+                        <div className="absolute inset-0 bg-white/75 backdrop-blur-[1px] z-10 flex flex-col items-center justify-center rounded-lg">
+                          <RefreshCw className="w-6 h-6 text-blue-500 animate-spin mb-2" />
+                          <span className="text-sm text-blue-600">Actualizando página...</span>
+                        </div>
+                      )}
+                    <div className={`grid grid-cols-1 md:grid-cols-2 gap-4 ${loadingTabla ? 'opacity-50 pointer-events-none' : ''}`}>
                       {facturasPaginadas.map(factura => (
                         <Card key={factura.id} className="hover:shadow-md transition-shadow">
                           <CardHeader className="pb-3">
@@ -427,28 +598,30 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
                               </div>
                               <div>
                                 <p className="text-gray-500">Total</p>
-                                <p className="font-semibold text-green-600">€{(factura.total || 0).toLocaleString()}</p>
+                                <p className="font-semibold text-blue-600">€{(factura.total || 0).toLocaleString()}</p>
                               </div>
                             </div>
                             
                             <div className="flex space-x-2 pt-2">
                               <Button variant="outline" size="sm" className="flex-1">
-                                👁️ Ver
+                                <Eye className="w-4 h-4 mr-2" />
+                                Ver
                               </Button>
                               <Button 
                                 variant="outline" 
                                 size="sm"
                                 onClick={() => handleDescargarPDF(factura)}
                               >
-                                📥
+                                <Download className="w-4 h-4" />
                               </Button>
                               <Button variant="outline" size="sm">
-                                📧
+                                <Mail className="w-4 h-4" />
                               </Button>
                             </div>
                           </CardContent>
                         </Card>
                       ))}
+                    </div>
                     </div>
                   </TabsContent>
                 </Tabs>
@@ -458,26 +631,31 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
 
           {/* Sidebar */}
           <div className="space-y-6">
-            {/* Resumen del Mes */}
+            {/* Resumen del periodo */}
             <Card className="bg-blue-50 border-blue-200">
               <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
-                  <span className="text-lg">📅</span>
-                  <span>Resumen del Mes</span>
+                <CardTitle className="flex items-center justify-between">
+                  <span className="flex items-center space-x-2">
+                    <CalendarDays className="w-5 h-5" />
+                    <span>Resumen seleccionado</span>
+                  </span>
+                  <span className="text-sm text-blue-700 font-semibold">
+                    {mesSeleccionadoLabel} · {selectedYear}
+                  </span>
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
                 <div className="flex justify-between">
                   <span className="text-gray-600">Facturas:</span>
-                  <span className="font-semibold">8</span>
+                  <span className="font-semibold">{resumenSeleccionado.facturas || 0}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Ingresos:</span>
-                  <span className="font-semibold text-green-600">€{(stats.ingresosMes || 0).toLocaleString()}</span>
+                  <span className="font-semibold text-blue-600">€{(resumenSeleccionado.ingresos || 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
                 <div className="flex justify-between">
                   <span className="text-gray-600">Promedio:</span>
-                  <span className="font-semibold">€{Math.round((stats.ingresosMes || 0) / 8).toLocaleString()}</span>
+                  <span className="font-semibold">€{(resumenSeleccionado.promedio || 0).toLocaleString('es-ES', { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</span>
                 </div>
               </CardContent>
             </Card>
@@ -486,7 +664,7 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center space-x-2">
-                  <span className="text-lg">⚡</span>
+                  <Zap className="w-5 h-5" />
                   <span>Acciones Rápidas</span>
                 </CardTitle>
               </CardHeader>
@@ -496,7 +674,7 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
                   className="w-full justify-start"
                   onClick={() => onNavigate('facturas')}
                 >
-                  <span className="mr-2">➕</span>
+                  <Plus className="w-4 h-4 mr-2" />
                   Nueva Factura
                 </Button>
                 <Button 
@@ -504,7 +682,7 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
                   className="w-full justify-start"
                   onClick={handleReporteMensual}
                 >
-                  <span className="mr-2">📊</span>
+                  <BarChart3 className="w-4 h-4 mr-2" />
                   Reporte Mensual
                 </Button>
                 <Button 
@@ -512,7 +690,7 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
                   className="w-full justify-start"
                   onClick={handleExportarExcel}
                 >
-                  <span className="mr-2">📥</span>
+                  <Download className="w-4 h-4 mr-2" />
                   Exportar Excel
                 </Button>
               </CardContent>
@@ -613,7 +791,7 @@ function DetalleFactura({ factura, onDescargarPDF }: DetalleFacturaProps) {
           </div>
           <div className="flex justify-between font-bold text-lg border-t pt-2">
             <span>Total:</span>
-            <span className="text-green-600">€{(factura.total || 0).toLocaleString()}</span>
+            <span className="text-blue-600">€{(factura.total || 0).toLocaleString()}</span>
           </div>
         </div>
       </div>
@@ -623,7 +801,8 @@ function DetalleFactura({ factura, onDescargarPDF }: DetalleFacturaProps) {
            className="w-full max-w-xs"
            onClick={() => onDescargarPDF(factura)}
          >
-           📥 Descargar PDF
+           <Download className="w-4 h-4 mr-2" />
+           Descargar PDF
          </Button>
        </div>
     </div>

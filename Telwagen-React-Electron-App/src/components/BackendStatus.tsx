@@ -60,7 +60,7 @@ export function BackendStatus({ className }: BackendStatusProps) {
 
     if (isConnected === true) {
       return (
-        <Badge variant="default" className="flex items-center space-x-1 bg-green-600">
+        <Badge variant="default" className="flex items-center space-x-1 bg-blue-600">
           <Wifi className="h-3 w-3" />
           <span>Conectado</span>
         </Badge>

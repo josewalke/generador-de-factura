@@ -16,6 +16,7 @@ import { Empresa } from '../../services/empresaService';
 import { facturaService, SiguienteNumeroResponse } from '../../services/facturaService';
 import { facturaPDFService, FacturaPDFData } from '../../services/facturaPDFService';
 import { toast } from 'sonner';
+import { Building2, RefreshCw, Plus, Car, DollarSign, Eye, FileText, Download, Zap, Info, Trash2, Home } from 'lucide-react';
 
 interface FacturasScreenProps {
   onNavigate: (screen: Screen) => void;
@@ -51,7 +52,7 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
   
   // Hooks para obtener datos reales
   const { clientes } = useClientes();
-  const { coches, loading } = useCoches();
+  const { coches, cochesDisponibles: cochesDisponiblesHook, loading, refreshCoches } = useCoches();
   const { empresas } = useEmpresas();
 
   // Configuración de impuestos
@@ -78,6 +79,7 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
   );
 
   // Filtrar coches disponibles (excluir los ya agregados a la factura)
+  // Usamos cochesDisponiblesHook que ya filtra los vendidos, y luego excluimos los ya en la factura
   const cochesDisponibles = useMemo(() => {
     // Obtener las matrículas de los coches ya agregados a la factura
     const matriculasAgregadas = productos.map(producto => {
@@ -87,10 +89,11 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
     }).filter(Boolean);
 
     // Filtrar coches que no estén ya en la factura
-    return coches.filter(coche => 
-      !matriculasAgregadas.includes(coche.matricula) && !coche.vendido
+    // cochesDisponiblesHook ya excluye los vendidos (activo = false/0)
+    return cochesDisponiblesHook.filter(coche => 
+      !matriculasAgregadas.includes(coche.matricula)
     );
-  }, [coches, productos]);
+  }, [cochesDisponiblesHook, productos]);
 
   const seleccionarCliente = useCallback((cliente: Cliente) => {
     setClienteSeleccionado(cliente);
@@ -141,7 +144,8 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
       cantidad: 1,
       precio: precio,
       impuesto: impuesto,
-      total: total
+      total: total,
+      cocheId: coche.id?.toString()
     };
     
     setProductos(prev => [...prev, nuevoProducto]);
@@ -231,7 +235,8 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
           precio_unitario: producto.precio,
           subtotal: producto.precio,
           igic: producto.impuesto,
-          total: producto.total
+          total: producto.total,
+          coche_id: producto.cocheId || producto.coche_id || null
         }))
       };
 
@@ -248,6 +253,9 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
       });
 
       toast.success(`Factura ${numeroFactura} generada exitosamente`);
+      
+      // Recargar coches para que los vendidos no aparezcan en la lista
+      await refreshCoches();
       
       // Limpiar el formulario
       setProductos([]);
@@ -268,7 +276,7 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
     } finally {
       setGenerandoFactura(false);
     }
-  }, [clienteSeleccionado, empresaSeleccionada, productos, subtotal, totalImpuestos, total]);
+  }, [clienteSeleccionado, empresaSeleccionada, productos, subtotal, totalImpuestos, total, refreshCoches]);
 
   // Función para descargar PDF
   const descargarPDF = useCallback(async () => {
@@ -326,7 +334,7 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
                 onClick={() => onNavigate('dashboard')}
                 className="flex items-center space-x-2"
               >
-                <span>🏠</span>
+                <Home className="w-4 h-4" />
                 <span>Home</span>
               </Button>
               <div>
@@ -347,7 +355,7 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <CardTitle className="flex items-center space-x-2">
-                    <span className="text-lg">🏢</span>
+                    <Building2 className="w-5 h-5" />
                     <span>Datos de la Empresa</span>
                   </CardTitle>
                   <Dialog open={mostrarModalEmpresa} onOpenChange={setMostrarModalEmpresa}>
@@ -358,7 +366,7 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
                         className="flex items-center space-x-2"
                         onClick={() => setMostrarModalEmpresa(true)}
                       >
-                        <span>🔄</span>
+                        <RefreshCw className="w-4 h-4" />
                         <span>Cambiar</span>
                       </Button>
                     </DialogTrigger>
@@ -496,7 +504,7 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
                 )}
 
                 <Button variant="outline" className="w-full">
-                  <span className="mr-2">➕</span>
+                  <Plus className="w-4 h-4 mr-2" />
                   Nuevo Cliente
                 </Button>
               </CardContent>
@@ -506,7 +514,7 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center space-x-2">
-                  <span className="text-lg">🚗</span>
+                  <Car className="w-5 h-5" />
                   <span>Seleccionar Vehículo</span>
                 </CardTitle>
               </CardHeader>
@@ -547,15 +555,16 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
                               </div>
                             </div>
                             
-                            <div className="text-blue-600">
-                              <span className="text-sm">➕ Click para agregar</span>
+                            <div className="text-blue-600 flex items-center space-x-1">
+                              <Plus className="w-4 h-4" />
+                              <span className="text-sm">Click para agregar</span>
                             </div>
                           </div>
                         </div>
                       ))
                     ) : (
                       <div className="text-center py-8 text-gray-500">
-                        <span className="text-4xl mb-2 block">🚗</span>
+                        <Car className="w-12 h-12 mx-auto mb-2 text-gray-400" />
                         <p>
                           {productos.length > 0 
                             ? 'Todos los vehículos han sido agregados a la factura' 
@@ -663,7 +672,7 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
                                 size="sm"
                                 onClick={() => eliminarProducto(producto.id)}
                               >
-                                🗑️
+                                <Trash2 className="w-4 h-4" />
                               </Button>
                             </TableCell>
                           </TableRow>
@@ -682,7 +691,7 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center space-x-2">
-                  <span className="text-lg">💰</span>
+                  <DollarSign className="w-5 h-5" />
                   <span>Totales</span>
                 </CardTitle>
               </CardHeader>
@@ -708,7 +717,7 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center space-x-2">
-                  <span className="text-lg">⚡</span>
+                  <Zap className="w-5 h-5" />
                   <span>Acciones</span>
                 </CardTitle>
               </CardHeader>
@@ -719,7 +728,7 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
                       className="w-full" 
                       disabled={!clienteSeleccionado || productos.length === 0}
                     >
-                      <span className="mr-2">👁️</span>
+                      <Eye className="w-4 h-4 mr-2" />
                       Vista Previa
                     </Button>
                   </DialogTrigger>
@@ -809,11 +818,11 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
                 </Dialog>
 
                 <Button 
-                  className="w-full bg-green-600 hover:bg-green-700" 
+                  className="w-full bg-blue-600 hover:bg-blue-700" 
                   disabled={!clienteSeleccionado || productos.length === 0 || generandoFactura}
                   onClick={generarFactura}
                 >
-                  <span className="mr-2">📄</span>
+                  <FileText className="w-4 h-4 mr-2" />
                   {generandoFactura ? 'Generando...' : 'Generar Factura'}
                 </Button>
 
@@ -823,7 +832,7 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
                   disabled={!facturaGenerada}
                   onClick={descargarPDF}
                 >
-                  <span className="mr-2">📥</span>
+                  <Download className="w-4 h-4 mr-2" />
                   Descargar PDF
                 </Button>
               </CardContent>
@@ -833,7 +842,7 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
             <Card className="bg-blue-50">
               <CardHeader>
                 <CardTitle className="flex items-center space-x-2">
-                  <span className="text-lg">ℹ️</span>
+                  <Info className="w-5 h-5" />
                   <span>Información</span>
                 </CardTitle>
               </CardHeader>

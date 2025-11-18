@@ -156,6 +156,166 @@ const httpsManager = new HTTPSManager();
 const roleManager = new RoleManager();
 const securityMonitor = new SecurityMonitor();
 
+function buildFacturaFilters(queryParams = {}) {
+    const dbType = config.get('database.type') || 'postgresql';
+    const activoValue = dbType === 'postgresql' ? 'true' : '1';
+    const likeOperator = dbType === 'postgresql' ? 'ILIKE' : 'LIKE';
+    
+    const search = queryParams.search || '';
+    const empresaId = queryParams.empresa_id || '';
+    const clienteId = queryParams.cliente_id || '';
+    const fechaDesde = queryParams.fecha_desde || '';
+    const fechaHasta = queryParams.fecha_hasta || '';
+    
+    const conditions = [`(f.activo = ${activoValue} OR f.activo IS NULL)`];
+    const params = [];
+    
+    if (search) {
+        const likeValue = `%${search}%`;
+        conditions.push(`(f.numero_factura ${likeOperator} ? OR c.nombre ${likeOperator} ? OR e.nombre ${likeOperator} ?)`);
+        params.push(likeValue, likeValue, likeValue);
+    }
+    
+    if (empresaId) {
+        conditions.push('f.empresa_id = ?');
+        params.push(empresaId);
+    }
+    
+    if (clienteId) {
+        conditions.push('f.cliente_id = ?');
+        params.push(clienteId);
+    }
+    
+    if (fechaDesde) {
+        conditions.push('f.fecha_emision >= ?');
+        params.push(fechaDesde);
+    }
+    
+    if (fechaHasta) {
+        conditions.push('f.fecha_emision <= ?');
+        params.push(fechaHasta);
+    }
+    
+    return {
+        whereClause: conditions.join(' AND '),
+        params
+    };
+}
+
+function fetchFacturaResumen(queryParams = {}) {
+    return new Promise((resolve, reject) => {
+        if (!db) {
+            reject(new Error('Base de datos no inicializada'));
+            return;
+        }
+        
+        const { whereClause, params } = buildFacturaFilters(queryParams);
+        const query = `
+            SELECT 
+                COUNT(DISTINCT f.id) as total_facturas,
+                COALESCE(SUM(f.total), 0) as ingresos_totales,
+                COALESCE(SUM(CASE WHEN f.estado = 'pagada' THEN f.total ELSE 0 END), 0) as ingresos_pagados
+            FROM facturas f
+            LEFT JOIN clientes c ON f.cliente_id = c.id
+            LEFT JOIN empresas e ON f.empresa_id = e.id
+            ${whereClause ? 'WHERE ' + whereClause : ''}
+        `;
+        
+        db.get(query, params, (err, row) => {
+            if (err) {
+                reject(err);
+                return;
+            }
+            
+            const total = Number(row?.total_facturas || 0);
+            const ingresos = Number(row?.ingresos_pagados || 0);
+            const ingresosTotales = Number(row?.ingresos_totales || 0);
+            
+            resolve({
+                totalFacturas: total,
+                ingresos,
+                ingresosTotales,
+                promedio: total > 0 ? ingresos / total : 0
+            });
+        });
+    });
+}
+
+function runGet(query, params = []) {
+    return new Promise((resolve, reject) => {
+        if (!db) {
+            reject(new Error('Base de datos no inicializada'));
+            return;
+        }
+        db.get(query, params, (err, row) => {
+            if (err) reject(err);
+            else resolve(row || {});
+        });
+    });
+}
+
+async function ensureDetalleFacturaCocheColumn(isPostgreSQL) {
+    try {
+        if (isPostgreSQL) {
+            await db.query('ALTER TABLE detalles_factura ADD COLUMN IF NOT EXISTS coche_id INTEGER');
+        } else {
+            await new Promise((resolve, reject) => {
+                db.run(`ALTER TABLE detalles_factura ADD COLUMN coche_id INTEGER`, (err) => {
+                    if (err && !err.message.toLowerCase().includes('duplicate column name')) {
+                        reject(err);
+                    } else {
+                        resolve();
+                    }
+                });
+            });
+        }
+        logger.systemEvent('Columna coche_id verificada en detalles_factura');
+    } catch (error) {
+        logger.error('Error asegurando columna coche_id en detalles_factura', { error: error.message });
+    }
+}
+
+async function migrateDetalleFacturaCocheId() {
+    if (!db) return;
+    const dbType = config.get('database.type') || 'postgresql';
+    try {
+        if (dbType === 'postgresql') {
+            await db.query(`
+                WITH matches AS (
+                    SELECT df.id, c.id as coche_id
+                    FROM detalles_factura df
+                    JOIN coches c ON LOWER(COALESCE(df.descripcion, '')) LIKE '%' || LOWER(c.matricula) || '%'
+                    WHERE df.coche_id IS NULL AND c.matricula IS NOT NULL
+                )
+                UPDATE detalles_factura df
+                SET coche_id = matches.coche_id
+                FROM matches
+                WHERE df.id = matches.id
+            `);
+        } else {
+            await new Promise((resolve, reject) => {
+                db.run(`
+                    UPDATE detalles_factura
+                    SET coche_id = (
+                        SELECT c.id
+                        FROM coches c
+                        WHERE LOWER(COALESCE(detalles_factura.descripcion, '')) LIKE '%' || LOWER(c.matricula) || '%'
+                        ORDER BY c.id
+                        LIMIT 1
+                    )
+                    WHERE coche_id IS NULL
+                `, (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                });
+            });
+        }
+        logger.systemEvent('Migración coche_id en detalles_factura completada');
+    } catch (error) {
+        logger.warn('No se pudo migrar coche_id en detalles_factura', { error: error.message });
+    }
+}
+
 // Middleware de autenticación para endpoints protegidos
 const requireAuth = (req, res, next) => {
     authService.authMiddleware(req, res, next);
@@ -383,7 +543,23 @@ async function initDatabaseConnection() {
                         callback = params;
                         params = [];
                     }
-                    database.runWithCallback(query, params, callback);
+                    // Wrapper para simular comportamiento de SQLite (this.lastID)
+                    database.runWithCallback(query, params, (err, result) => {
+                        if (!callback) {
+                            return; // No hay callback, no hacer nada
+                        }
+                        if (err) {
+                            callback(err);
+                            return;
+                        }
+                        // Crear un objeto que simule 'this' de SQLite
+                        const sqliteContext = {
+                            lastID: result?.lastID || null,
+                            changes: result?.changes || 0
+                        };
+                        // Llamar al callback con el contexto simulado
+                        callback.call(sqliteContext, err);
+                    });
                 },
                 
                 // Métodos async (para nuevo código)
@@ -720,11 +896,45 @@ async function initDatabase() {
                 estado TEXT DEFAULT 'pendiente',
                 notas TEXT,
                 fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP,
+                activo ${isPostgreSQL ? 'BOOLEAN DEFAULT true' : 'INTEGER DEFAULT 1'},
                 FOREIGN KEY (empresa_id) REFERENCES empresas (id),
                 FOREIGN KEY (cliente_id) REFERENCES clientes (id),
                 UNIQUE(numero_factura, empresa_id)
             )
         `, 'facturas');
+        
+        // Agregar columna activo si no existe (para tablas existentes)
+        try {
+            if (isPostgreSQL) {
+                // Intentar agregar la columna directamente, ignorar si ya existe
+                try {
+                    await db.query('ALTER TABLE facturas ADD COLUMN activo BOOLEAN DEFAULT true');
+                    logger.debug('Columna activo agregada a facturas');
+                } catch (alterErr) {
+                    // Ignorar si la columna ya existe
+                    if (!alterErr.message.includes('duplicate column') && 
+                        !alterErr.message.includes('ya existe') &&
+                        !alterErr.message.includes('already exists')) {
+                        // Si es otro error, lo relanzamos
+                        throw alterErr;
+                    }
+                    logger.debug('Columna activo ya existe en facturas');
+                }
+            } else {
+                await new Promise((resolve, reject) => {
+                    db.run('ALTER TABLE facturas ADD COLUMN activo INTEGER DEFAULT 1', (err) => {
+                        if (err && !err.message.includes('duplicate column name')) {
+                            reject(err);
+                        } else {
+                            resolve();
+                        }
+                    });
+                });
+            }
+        } catch (err) {
+            // Ignorar si la columna ya existe
+            logger.debug('Columna activo ya existe en facturas o error al agregarla', { error: err.message });
+        }
 
         // Tabla de detalles de factura
         await createTable(`
@@ -744,7 +954,9 @@ async function initDatabase() {
             )
         `, 'detalles_factura');
         
-        // Agregar columnas si no existen (solo para SQLite, PostgreSQL ya las tiene)
+        await ensureDetalleFacturaCocheColumn(isPostgreSQL);
+        
+        // Agregar columnas adicionales si no existen (solo para SQLite, PostgreSQL ya las tiene)
         if (!isPostgreSQL) {
             // Agregar columna descripcion si no existe
             try {
@@ -776,6 +988,8 @@ async function initDatabase() {
                 // Ignorar si la columna ya existe
             }
         }
+        
+        await migrateDetalleFacturaCocheId();
 
         // Tabla de auditoría (para cumplir con Ley Antifraude)
         await createTable(`
@@ -915,25 +1129,112 @@ app.get('/api/configuracion/empresa', (req, res) => {
 
 // POST - Importar coches desde Excel
 app.post('/api/importar/coches', upload.single('archivo'), async (req, res) => {
+    const startTime = Date.now();
+    
     try {
+        console.log('\n📥 ========== INICIO IMPORTACIÓN DE COCHES ==========');
+        console.log('📁 Archivo recibido:', {
+            originalname: req.file?.originalname,
+            filename: req.file?.filename,
+            path: req.file?.path,
+            size: req.file?.size,
+            mimetype: req.file?.mimetype
+        });
+        
         if (!req.file) {
+            console.log('❌ No se proporcionó ningún archivo');
             return res.status(400).json({
                 success: false,
                 error: 'No se ha proporcionado ningún archivo'
             });
         }
 
+        // Mostrar coches actuales en la BD antes de importar
+        try {
+            const dbType = config.get('database.type') || 'postgresql';
+            const activoValue = dbType === 'postgresql' ? 'true' : '1';
+            const cochesActuales = await new Promise((resolve, reject) => {
+                db.all(`SELECT COUNT(*) as total FROM coches WHERE activo = ${activoValue}`, (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows[0]?.total || 0);
+                });
+            });
+            console.log(`📊 Coches actuales en la base de datos: ${cochesActuales}`);
+            
+            // Mostrar algunos coches de ejemplo
+            const cochesEjemplo = await new Promise((resolve, reject) => {
+                db.all(`SELECT id, matricula, modelo, color, kms FROM coches WHERE activo = ${activoValue} ORDER BY id LIMIT 5`, (err, rows) => {
+                    if (err) reject(err);
+                    else resolve(rows || []);
+                });
+            });
+            if (cochesEjemplo.length > 0) {
+                console.log('📋 Ejemplos de coches en BD:');
+                cochesEjemplo.forEach(c => {
+                    console.log(`   - ID: ${c.id}, Matrícula: ${c.matricula}, Modelo: ${c.modelo}, Color: ${c.color}, Kms: ${c.kms}`);
+                });
+            }
+        } catch (dbError) {
+            console.log('⚠️ Error al consultar coches actuales:', dbError.message);
+        }
+
+        console.log('🔄 Iniciando importación desde:', req.file.path);
         const resultado = await importadorExcel.importarCoches(req.file.path);
+        const duration = Date.now() - startTime;
+        
+        console.log('✅ Importación completada:', {
+            success: resultado.success,
+            total: resultado.total,
+            importados: resultado.importados,
+            errores: resultado.errores,
+            duracion: `${duration}ms`
+        });
+        
+        if (resultado.erroresDetalle && resultado.erroresDetalle.length > 0) {
+            console.log('⚠️ Errores detallados:');
+            resultado.erroresDetalle.slice(0, 5).forEach((err, idx) => {
+                console.log(`   ${idx + 1}. Fila ${err.fila}: ${err.mensaje || err.error}`);
+            });
+        }
         
         // Limpiar archivo temporal
-        fs.unlinkSync(req.file.path);
+        try {
+            fs.unlinkSync(req.file.path);
+            console.log('🗑️ Archivo temporal eliminado');
+        } catch (unlinkError) {
+            console.log('⚠️ Error al eliminar archivo temporal:', unlinkError.message);
+        }
+        
+        console.log('📥 ========== FIN IMPORTACIÓN DE COCHES ==========\n');
         
         res.json(resultado);
     } catch (error) {
-        logger.error('Error importando coches desde Excel', { error: error.message });
+        const duration = Date.now() - startTime;
+        console.error('❌ Error importando coches desde Excel:', {
+            error: error.message,
+            stack: error.stack,
+            duration: `${duration}ms`,
+            filename: req.file?.originalname
+        });
+        logger.error('Error importando coches desde Excel', { 
+            error: error.message,
+            stack: error.stack,
+            duration: `${duration}ms`,
+            filename: req.file?.originalname
+        });
+        
+        // Limpiar archivo temporal en caso de error
+        if (req.file?.path) {
+            try {
+                fs.unlinkSync(req.file.path);
+            } catch (unlinkError) {
+                console.log('⚠️ Error al eliminar archivo temporal después de error:', unlinkError.message);
+            }
+        }
+        
         res.status(500).json({
             success: false,
-            error: 'Error interno del servidor'
+            error: error.message || 'Error interno del servidor'
         });
     }
 });
@@ -1572,6 +1873,15 @@ app.get('/api/clientes', (req, res) => {
     const startTime = Date.now();
     logger.operationRead('clientes', null, req.query);
     
+    // Verificar que la base de datos esté conectada
+    if (!db) {
+        logger.error('Base de datos no inicializada', { endpoint: '/api/clientes' });
+        return res.status(503).json({ 
+            error: 'Servicio no disponible', 
+            message: 'La base de datos no está conectada. Por favor, reinicia el servidor.' 
+        });
+    }
+    
     db.all('SELECT * FROM clientes ORDER BY fecha_creacion DESC', (err, rows) => {
         const duration = Date.now() - startTime;
         
@@ -1653,9 +1963,33 @@ app.post('/api/clientes', (req, res) => {
                         reject(err);
                         return;
                     }
+                    // this.lastID ahora funciona tanto para SQLite como PostgreSQL gracias al wrapper
                     resolve({ id: this.lastID });
                 });
             });
+            
+            // Si el ID no se obtuvo (fallback para PostgreSQL si el wrapper falla)
+            if (!result.id) {
+                const dbType = config.get('database.type') || 'postgresql';
+                if (dbType === 'postgresql') {
+                    try {
+                        const lastCliente = await new Promise((resolve, reject) => {
+                            db.get('SELECT id FROM clientes WHERE identificacion = ? ORDER BY id DESC LIMIT 1', [identificacion], (err, row) => {
+                                if (err) {
+                                    reject(err);
+                                    return;
+                                }
+                                resolve(row);
+                            });
+                        });
+                        if (lastCliente && lastCliente.id) {
+                            result.id = lastCliente.id;
+                        }
+                    } catch (err) {
+                        console.error('Error obteniendo ID del cliente insertado:', err);
+                    }
+                }
+            }
             
             const duration = Date.now() - startTime;
             logger.databaseQuery('INSERT INTO clientes', duration, 1, [nombre, direccion, identificacion]);
@@ -1746,17 +2080,58 @@ app.put('/api/clientes/:id', (req, res) => {
                 }
             }
             
+            // Construir UPDATE dinámicamente solo con los campos que se están enviando
+            const updates = [];
+            const values = [];
+            
+            if (nombre !== undefined) {
+                updates.push('nombre = ?');
+                values.push(nombre);
+            }
+            if (direccion !== undefined) {
+                updates.push('direccion = ?');
+                values.push(direccion);
+            }
+            if (codigo_postal !== undefined) {
+                updates.push('codigo_postal = ?');
+                values.push(codigo_postal);
+            }
+            if (identificacion !== undefined) {
+                updates.push('identificacion = ?');
+                values.push(identificacion);
+            }
+            if (email !== undefined) {
+                updates.push('email = ?');
+                values.push(email);
+            }
+            if (telefono !== undefined) {
+                updates.push('telefono = ?');
+                values.push(telefono);
+            }
+            
+            // Si no hay campos para actualizar, retornar error
+            if (updates.length === 0) {
+                return res.status(400).json({ 
+                    error: 'No se proporcionaron campos para actualizar' 
+                });
+            }
+            
+            // Agregar el ID al final para el WHERE
+            values.push(clienteId);
+            
             // Ejecutar UPDATE
             const changes = await new Promise((resolve, reject) => {
-                db.run(`
-                    UPDATE clientes 
-                    SET nombre = ?, direccion = ?, codigo_postal = ?, identificacion = ?, email = ?, telefono = ?
-                    WHERE id = ?
-                `, [nombre, direccion, codigo_postal, identificacion, email, telefono, clienteId], function(err) {
+                const query = `UPDATE clientes SET ${updates.join(', ')} WHERE id = ?`;
+                console.log('🔍 [PUT /api/clientes/:id] Query:', query);
+                console.log('🔍 [PUT /api/clientes/:id] Values:', values);
+                
+                db.run(query, values, function(err) {
                     if (err) {
+                        console.error('❌ [PUT /api/clientes/:id] Error en UPDATE:', err.message);
                         reject(err);
                         return;
                     }
+                    console.log('🔍 [PUT /api/clientes/:id] Changes:', this.changes);
                     if (this.changes === 0) {
                         resolve(null);
                         return;
@@ -1822,25 +2197,26 @@ app.get('/api/coches', async (req, res) => {
     try {
         const dbType = config.get('database.type') || 'postgresql';
         const activoValue = dbType === 'postgresql' ? 'true' : '1';
+        const vendidoValue = dbType === 'postgresql' ? 'false' : '0';
         
         // Verificar consistencia del caché antes de devolver datos
         if (global.cacheManager) {
             const cachedData = await global.cacheManager.verifyAndCorrect('coches:all', async () => {
                 return new Promise((resolve, reject) => {
-                    db.all(`
-                        SELECT c.*,
-                               CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END as vendido,
-                               f.numero_factura,
-                               f.fecha_emision as fecha_venta,
-                               f.total as precio_venta,
-                               cl.nombre as cliente_nombre
-                        FROM coches c
-                        LEFT JOIN detalles_factura df ON (df.descripcion LIKE '%' || c.matricula || '%')
-                        LEFT JOIN facturas f ON df.factura_id = f.id AND f.estado IN ('pagada', 'pendiente')
-                        LEFT JOIN clientes cl ON f.cliente_id = cl.id
-                        WHERE c.activo = ${activoValue} 
-                        ORDER BY c.fecha_creacion DESC
-                    `, (err, rows) => {
+        db.all(`
+            SELECT c.*,
+                   CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END as vendido,
+                   f.numero_factura,
+                   f.fecha_emision as fecha_venta,
+                   f.total as precio_venta,
+                   cl.nombre as cliente_nombre
+            FROM coches c
+            LEFT JOIN detalles_factura df ON df.coche_id = c.id
+            LEFT JOIN facturas f ON df.factura_id = f.id AND f.estado IN ('pagada', 'pendiente')
+            LEFT JOIN clientes cl ON f.cliente_id = cl.id
+            WHERE (c.activo = ${activoValue} OR c.activo = ${vendidoValue} OR c.activo IS NULL)
+            ORDER BY c.fecha_creacion DESC
+        `, (err, rows) => {
                         if (err) reject(err);
                         else resolve(rows);
                     });
@@ -1862,10 +2238,10 @@ app.get('/api/coches', async (req, res) => {
                    f.total as precio_venta,
                    cl.nombre as cliente_nombre
             FROM coches c
-            LEFT JOIN detalles_factura df ON (df.descripcion LIKE '%' || c.matricula || '%')
+            LEFT JOIN detalles_factura df ON df.coche_id = c.id
             LEFT JOIN facturas f ON df.factura_id = f.id AND f.estado IN ('pagada', 'pendiente')
             LEFT JOIN clientes cl ON f.cliente_id = cl.id
-            WHERE c.activo = ${activoValue} 
+            WHERE (c.activo = ${activoValue} OR c.activo = ${vendidoValue} OR c.activo IS NULL)
             ORDER BY c.fecha_creacion DESC
         `, (err, rows) => {
             if (err) {
@@ -1899,9 +2275,7 @@ app.get('/api/coches/disponibles', (req, res) => {
                NULL as precio_venta,
                NULL as cliente_nombre
         FROM coches c
-        LEFT JOIN detalles_factura df ON (df.descripcion LIKE '%' || c.matricula || '%')
-        LEFT JOIN facturas f ON df.factura_id = f.id AND f.estado IN ('pagada', 'pendiente')
-        WHERE c.activo = ${activoValue} AND f.id IS NULL
+        WHERE c.activo = ${activoValue}
         ORDER BY c.fecha_creacion DESC
     `, (err, rows) => {
         if (err) {
@@ -1915,7 +2289,7 @@ app.get('/api/coches/disponibles', (req, res) => {
 // GET - Obtener solo coches vendidos
 app.get('/api/coches/vendidos', (req, res) => {
     const dbType = config.get('database.type') || 'postgresql';
-    const activoValue = dbType === 'postgresql' ? 'true' : '1';
+    const vendidoValue = dbType === 'postgresql' ? 'false' : '0';
     
     db.all(`
         SELECT c.*,
@@ -1925,11 +2299,11 @@ app.get('/api/coches/vendidos', (req, res) => {
                f.total as precio_venta,
                cl.nombre as cliente_nombre
         FROM coches c
-        LEFT JOIN detalles_factura df ON (df.descripcion LIKE '%' || c.matricula || '%')
+        LEFT JOIN detalles_factura df ON df.coche_id = c.id
         LEFT JOIN facturas f ON df.factura_id = f.id AND f.estado IN ('pagada', 'pendiente')
         LEFT JOIN clientes cl ON f.cliente_id = cl.id
-        WHERE c.activo = ${activoValue} AND f.id IS NOT NULL
-        ORDER BY f.fecha_creacion DESC
+        WHERE c.activo = ${vendidoValue} OR c.activo IS NULL
+        ORDER BY c.fecha_creacion DESC
     `, (err, rows) => {
         if (err) {
             res.status(500).json({ error: err.message });
@@ -2000,8 +2374,10 @@ app.post('/api/coches', (req, res) => {
             }
             
             // Verificar que la matrícula no esté duplicada
+            const dbType = config.get('database.type') || 'postgresql';
+            const activoValue = dbType === 'postgresql' ? 'true' : '1';
             const matriculaDuplicada = await new Promise((resolve, reject) => {
-                db.get('SELECT id FROM coches WHERE matricula = ? AND activo = 1', [matricula], (err, row) => {
+                db.get(`SELECT id FROM coches WHERE matricula = ? AND activo = ${activoValue}`, [matricula], (err, row) => {
                     if (err) {
                         console.error('❌ [POST /api/coches] Error verificando matrícula:', err.message);
                         reject(err);
@@ -2097,10 +2473,50 @@ app.put('/api/coches/:id', (req, res) => {
                 });
             }
             
+            // Verificar si el coche está vendido (tiene facturas asociadas)
+            // Un coche vendido NO puede ser modificado según la Ley Antifraude
+            const cocheVendido = await new Promise((resolve, reject) => {
+                db.get(`
+                    SELECT c.id, c.matricula,
+                           CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END as vendido,
+                           f.numero_factura,
+                           f.id as factura_id
+                    FROM coches c
+                    LEFT JOIN detalles_factura df ON df.coche_id = c.id
+                    LEFT JOIN facturas f ON df.factura_id = f.id AND f.estado IN ('pagada', 'pendiente')
+                    WHERE c.id = ? AND f.id IS NOT NULL
+                    LIMIT 1
+                `, [cocheId], (err, row) => {
+                    if (err) {
+                        console.error('❌ [PUT /api/coches/:id] Error verificando si coche está vendido:', err.message);
+                        reject(err);
+                        return;
+                    }
+                    resolve(row);
+                });
+            });
+            
+            if (cocheVendido && cocheVendido.vendido === 1) {
+                console.log('❌ [PUT /api/coches/:id] Intento de modificar coche vendido:', {
+                    cocheId,
+                    matricula: cocheVendido.matricula,
+                    facturaId: cocheVendido.factura_id,
+                    numeroFactura: cocheVendido.numero_factura
+                });
+                return res.status(403).json({ 
+                    error: 'No se puede modificar un vehículo vendido',
+                    message: 'Los vehículos vendidos no pueden ser modificados para cumplir con la Ley Antifraude. Los datos deben mantenerse intactos para garantizar la integridad de los documentos fiscales.',
+                    code: 'COCHE_VENDIDO',
+                    factura: cocheVendido.numero_factura || null
+                });
+            }
+            
             // Si se está actualizando la matrícula, verificar que no esté duplicada
             if (matricula) {
+                const dbType = config.get('database.type') || 'postgresql';
+                const activoValue = dbType === 'postgresql' ? 'true' : '1';
                 const matriculaDuplicada = await new Promise((resolve, reject) => {
-                    db.get('SELECT id FROM coches WHERE matricula = ? AND id != ? AND activo = 1', [matricula, cocheId], (err, row) => {
+                    db.get(`SELECT id FROM coches WHERE matricula = ? AND id != ? AND activo = ${activoValue}`, [matricula, cocheId], (err, row) => {
                         if (err) {
                             console.error('❌ [PUT /api/coches/:id] Error verificando matrícula:', err.message);
                             reject(err);
@@ -2156,7 +2572,10 @@ app.put('/api/coches/:id', (req, res) => {
             
             values.push(cocheId); // ID al final para el WHERE
             
-            const query = `UPDATE coches SET ${updates.join(', ')} WHERE id = ? AND activo = 1`;
+            // Usar el valor correcto de activo según el tipo de BD
+            const dbType = config.get('database.type') || 'postgresql';
+            const activoValue = dbType === 'postgresql' ? 'true' : '1';
+            const query = `UPDATE coches SET ${updates.join(', ')} WHERE id = ? AND activo = ${activoValue}`;
             
             console.log('🔍 [PUT /api/coches/:id] Query:', query);
             console.log('🔍 [PUT /api/coches/:id] Values:', values);
@@ -2228,26 +2647,83 @@ app.put('/api/coches/:id', (req, res) => {
 
 // DELETE - Desactivar coche (soft delete)
 app.delete('/api/coches/:id', (req, res) => {
-    const { id } = req.params;
-    
-    db.run('UPDATE coches SET activo = 0 WHERE id = ?', [id], function(err) {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
+    (async () => {
+        const { id } = req.params;
+        const dbType = config.get('database.type') || 'postgresql';
+        const activoValue = dbType === 'postgresql' ? 'false' : '0';
+
+        try {
+            // Verificar si el coche existe y si está vendido
+            const cocheInfo = await new Promise((resolve, reject) => {
+                db.get(`
+                    SELECT c.id, c.matricula,
+                           CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END as vendido,
+                           f.numero_factura,
+                           f.id as factura_id
+                    FROM coches c
+                    LEFT JOIN detalles_factura df ON df.coche_id = c.id
+                    LEFT JOIN facturas f ON df.factura_id = f.id AND f.estado IN ('pagada', 'pendiente')
+                    WHERE c.id = ?
+                    LIMIT 1
+                `, [id], (err, row) => {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+                    resolve(row);
+                });
+            });
+
+            if (!cocheInfo) {
+                return res.status(404).json({ error: 'Coche no encontrado' });
+            }
+
+            if (cocheInfo.vendido === 1) {
+                console.log('❌ [DELETE /api/coches/:id] Intento de eliminar coche vendido:', {
+                    id,
+                    matricula: cocheInfo.matricula,
+                    facturaId: cocheInfo.factura_id,
+                    numeroFactura: cocheInfo.numero_factura
+                });
+                return res.status(403).json({
+                    error: 'No se puede eliminar un vehículo vendido',
+                    message: 'Los vehículos vendidos deben mantenerse para garantizar la trazabilidad de las facturas según la Ley Antifraude.',
+                    code: 'COCHE_VENDIDO',
+                    factura: cocheInfo.numero_factura || null
+                });
+            }
+
+            const updateResult = await new Promise((resolve, reject) => {
+                db.run(`UPDATE coches SET activo = ${activoValue} WHERE id = ?`, [id], function(err) {
+                    if (err) {
+                        reject(err);
+                        return;
+                    }
+                    if (this.changes === 0) {
+                        resolve({ notFound: true });
+                        return;
+                    }
+                    resolve({ success: true });
+                });
+            });
+
+            if (updateResult?.notFound) {
+                return res.status(404).json({ error: 'Coche no encontrado' });
+            }
+
+            if (global.cacheManager) {
+                global.cacheManager.invalidatePattern('coches:*');
+                console.log('🗑️ [DELETE /api/coches/:id] Caché de coches invalidado');
+            }
+
+            console.log('✅ [DELETE /api/coches/:id] Coche desactivado correctamente:', id);
+            res.json({ success: true, message: 'Coche desactivado correctamente' });
+
+        } catch (error) {
+            console.error('❌ [DELETE /api/coches/:id] Error:', error.message || error);
+            res.status(500).json({ error: error.message || 'Error interno del servidor' });
         }
-        if (this.changes === 0) {
-            res.status(404).json({ error: 'Coche no encontrado' });
-            return;
-        }
-        
-        // Invalidar caché de coches
-        if (global.cacheManager) {
-            global.cacheManager.invalidatePattern('coches:*');
-            console.log('🗑️ [DELETE /api/coches/:id] Caché de coches invalidado');
-        }
-        
-        res.json({ success: true, message: 'Coche desactivado correctamente' });
-    });
+    })();
 });
 
 // GET - Obtener todos los productos
@@ -2426,14 +2902,16 @@ app.post('/api/productos/desde-coche', (req, res) => {
 // GET - Obtener todas las facturas (con paginación y caché)
 app.get('/api/facturas', async (req, res) => {
     try {
-        const { page = 1, limit = 20, search = '', empresa_id = '', cliente_id = '', fecha_desde = '', fecha_hasta = '' } = req.query;
+        const { page = 1, limit = 20, search = '', empresa_id = '', cliente_id = '', fecha_desde = '', fecha_hasta = '', include_detalles = 'false', include_resumen = 'false' } = req.query;
+        const includeDetalles = include_detalles === 'true';
+        const includeResumen = include_resumen === 'true';
         
         // Usar caché si está disponible
-        const cacheKey = `facturas:page:${page}:limit:${limit}:search:${search}:empresa:${empresa_id}:cliente:${cliente_id}:fecha_desde:${fecha_desde}:fecha_hasta:${fecha_hasta}`;
+        const cacheKey = `facturas:page:${page}:limit:${limit}:search:${search}:empresa:${empresa_id}:cliente:${cliente_id}:fecha_desde:${fecha_desde}:fecha_hasta:${fecha_hasta}:det:${includeDetalles}:res:${includeResumen}`;
         const cachedResult = cacheManager.get(cacheKey);
         
         if (cachedResult) {
-            return res.json({ success: true, data: cachedResult.data, pagination: cachedResult.pagination, cached: true });
+            return res.json({ success: true, ...cachedResult, cached: true });
         }
         
         // Construir consulta con filtros y límites de memoria
@@ -2447,6 +2925,13 @@ app.get('/api/facturas', async (req, res) => {
         
         // Límite máximo de resultados para evitar memory leaks
         const maxLimit = Math.min(parseInt(limit) || 20, 100);
+        
+        // Filtrar solo facturas activas (activo = 1 o true según el tipo de BD)
+        // También incluir facturas con activo IS NULL (facturas antiguas sin este campo)
+        const dbType = config.get('database.type') || 'postgresql';
+        const activoValue = dbType === 'postgresql' ? 'true' : '1';
+        // Incluir facturas activas O facturas sin campo activo (NULL) para compatibilidad con facturas antiguas
+        whereConditions.push(`(f.activo = ${activoValue} OR f.activo IS NULL)`);
         
         if (search) {
             whereConditions.push('(f.numero_factura LIKE ? OR c.nombre LIKE ? OR e.nombre LIKE ?)');
@@ -2485,14 +2970,151 @@ app.get('/api/facturas', async (req, res) => {
             select: 'f.*, c.nombre as cliente_nombre, c.identificacion as cliente_identificacion, e.nombre as empresa_nombre, e.cif as empresa_cif, e.direccion as empresa_direccion'
         });
         
-        // Guardar en caché
-        cacheManager.set(cacheKey, result, 180); // 3 minutos TTL
+        let facturas = result.data || [];
         
-        res.json({ success: true, data: result.data, pagination: result.pagination, cached: false });
+        if (includeDetalles && facturas.length > 0) {
+            const facturaIds = facturas.map(f => f.id).filter(Boolean);
+            if (facturaIds.length > 0) {
+                const placeholders = facturaIds.map(() => '?').join(', ');
+                const detallesQuery = `
+                    SELECT df.*, COALESCE(df.descripcion, p.descripcion) as descripcion,
+                           COALESCE(df.tipo_impuesto, 'igic') as tipo_impuesto,
+                           df.factura_id,
+                           c.matricula as coche_matricula,
+                           c.chasis as coche_chasis,
+                           c.color as coche_color,
+                           c.kms as coche_kms,
+                           c.modelo as coche_modelo
+                    FROM detalles_factura df
+                    LEFT JOIN productos p ON df.producto_id = p.id
+                    LEFT JOIN coches c ON (COALESCE(df.descripcion, p.descripcion) LIKE '%' || c.matricula || '%')
+                    WHERE df.factura_id IN (${placeholders})
+                    ORDER BY df.factura_id, df.id
+                `;
+                
+                const detalles = await new Promise((resolve, reject) => {
+                    db.all(detallesQuery, facturaIds, (err, rows) => {
+                        if (err) reject(err);
+                        else resolve(rows || []);
+                    });
+                });
+                
+                const detalleMap = {};
+                (detalles || []).forEach(detalle => {
+                    if (!detalleMap[detalle.factura_id]) {
+                        detalleMap[detalle.factura_id] = [];
+                    }
+                    detalleMap[detalle.factura_id].push(detalle);
+                });
+                
+                facturas = facturas.map(factura => ({
+                    ...factura,
+                    detalles: detalleMap[factura.id] || []
+                }));
+            }
+        }
+        
+        let resumen = undefined;
+        if (includeResumen) {
+            try {
+                resumen = await fetchFacturaResumen(req.query);
+            } catch (resumenError) {
+                logger.warn('No se pudo calcular el resumen de facturas', { error: resumenError.message });
+            }
+        }
+        
+        const responsePayload = {
+            data: facturas,
+            pagination: result.pagination,
+            resumen
+        };
+        
+        cacheManager.set(cacheKey, responsePayload, 180); // 3 minutos TTL
+        
+        res.json({ success: true, ...responsePayload, cached: false });
         
     } catch (error) {
         console.error('❌ Error al obtener facturas:', error);
         res.status(500).json({ error: error.message });
+    }
+});
+
+// GET - Resumen de facturas (estadísticas)
+app.get('/api/facturas/resumen', async (req, res) => {
+    try {
+        const resumen = await fetchFacturaResumen(req.query);
+        res.json({ success: true, data: resumen });
+    } catch (error) {
+        console.error('❌ Error obteniendo resumen de facturas:', error.message);
+        res.status(500).json({ error: 'Error al obtener resumen' });
+    }
+});
+
+// GET - Años disponibles en facturas
+app.get('/api/facturas/anios', (req, res) => {
+    const dbType = config.get('database.type') || 'postgresql';
+    const query = dbType === 'postgresql'
+        ? 'SELECT DISTINCT EXTRACT(YEAR FROM fecha_emision)::INT AS year FROM facturas ORDER BY year DESC'
+        : 'SELECT DISTINCT CAST(strftime(\'%Y\', fecha_emision) AS INTEGER) as year FROM facturas ORDER BY year DESC';
+    
+    db.all(query, (err, rows) => {
+        if (err) {
+            console.error('❌ Error obteniendo años de facturas:', err.message);
+            res.status(500).json({ error: 'Error al obtener años' });
+            return;
+        }
+        
+        const years = rows.map(r => (r.year || r.YEAR || r.anio).toString());
+        if (years.length === 0) {
+            years.push(new Date().getFullYear().toString());
+        }
+        
+        res.json({ success: true, data: years });
+    });
+});
+
+app.get('/api/metrics/resumen', async (req, res) => {
+    try {
+        const now = new Date();
+        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
+        const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
+        const dbType = config.get('database.type') || 'postgresql';
+        const activoValue = dbType === 'postgresql' ? 'true' : '1';
+        
+        const [
+            clientesRow,
+            cochesRow,
+            empresasRow,
+            facturasRow,
+            ingresosRow
+        ] = await Promise.all([
+            runGet('SELECT COUNT(*) as count FROM clientes'),
+            runGet('SELECT COUNT(*) as count FROM coches'),
+            runGet('SELECT COUNT(*) as count FROM empresas'),
+            runGet(`SELECT COUNT(*) as count FROM facturas WHERE (activo = ${activoValue} OR activo IS NULL)`),
+            runGet(
+                `SELECT COALESCE(SUM(total), 0) as total
+                 FROM facturas
+                 WHERE estado = 'pagada'
+                   AND (activo = ${activoValue} OR activo IS NULL)
+                   AND fecha_emision >= ? AND fecha_emision <= ?`,
+                [startOfMonth, endOfMonth]
+            )
+        ]);
+        
+        res.json({
+            success: true,
+            data: {
+                totalClientes: Number(clientesRow.count || 0),
+                totalCoches: Number(cochesRow.count || 0),
+                totalFacturas: Number(facturasRow.count || 0),
+                totalEmpresas: Number(empresasRow.count || 0),
+                ingresosMes: Number(ingresosRow.total || 0)
+            }
+        });
+    } catch (error) {
+        console.error('❌ Error obteniendo métricas:', error.message);
+        res.status(500).json({ error: 'Error al obtener métricas' });
     }
 });
 
@@ -2642,20 +3264,23 @@ app.post('/api/facturas', async (req, res) => {
         const selladoTemporal = sistemaIntegridad.generarSelladoTemporal(datosFactura);
         
         // Insertar factura con todos los campos de Ley Antifraude
+        const dbType = config.get('database.type') || 'postgresql';
+        const activoValue = dbType === 'postgresql' ? true : 1;
+        
         const query = `
             INSERT INTO facturas (
                 numero_factura, empresa_id, cliente_id, fecha_emision, fecha_vencimiento,
                 subtotal, igic, total, notas, numero_serie, fecha_operacion,
                 tipo_documento, metodo_pago, referencia_operacion, hash_documento,
-                sellado_temporal, estado_fiscal
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                sellado_temporal, estado_fiscal, activo
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
         
         const params = [
             numero_factura, empresaIdValido, cliente_id, fecha_emision, fecha_vencimiento,
             subtotal, igic, total, notas, numero_serie, fecha_operacion || fecha_emision,
             tipo_documento, metodo_pago, referencia_operacion || '', hash_documento,
-            selladoTemporal.timestamp, 'pendiente'
+            selladoTemporal.timestamp, 'pendiente', activoValue
         ];
         
         db.run(query, params, async function(err) {
@@ -2678,17 +3303,19 @@ app.post('/api/facturas', async (req, res) => {
                 if (productos && productos.length > 0) {
                     for (const producto of productos) {
                         const productoId = producto.id && producto.id > 0 ? producto.id : null;
+                        const cocheId = producto.coche_id || producto.cocheId || producto.cocheID || null;
                         
                         await new Promise((resolve, reject) => {
                             // Aceptar tanto camelCase como snake_case para compatibilidad
                             const precioUnitario = producto.precio_unitario || producto.precioUnitario || producto.precio || 0;
                             const igic = producto.igic !== undefined ? producto.igic : (producto.impuesto !== undefined ? producto.impuesto : 0);
                             const tipoImpuesto = producto.tipo_impuesto || producto.tipoImpuesto || 'igic';
+                            const cantidad = producto.cantidad || 1;
                             
                             db.run(`
-                                INSERT INTO detalles_factura (factura_id, producto_id, cantidad, precio_unitario, subtotal, igic, total, descripcion, tipo_impuesto)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            `, [facturaId, productoId, producto.cantidad || 1, precioUnitario, producto.subtotal || precioUnitario, igic, producto.total || (precioUnitario + igic), producto.descripcion || null, tipoImpuesto], function(err) {
+                                INSERT INTO detalles_factura (factura_id, producto_id, coche_id, cantidad, precio_unitario, subtotal, igic, total, descripcion, tipo_impuesto)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            `, [facturaId, productoId, cocheId, cantidad, precioUnitario, producto.subtotal || (precioUnitario * cantidad), igic, producto.total || (precioUnitario * cantidad + igic), producto.descripcion || null, tipoImpuesto], function(err) {
                                 if (err) {
                                     console.error('❌ Error al insertar detalle de factura:', err.message);
                                     console.error('❌ Datos del producto:', JSON.stringify(producto, null, 2));
@@ -2701,7 +3328,40 @@ app.post('/api/facturas', async (req, res) => {
                         });
                         
                         // Marcar coche como vendido si es un coche
-                        if (producto.descripcion && producto.descripcion.includes(' - ')) {
+                        if (cocheId) {
+                            const dbType = config.get('database.type') || 'postgresql';
+                            const inactivoValue = dbType === 'postgresql' ? 'false' : '0';
+                            
+                            await new Promise((resolve, reject) => {
+                                db.run(`UPDATE coches SET activo = ${inactivoValue} WHERE id = ?`, [cocheId], function(err) {
+                                    if (err) {
+                                        console.error(`❌ Error marcando coche ${cocheId} como vendido:`, err.message);
+                                        reject(err);
+                                    } else {
+                                        resolve();
+                                    }
+                                });
+                            });
+                            
+                            // Actualizar producto asociado si existe (usando matrícula)
+                            const cocheInfo = await runGet('SELECT matricula FROM coches WHERE id = ?', [cocheId]);
+                            if (cocheInfo?.matricula) {
+                                await new Promise((resolve, reject) => {
+                                    db.run(`
+                                        UPDATE productos 
+                                        SET activo = ${inactivoValue} 
+                                        WHERE codigo = ?
+                                    `, [cocheInfo.matricula], function(err) {
+                                        if (err) {
+                                            console.error(`❌ Error marcando producto ${cocheInfo.matricula} como vendido:`, err.message);
+                                            reject(err);
+                                        } else {
+                                            resolve();
+                                        }
+                                    });
+                                });
+                            }
+                        } else if (producto.descripcion && producto.descripcion.includes(' - ')) {
                             // Extraer matrícula de la descripción (formato: "Modelo - MATRÍCULA - Color")
                             const partes = producto.descripcion.split(' - ');
                             if (partes.length >= 2) {
@@ -2712,10 +3372,12 @@ app.post('/api/facturas', async (req, res) => {
                                     console.log(`🔍 Marcando coche como vendido: ${matricula}`);
                                     
                                     // Marcar coche como vendido
+                                    const dbType = config.get('database.type') || 'postgresql';
+                                    const activoValue = dbType === 'postgresql' ? 'false' : '0';
                                     await new Promise((resolve, reject) => {
                                         db.run(`
                                             UPDATE coches 
-                                            SET activo = 0 
+                                            SET activo = ${activoValue} 
                                             WHERE matricula = ?
                                         `, [matricula], function(err) {
                                             if (err) {
@@ -2733,10 +3395,12 @@ app.post('/api/facturas', async (req, res) => {
                                     });
                                     
                                     // Marcar producto asociado como vendido
+                                    const dbTypeProducto = config.get('database.type') || 'postgresql';
+                                    const activoValueProducto = dbTypeProducto === 'postgresql' ? 'false' : '0';
                                     await new Promise((resolve, reject) => {
                                         db.run(`
                                             UPDATE productos 
-                                            SET activo = 0 
+                                            SET activo = ${activoValueProducto} 
                                             WHERE codigo = ?
                                         `, [matricula], function(err) {
                                             if (err) {
@@ -2843,6 +3507,18 @@ app.post('/api/facturas', async (req, res) => {
                     duration: `${totalDuration}ms`,
                     productos_count: productos?.length || 0
                 }, 'operations');
+                
+                // Limpiar caché de facturas para que se actualice el historial
+                if (global.cacheManager) {
+                    try {
+                        const deletedCount = global.cacheManager.delPattern('facturas:*');
+                        logger.debug('Caché de facturas limpiado después de crear factura', { deletedCount, facturaId });
+                        console.log(`🗑️ Caché de facturas limpiado: ${deletedCount} entradas eliminadas`);
+                    } catch (cacheError) {
+                        logger.warn('Error al limpiar caché de facturas', { error: cacheError.message });
+                        console.error('❌ Error al limpiar caché de facturas:', cacheError.message);
+                    }
+                }
                 
                 res.json({ 
                     success: true, 
@@ -3128,7 +3804,7 @@ app.get('/api/facturas/:id', (req, res) => {
                    c.kms as coche_kms, c.modelo as coche_modelo
             FROM detalles_factura df
             LEFT JOIN productos p ON df.producto_id = p.id
-            LEFT JOIN coches c ON (COALESCE(df.descripcion, p.descripcion) LIKE '%' || c.matricula || '%')
+            LEFT JOIN coches c ON df.coche_id = c.id
             WHERE df.factura_id = ?
         `, [facturaId], (err, detalles) => {
             if (err) {

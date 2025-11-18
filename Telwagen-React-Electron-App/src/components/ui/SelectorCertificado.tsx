@@ -169,7 +169,7 @@ export function SelectorCertificado({
                     {certificado.DaysUntilExpiry && (
                       <div className="col-span-2">
                         <p className="font-medium">Días restantes:</p>
-                        <p className={certificado.DaysUntilExpiry < 30 ? 'text-orange-600' : 'text-green-600'}>
+                        <p className="text-blue-600">
                           {certificado.DaysUntilExpiry} días
                         </p>
                       </div>

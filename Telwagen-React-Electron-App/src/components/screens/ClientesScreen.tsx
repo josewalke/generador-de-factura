@@ -92,8 +92,16 @@ export function ClientesScreen({ onNavigate }: ClientesScreenProps) {
   const handleEditarCliente = async () => {
     if (!clienteEditing) return;
     
+    // Asegurar que el ID existe y convertirlo a string si es necesario
+    const clienteId = clienteEditing.id?.toString();
+    if (!clienteId) {
+      console.error('Error: Cliente sin ID válido', clienteEditing);
+      setFormError('Error: Cliente sin ID válido');
+      return;
+    }
+    
     try {
-      await updateCliente(clienteEditing.id, {
+      await updateCliente(clienteId, {
         nombre: formData.nombre,
         identificacion: formData.identificacion,
         direccion: formData.direccion,
@@ -251,7 +259,7 @@ export function ClientesScreen({ onNavigate }: ClientesScreenProps) {
                 </TableHeader>
                 <TableBody>
                   {clientesFiltrados.map(cliente => (
-                    <TableRow key={cliente.id}>
+                    <TableRow key={cliente.id?.toString() || `cliente-${cliente.identificacion}`}>
                       <TableCell>
                         <div>
                           <p className="font-semibold">{cliente.nombre}</p>
@@ -285,7 +293,7 @@ export function ClientesScreen({ onNavigate }: ClientesScreenProps) {
                             variant="outline"
                             size="sm"
                             onClick={() => handleEliminarCliente(cliente.id)}
-                            className="text-red-600 hover:text-red-700"
+                            className="text-blue-600 hover:text-blue-700"
                           >
                             <Trash2 className="h-4 w-4" />
                           </Button>

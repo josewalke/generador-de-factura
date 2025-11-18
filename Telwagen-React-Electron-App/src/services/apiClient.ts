@@ -79,13 +79,19 @@ apiClient.interceptors.response.use(
       
       switch (status) {
         case 400:
-          throw new Error(data.error || data.details || 'Solicitud incorrecta');
+          throw new Error(data.error || data.message || data.details || 'Solicitud incorrecta');
+        case 403:
+          // Forbidden - coche vendido, no se puede modificar
+          throw new Error(data.message || data.error || 'Operación no permitida');
         case 404:
           throw new Error('Recurso no encontrado');
+        case 409:
+          // Conflict - duplicado (CIF, identificación, etc.)
+          throw new Error(data.message || data.error || 'Conflicto: el recurso ya existe');
         case 500:
           throw new Error(data.details || data.error || 'Error interno del servidor');
         default:
-          throw new Error(data.error || data.details || 'Error desconocido');
+          throw new Error(data.message || data.error || data.details || 'Error desconocido');
       }
     } else if (error.request) {
       // La solicitud se hizo pero no se recibió respuesta
@@ -114,7 +120,8 @@ const handlePaginatedResponse = (response: any) => {
     return {
       data: response.data.data,
       pagination: response.data.pagination,
-      cached: response.data.cached || false
+      cached: response.data.cached || false,
+      resumen: response.data.resumen
     };
   } else {
     throw new Error(response.data.error || 'Error en la respuesta de la API');

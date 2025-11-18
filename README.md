@@ -1,174 +1,152 @@
-# 🚗 Generador de Facturas Telwagen
+# Guía Rápida de Telwagen
 
-Sistema completo de facturación para Telwagen Car Ibérica con aplicación de escritorio y backend API.
-
-## 📁 Estructura del Proyecto
-
-```
-Generador De Facturas Telwagen/
-├── 📱 electron-app/          # Aplicación de escritorio (Electron)
-│   ├── src/                  # Código fuente de Electron
-│   │   ├── main.js          # Proceso principal
-│   │   ├── config.js        # Configuración API
-│   │   └── apiService.js    # Servicio API
-│   ├── public/              # Interfaz de usuario (HTML/CSS/JS)
-│   └── package.json         # Dependencias de Electron
-│
-├── 🖥️ backend/               # Backend API (Node.js + Express)
-│   ├── server.js            # Servidor principal
-│   ├── config.js            # Configuración del backend
-│   ├── database/            # Base de datos del backend (SQLite)
-│   ├── README.md            # Documentación del backend
-│   └── package.json         # Dependencias del backend
-│
-└── 📄 README.md            # Documentación principal
-```
-
-## 🎯 Características Principales
-
-### 📱 **Aplicación de Escritorio (Electron)**
-- ✅ Interfaz moderna y responsive
-- ✅ Formularios completos para facturas
-- ✅ Vista previa de facturas en tiempo real
-- ✅ Base de datos local SQLite
-- ✅ Comunicación con backend API
-- ✅ Generación automática de números de factura
-
-### 🖥️ **Backend API (Node.js)**
-- ✅ API REST completa
-- ✅ Base de datos SQLite
-- ✅ Autenticación y seguridad
-- ✅ Logging y monitoreo
-- ✅ CORS habilitado
-- ✅ Datos de ejemplo incluidos
-
-## 🚀 Instalación y Configuración
-
-### 1. **Instalar Backend**
-```bash
-cd backend
-npm install
-npm run dev
-```
-
-### 2. **Instalar Aplicación de Escritorio**
-```bash
-cd electron-app
-npm install
-npm start
-```
-
-## 📡 API Endpoints
-
-### Clientes
-- `GET /api/clientes` - Obtener todos los clientes
-- `POST /api/clientes` - Crear nuevo cliente
-- `GET /api/clientes/buscar/:identificacion` - Buscar cliente
-
-### Productos
-- `GET /api/productos` - Obtener todos los productos
-- `POST /api/productos` - Crear nuevo producto
-- `GET /api/productos/buscar/:codigo` - Buscar producto
-
-### Facturas
-- `GET /api/facturas` - Obtener todas las facturas
-- `POST /api/facturas` - Crear nueva factura
-- `GET /api/facturas/:id` - Obtener factura por ID
-- `GET /api/facturas/siguiente-numero` - Generar número automático
-
-## 🔄 Automatizaciones
-
-### 📅 **Números de Factura**
-- Formato automático: C001/2024, C002/2024, etc.
-- Secuencial por año
-- Sin duplicados
-
-### 🚗 **Productos Predefinidos**
-- NISSAN MICRA 1.0 IGT ACENTA 92-100 CV
-- NISSAN QASHQAI 1.3 DIG-T ACENTA 140 CV
-- NISSAN LEAF 40 kWh ACENTA
-- NISSAN JUKE 1.0 DIG-T ACENTA 117 CV
-
-### 👤 **Gestión de Clientes**
-- Búsqueda automática por identificación
-- Auto-completado de datos
-- Historial de facturas
-
-### 💰 **Cálculos Automáticos**
-- Subtotales automáticos
-- IGIC automático (9.5%)
-- Totales automáticos
-- Fechas de vencimiento
-
-## 🗄️ Base de Datos
-
-### **Backend API**
-- `database/telwagen.db` - Base de datos del servidor con todas las tablas
-
-### **Tablas Principales**
-- `clientes` - Información de clientes
-- `productos` - Catálogo de vehículos
-- `facturas` - Facturas principales
-- `detalles_factura` - Detalles de productos
-
-## 🎨 Interfaz de Usuario
-
-### **Formularios**
-- 📋 Datos de la factura
-- 🏢 Datos de la empresa
-- 👤 Datos del cliente
-- 🚗 Productos/vehículos
-- 🏦 Detalles bancarios
-
-### **Funcionalidades**
-- ✅ Agregar/eliminar productos
-- ✅ Vista previa en tiempo real
-- ✅ Generación de facturas
-- ✅ Guardado en base de datos
-- ✅ Carga de facturas anteriores
-
-## 🔧 Configuración
-
-### **Backend**
-- Puerto: 3000 (configurable)
-- Base de datos: SQLite
-- CORS: Habilitado
-- Logging: Morgan
-
-### **Electron App**
-- Tamaño ventana: 1200x800
-- Base de datos: SQLite local
-- Comunicación: IPC + HTTP
-
-## 📊 Datos de Ejemplo
-
-El sistema incluye productos de ejemplo con precios reales y especificaciones técnicas de vehículos Nissan.
-
-## 🚀 Uso Rápido
-
-1. **Iniciar Backend:**
-   ```bash
-   cd backend
-   npm run dev
-   ```
-
-2. **Iniciar Aplicación:**
-   ```bash
-   cd electron-app
-   npm start
-   ```
-
-3. **Usar la aplicación:**
-   - Completar formularios
-   - Agregar productos
-   - Generar vista previa
-   - Guardar factura
-
-## 📞 Soporte
-
-Para reportar bugs o solicitar nuevas funcionalidades, crea un issue en el repositorio.
+Este documento resume cómo preparar el entorno, arrancar cada servicio y generar builds de la aplicación Telwagen (backend Node.js + frontend React/Electron).
 
 ---
 
-**Desarrollado para Telwagen Car Ibérica, S.L.**
-*Sistema de facturación profesional para concesionario de vehículos*
+## 1. Requisitos previos
+
+- **Node.js 18+** y **npm** instalados en el sistema.
+- **Git** para clonar o actualizar el repositorio.
+- **PostgreSQL 13+** si vas a usar la base de datos en modo producción (el backend puede funcionar en SQLite para pruebas).
+- **OpenSSL / mkcert** si deseas certificados HTTPS locales (opcional).
+- En Windows, se recomienda usar **PowerShell** o **Windows Terminal** con permisos de administrador para scripts que necesiten puertos <1024.
+
+---
+
+## 2. Configurar el backend (`/backend`)
+
+```bash
+cd backend
+npm install
+```
+
+1. **Configurar la base de datos**  
+   - Edita `config/config.js` y define `database.type` (`sqlite` o `postgresql`).  
+   - Para PostgreSQL, actualiza `host`, `port`, `database`, `user`, `password`.
+
+2. **Migraciones iniciales (opcional)**  
+   - PostgreSQL: `npm run migrate:postgresql`.
+
+3. **Variables opcionales**  
+   - Crea un `.env` si necesitas sobreescribir puertos (`SERVER_PORT`, `SERVER_HOST`) o claves JWT.
+
+4. **Arrancar en desarrollo**  
+   ```bash
+   npm run dev          # nodemon, útil para iteración rápida
+   # o
+   npm start            # nodos en modo clásico
+   ```
+
+5. **Arrancar en producción simple**  
+   ```bash
+   npm run start:prod   # NODE_ENV=production
+   ```
+
+6. **Con PM2 (servidor permanente)**  
+   ```bash
+   npm run pm2:start
+   npm run pm2:restart
+   npm run pm2:stop
+   npm run pm2:logs
+   ```
+
+---
+
+## 3. Configurar el frontend/Electron (`/Telwagen-React-Electron-App`)
+
+```bash
+cd Telwagen-React-Electron-App
+npm install
+```
+
+### 3.1 Desarrollo web (Vite)
+
+```bash
+npm run dev            # arranca Vite en http://localhost:5173
+```
+
+El frontend detecta el backend automáticamente si `backend/src/config/backend.ts` apunta a la URL correcta. Si usas ngrok u otra URL externa, ajusta ese archivo o las variables que carga.
+
+### 3.2 Desarrollo Electron
+
+```bash
+npm run dev            # Vite
+npm run dev:electron   # abre la app Desktop (requiere Vite corriendo)
+```
+
+> `dev:electron` espera a que Vite esté listo (http://localhost:5173) y luego ejecuta `electron .`.
+
+### 3.3 Builds de escritorio
+
+- **Build genérica (React + Electron Builder)**  
+  ```bash
+  npm run build
+  ```
+  Equivale a `npm run build:react` + `npm run build:electron`.
+
+- **Targets específicos**  
+  ```bash
+  npm run build:win     # .exe / .msi (requiere Windows)
+  npm run build:mac     # .dmg (requiere macOS)
+  npm run build:linux   # AppImage + deb
+  ```
+
+- **Distribución firmada o con versionado automático**  
+  ```bash
+  npm run version:increment   # actualiza package.json
+  npm run dist:win            # build Windows sin publicar
+  npm run dist:mac            # idem para macOS
+  npm run dist:linux          # idem Linux
+  ```
+
+Los artefactos se generan en `Telwagen-React-Electron-App/dist`. Electron Builder empaqueta también el backend (ver `extraResources` en `package.json`).
+
+---
+
+## 4. Puesta en marcha completa
+
+1. **Backend**  
+   ```bash
+   cd backend
+   npm run dev        # o npm start
+   ```
+
+2. **Frontend web** (para pruebas rápidas)  
+   ```bash
+   cd Telwagen-React-Electron-App
+   npm run dev
+   ```
+   Accede a `http://localhost:5173`. Asegúrate de que `src/config/backend.ts` apunte al host/puerto donde corre el backend (local o ngrok).
+
+3. **Aplicación Desktop**  
+   - Con Vite en marcha, abre Electron con `npm run dev:electron`, o  
+   - Usa una build generada (`dist/`) y distribúyela según el SO.
+
+---
+
+## 5. Scripts y tareas útiles
+
+| Contexto | Script | Descripción |
+|----------|--------|-------------|
+| Backend  | `npm run dev` | Nodemon en caliente |
+| Backend  | `npm run start:prod` | Modo producción simple |
+| Backend  | `npm run pm2:*` | Gestor PM2 (start/stop/restart/logs) |
+| Backend  | `npm run migrate:postgresql` | Migra datos de SQLite → PostgreSQL |
+| Frontend | `npm run dev` | Vite + React |
+| Frontend | `npm run dev:electron` | Lanza Electron tras levantar Vite |
+| Frontend | `npm run build` | Build React + empaquetado Electron |
+| Frontend | `npm run build:win` / `build:mac` / `build:linux` | Paquetes específicos |
+| Frontend | `npm run dist:win` | Genera instalador Windows sin publicar |
+
+---
+
+## 6. Consejos finales
+
+- **Logs**: el backend guarda trazas en `backend/logs`. Limpia periódicamente en producción.
+- **Certificados HTTPS**: si no usas ngrok, puedes generar certificados locales con `npm run cert:generate` (backend).
+- **Ngrok / URL externas**: actualiza `backend/src/config/backend.ts` (frontend) para incluir la URL pública y la cabecera `ngrok-skip-browser-warning`.
+- **Backups**: la carpeta `backend/backups` puede crecer rápidamente; automatiza su rotación si corres tareas de respaldo.
+
+Con estos pasos tienes control sobre la build, el arranque y la distribución de toda la plataforma Telwagen. Si necesitas documentación adicional (API, diseño de base de datos, etc.), crea nuevos archivos según sea necesario. ¡Buen trabajo!
+

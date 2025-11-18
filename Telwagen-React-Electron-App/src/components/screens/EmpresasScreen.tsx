@@ -11,7 +11,7 @@ import { SelectorCertificado } from '../ui/SelectorCertificado';
 import { Screen } from '../../App';
 import { CertificadoDigital } from '../../services/certificadoService';
 import { excelService } from '../../services/excelService';
-import { Download, Shield } from 'lucide-react';
+import { Download, Shield, Building2, Lock, AlertCircle, Search, Plus, Edit, Trash2, X, CheckCircle, Zap, Home, Info } from 'lucide-react';
 import { useEmpresas } from '../../hooks/useEmpresas';
 import { Empresa } from '../../services/empresaService';
 
@@ -59,9 +59,11 @@ export function EmpresasScreen({ onNavigate }: EmpresasScreenProps) {
         activo: 1
       });
       setMostrarFormulario(false);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error agregando empresa:', error);
-      alert('Error al agregar la empresa');
+      // Mostrar mensaje de error específico del backend
+      const errorMessage = error?.response?.data?.message || error?.message || 'Error al agregar la empresa';
+      alert(errorMessage);
     }
   };
 
@@ -72,9 +74,11 @@ export function EmpresasScreen({ onNavigate }: EmpresasScreenProps) {
       setEmpresaEditing(null);
       setMostrarFormulario(false);
       setMostrarModalEdicion(false);
-    } catch (error) {
+    } catch (error: any) {
       console.error('Error editando empresa:', error);
-      alert('Error al editar la empresa');
+      // Mostrar mensaje de error específico del backend
+      const errorMessage = error?.response?.data?.message || error?.message || 'Error al editar la empresa';
+      alert(errorMessage);
     }
   };
 
@@ -116,12 +120,12 @@ export function EmpresasScreen({ onNavigate }: EmpresasScreenProps) {
                 onClick={() => onNavigate('dashboard')}
                 className="flex items-center space-x-2"
               >
-                <span>🏠</span>
+                <Home className="w-4 h-4" />
                 <span>Home</span>
               </Button>
               <div>
                 <h1 className="text-2xl font-bold text-gray-900 flex items-center space-x-2">
-                  <span className="text-2xl">🏢</span>
+                  <Building2 className="w-6 h-6" />
                   <span>Gestión de Empresas</span>
                 </h1>
                 <p className="text-gray-600">Configuración corporativa</p>
@@ -141,7 +145,7 @@ export function EmpresasScreen({ onNavigate }: EmpresasScreenProps) {
                 <CardContent className="p-4">
                   <div className="flex items-center space-x-3">
                     <div className="bg-blue-100 p-2 rounded-lg">
-                      <span className="text-2xl">🏢</span>
+                      <Building2 className="w-6 h-6 text-blue-600" />
                     </div>
                     <div>
                       <p className="text-sm text-gray-600">Total Empresas</p>
@@ -154,12 +158,12 @@ export function EmpresasScreen({ onNavigate }: EmpresasScreenProps) {
               <Card>
                 <CardContent className="p-4">
                   <div className="flex items-center space-x-3">
-                    <div className="bg-green-100 p-2 rounded-lg">
-                      <span className="text-2xl">🔐</span>
+                    <div className="bg-blue-100 p-2 rounded-lg">
+                      <Lock className="w-6 h-6 text-blue-600" />
                     </div>
                     <div>
                       <p className="text-sm text-gray-600">Con Certificado</p>
-                      <p className="text-2xl font-bold text-green-600">{stats.conCertificado}</p>
+                      <p className="text-2xl font-bold text-blue-600">{stats.conCertificado}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -168,12 +172,12 @@ export function EmpresasScreen({ onNavigate }: EmpresasScreenProps) {
               <Card>
                 <CardContent className="p-4">
                   <div className="flex items-center space-x-3">
-                    <div className="bg-orange-100 p-2 rounded-lg">
-                      <span className="text-2xl">⚠️</span>
+                    <div className="bg-blue-100 p-2 rounded-lg">
+                      <AlertCircle className="w-6 h-6 text-blue-600" />
                     </div>
                     <div>
                       <p className="text-sm text-gray-600">Sin Certificado</p>
-                      <p className="text-2xl font-bold text-orange-600">{stats.sinCertificado}</p>
+                      <p className="text-2xl font-bold text-blue-600">{stats.sinCertificado}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -185,13 +189,13 @@ export function EmpresasScreen({ onNavigate }: EmpresasScreenProps) {
               <CardHeader>
                 <div className="flex items-center justify-between">
                   <CardTitle className="flex items-center space-x-2">
-                    <span className="text-lg">🔍</span>
+                    <Search className="w-5 h-5" />
                     <span>Directorio de Empresas</span>
                   </CardTitle>
                   <Dialog open={mostrarFormulario} onOpenChange={setMostrarFormulario}>
                     <DialogTrigger asChild>
                       <Button className="bg-blue-600 hover:bg-blue-700">
-                        <span className="mr-2">➕</span>
+                        <Plus className="w-4 h-4 mr-2" />
                         Nueva Empresa
                       </Button>
                     </DialogTrigger>
@@ -241,8 +245,11 @@ export function EmpresasScreen({ onNavigate }: EmpresasScreenProps) {
                     ) : error ? (
                       <TableRow key="error">
                         <TableCell colSpan={6} className="text-center py-8">
-                          <div className="text-red-600">
-                            <p>❌ Error cargando empresas: {error}</p>
+                          <div className="text-blue-600">
+                            <div className="flex items-center space-x-2">
+                              <X className="w-5 h-5" />
+                              <p>Error cargando empresas: {error}</p>
+                            </div>
                             <Button 
                               onClick={() => window.location.reload()} 
                               variant="outline" 
@@ -257,7 +264,7 @@ export function EmpresasScreen({ onNavigate }: EmpresasScreenProps) {
                       <TableRow key="empty">
                         <TableCell colSpan={6} className="text-center py-8">
                           <div className="text-gray-500">
-                            <p>📭 No se encontraron empresas</p>
+                            <p>No se encontraron empresas</p>
                             {busqueda && (
                               <p className="text-sm mt-1">
                                 No hay resultados para "{busqueda}"
@@ -283,8 +290,20 @@ export function EmpresasScreen({ onNavigate }: EmpresasScreenProps) {
                           </div>
                         </TableCell>
                         <TableCell>
-                          <Badge className={empresa.certificado_thumbprint && empresa.certificado_thumbprint.trim() !== '' ? "bg-green-100 text-green-800" : "bg-red-100 text-red-800"}>
-                            {empresa.certificado_thumbprint && empresa.certificado_thumbprint.trim() !== '' ? '🔐 Sí' : '❌ No'}
+                          <Badge className={empresa.certificado_thumbprint && empresa.certificado_thumbprint.trim() !== '' ? "bg-blue-100 text-blue-800" : "bg-gray-100 text-gray-800"}>
+                            <div className="flex items-center space-x-1">
+                              {empresa.certificado_thumbprint && empresa.certificado_thumbprint.trim() !== '' ? (
+                                <>
+                                  <Lock className="w-3 h-3" />
+                                  <span>Sí</span>
+                                </>
+                              ) : (
+                                <>
+                                  <X className="w-3 h-3" />
+                                  <span>No</span>
+                                </>
+                              )}
+                            </div>
                           </Badge>
                         </TableCell>
                         <TableCell>
@@ -299,7 +318,7 @@ export function EmpresasScreen({ onNavigate }: EmpresasScreenProps) {
                                     setMostrarModalEdicion(true);
                                   }}
                                 >
-                                  ✏️
+                                  <Edit className="w-4 h-4" />
                                 </Button>
                               </DialogTrigger>
                               <DialogContent className="max-w-lg">
@@ -326,7 +345,7 @@ export function EmpresasScreen({ onNavigate }: EmpresasScreenProps) {
                               size="sm"
                               onClick={() => eliminarEmpresa(empresa.id)}
                             >
-                              🗑️
+                              <Trash2 className="w-4 h-4" />
                             </Button>
                           </div>
                         </TableCell>
@@ -346,7 +365,7 @@ export function EmpresasScreen({ onNavigate }: EmpresasScreenProps) {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center space-x-2">
-                  <span className="text-lg">⚡</span>
+                  <Zap className="w-5 h-5" />
                   <span>Acciones Rápidas</span>
                 </CardTitle>
               </CardHeader>
@@ -356,7 +375,7 @@ export function EmpresasScreen({ onNavigate }: EmpresasScreenProps) {
                   className="w-full justify-start"
                   onClick={() => setMostrarFormulario(true)}
                 >
-                  <span className="mr-2">🏢</span>
+                  <Building2 className="w-4 h-4 mr-2" />
                   Nueva Empresa
                 </Button>
                 <Button 
@@ -382,7 +401,7 @@ export function EmpresasScreen({ onNavigate }: EmpresasScreenProps) {
             <Card>
               <CardHeader>
                 <CardTitle className="flex items-center space-x-2">
-                  <span className="text-lg">ℹ️</span>
+                  <Info className="w-5 h-5" />
                   <span>Información</span>
                 </CardTitle>
               </CardHeader>
@@ -539,19 +558,19 @@ function FormularioEmpresa({ empresa, onSubmit, onCancel }: FormularioEmpresaPro
           <div className="space-y-2">
             <Label>Certificado Asignado</Label>
             {certificadoAsignado ? (
-              <div className={`p-3 border rounded-lg ${certificadoAsignado.Type === 'existing' ? 'bg-blue-50 border-blue-200' : 'bg-green-50 border-green-200'}`}>
+              <div className={`p-3 border rounded-lg bg-blue-50 border-blue-200`}>
                 <div className="flex items-center justify-between">
                   <div>
                     <div className="flex items-center space-x-2">
-                      <p className="font-medium text-green-800">{certificadoAsignado.CommonName}</p>
+                      <p className="font-medium text-blue-800">{certificadoAsignado.CommonName}</p>
                       {certificadoAsignado.Type === 'existing' && (
                         <span className="text-xs bg-blue-100 text-blue-800 px-2 py-1 rounded">Existente</span>
                       )}
                     </div>
                     {certificadoAsignado.CIF && (
-                      <p className="text-sm text-green-600">CIF: {certificadoAsignado.CIF}</p>
+                      <p className="text-sm text-blue-600">CIF: {certificadoAsignado.CIF}</p>
                     )}
-                    <p className="text-xs text-green-600">
+                    <p className="text-xs text-blue-600">
                       {certificadoAsignado.Type === 'existing' ? 'Certificado actual' : `Válido hasta: ${certificadoAsignado.NotAfter ? new Date(certificadoAsignado.NotAfter).toLocaleDateString('es-ES') : 'N/A'}`}
                     </p>
                   </div>

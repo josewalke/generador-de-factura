@@ -246,6 +246,38 @@ class ExcelService {
       throw error;
     }
   }
+
+  // Importar coches desde archivo Excel
+  async importCoches(file: File): Promise<{ success: boolean; importados: number; errores: number; erroresDetalle?: any[] }> {
+    try {
+      console.log('📥 [excelService] Importando coches desde Excel...');
+      
+      // Crear FormData para enviar el archivo
+      const formData = new FormData();
+      formData.append('archivo', file);
+      
+      // Importar desde apiClient
+      const { apiClient } = await import('./apiClient');
+      const response = await apiClient.post('/api/importar/coches', formData, {
+        headers: {
+          'Content-Type': 'multipart/form-data'
+        }
+      });
+      
+      const result = response.data;
+      console.log('📥 [excelService] Resultado de importación:', result);
+      
+      return {
+        success: result.success || false,
+        importados: result.importados || 0,
+        errores: result.errores || 0,
+        erroresDetalle: result.erroresDetalle || []
+      };
+    } catch (error: any) {
+      console.error('📥 [excelService] Error al importar coches:', error);
+      throw new Error(error.response?.data?.error || error.message || 'Error al importar coches');
+    }
+  }
 }
 
 export const excelService = new ExcelService();

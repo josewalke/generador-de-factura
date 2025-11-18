@@ -4,6 +4,16 @@ import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
+import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogTitle,
+} from '../ui/alert-dialog';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import { Alert, AlertDescription } from '../ui/alert';
 import { Badge } from '../ui/badge';
@@ -16,7 +26,7 @@ import { CocheFormSimple } from '../forms/CocheFormSimple';
 import { CochesErrorBoundary } from '../ErrorBoundary';
 import { logger } from '../../utils/logger';
 import { toast } from 'sonner';
-import { ArrowLeft, Plus, Search, Edit, Trash2, AlertCircle, RefreshCw, Car, Download, X } from 'lucide-react';
+import { ArrowLeft, Plus, Search, Edit, AlertCircle, RefreshCw, Car, Download, X, BarChart3, Upload, Trash2 } from 'lucide-react';
 
 interface CochesScreenProps {
   onNavigate: (screen: Screen) => void;
@@ -28,6 +38,11 @@ export function CochesScreen({ onNavigate }: CochesScreenProps) {
   const [cocheEditando, setCocheEditando] = useState<Coche | null>(null);
   const [vistaActual, setVistaActual] = useState<'tabla' | 'tarjetas'>('tabla');
   const [filtroActual, setFiltroActual] = useState<'todos' | 'disponibles' | 'vendidos'>('todos');
+  const [mostrarDialogImportar, setMostrarDialogImportar] = useState(false);
+  const [importando, setImportando] = useState(false);
+  const [resultadoImportacion, setResultadoImportacion] = useState<{ importados: number; errores: number; erroresDetalle?: any[] } | null>(null);
+  const [mostrarDialogEliminar, setMostrarDialogEliminar] = useState(false);
+  const [cocheAEliminar, setCocheAEliminar] = useState<{ id: string; matricula: string } | null>(null);
 
   // Debounce para optimizar búsquedas
   const debouncedBusqueda = useDebounce(busqueda, 300);
@@ -95,15 +110,6 @@ export function CochesScreen({ onNavigate }: CochesScreenProps) {
   };
 
 
-  const handleEliminarCoche = async (id: string) => {
-    try {
-      logger.cochesScreen.debug('Eliminando coche', { id });
-      await deleteCoche(id);
-    } catch (error) {
-      logger.cochesScreen.error('Error al eliminar coche', error);
-      // El error ya se maneja en el hook con toast
-    }
-  };
 
   const handleActualizarCoche = async (cocheData: CocheCreateData) => {
     if (!cocheEditando) {
@@ -127,6 +133,13 @@ export function CochesScreen({ onNavigate }: CochesScreenProps) {
   };
 
   const abrirEdicion = (coche: Coche) => {
+    // Verificar si el coche está vendido
+    if (coche.vendido === 1 || coche.vendido === true) {
+      toast.error('No se puede editar un vehículo vendido. Los datos deben mantenerse intactos para cumplir con la Ley Antifraude.');
+      logger.cochesScreen.warn('Intento de editar coche vendido', { id: coche.id, matricula: coche.matricula });
+      return;
+    }
+    
     logger.cochesScreen.debug('Abriendo edición de coche', { id: coche.id });
     setCocheEditando(coche);
     setMostrarFormulario(true);
@@ -136,6 +149,31 @@ export function CochesScreen({ onNavigate }: CochesScreenProps) {
     logger.cochesScreen.debug('Cerrando formulario');
     setMostrarFormulario(false);
     setCocheEditando(null);
+  };
+
+  const abrirDialogEliminar = (coche: Coche) => {
+    if (coche.vendido === 1 || coche.vendido === true) {
+      toast.error('No se puede eliminar un vehículo vendido. Debe conservarse para cumplir con la Ley Antifraude.');
+      logger.cochesScreen.warn('Intento de eliminar coche vendido', { id: coche.id, matricula: coche.matricula });
+      return;
+    }
+
+    setCocheAEliminar({ id: coche.id, matricula: coche.matricula });
+    setMostrarDialogEliminar(true);
+  };
+
+  const confirmarEliminarCoche = async () => {
+    if (!cocheAEliminar) return;
+    
+    try {
+      logger.cochesScreen.debug('Eliminando coche', { id: cocheAEliminar.id });
+      await deleteCoche(cocheAEliminar.id);
+      setMostrarDialogEliminar(false);
+      setCocheAEliminar(null);
+    } catch (error) {
+      logger.cochesScreen.error('Error al eliminar coche', error);
+      // El error ya se maneja en el hook con toast
+    }
   };
 
   const handleExportarCoches = () => {
@@ -154,6 +192,46 @@ export function CochesScreen({ onNavigate }: CochesScreenProps) {
     } catch (error) {
       logger.cochesScreen.error('Error al exportar coches', error);
       toast.error('Error al exportar vehículos');
+    }
+  };
+
+  const handleImportarCoches = async (event: React.ChangeEvent<HTMLInputElement>) => {
+    const file = event.target.files?.[0];
+    if (!file) return;
+
+    // Validar que sea un archivo Excel
+    const validExtensions = ['.xlsx', '.xls'];
+    const fileExtension = file.name.toLowerCase().substring(file.name.lastIndexOf('.'));
+    if (!validExtensions.includes(fileExtension)) {
+      toast.error('Por favor, selecciona un archivo Excel (.xlsx o .xls)');
+      return;
+    }
+
+    try {
+      setImportando(true);
+      setResultadoImportacion(null);
+      logger.cochesScreen.debug('Importando coches desde Excel', { filename: file.name });
+
+      const resultado = await excelService.importCoches(file);
+      
+      setResultadoImportacion(resultado);
+      
+      if (resultado.success) {
+        toast.success(`Importación completada: ${resultado.importados} vehículos importados${resultado.errores > 0 ? `, ${resultado.errores} errores` : ''}`);
+        // Recargar la lista de coches
+        await refreshCoches();
+      } else {
+        toast.error(`Error en la importación: ${resultado.errores} errores`);
+      }
+      
+      logger.cochesScreen.info('Importación completada', resultado);
+    } catch (error: any) {
+      logger.cochesScreen.error('Error al importar coches', error);
+      toast.error(error.message || 'Error al importar vehículos');
+    } finally {
+      setImportando(false);
+      // Limpiar el input para permitir seleccionar el mismo archivo de nuevo
+      event.target.value = '';
     }
   };
 
@@ -203,9 +281,9 @@ export function CochesScreen({ onNavigate }: CochesScreenProps) {
         </header>
 
       <div className="max-w-7xl mx-auto px-6 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-4 gap-6">
+        <div className="grid grid-cols-1 lg:grid-cols-5 gap-6">
           {/* Main Content */}
-          <div className="lg:col-span-3 space-y-6">
+          <div className="lg:col-span-4 space-y-6">
             {/* Estadísticas */}
             <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
               <Card>
@@ -225,12 +303,12 @@ export function CochesScreen({ onNavigate }: CochesScreenProps) {
               <Card>
                 <CardContent className="p-4">
                   <div className="flex items-center space-x-3">
-                    <div className="bg-green-100 p-2 rounded-lg">
-                      <Car className="h-5 w-5 text-green-600" />
+                    <div className="bg-blue-100 p-2 rounded-lg">
+                      <Car className="h-5 w-5 text-blue-600" />
                     </div>
                     <div>
                       <p className="text-sm text-gray-600">Disponibles</p>
-                      <p className="text-2xl font-bold text-green-600">{stats.disponibles}</p>
+                      <p className="text-2xl font-bold text-blue-600">{stats.disponibles}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -239,12 +317,12 @@ export function CochesScreen({ onNavigate }: CochesScreenProps) {
               <Card>
                 <CardContent className="p-4">
                   <div className="flex items-center space-x-3">
-                    <div className="bg-orange-100 p-2 rounded-lg">
-                      <Car className="h-5 w-5 text-orange-600" />
+                    <div className="bg-blue-100 p-2 rounded-lg">
+                      <Car className="h-5 w-5 text-blue-600" />
                     </div>
                     <div>
                       <p className="text-sm text-gray-600">Vendidos</p>
-                      <p className="text-2xl font-bold text-orange-600">{stats.vendidos}</p>
+                      <p className="text-2xl font-bold text-blue-600">{stats.vendidos}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -262,8 +340,11 @@ export function CochesScreen({ onNavigate }: CochesScreenProps) {
                   <div className="flex items-center space-x-2">
                     <Tabs value={vistaActual} onValueChange={(value) => setVistaActual(value as 'tabla' | 'tarjetas')}>
                       <TabsList>
-                        <TabsTrigger value="tabla">📊 Tabla</TabsTrigger>
-                        <TabsTrigger value="tarjetas">🃏 Tarjetas</TabsTrigger>
+                        <TabsTrigger value="tabla">
+                          <BarChart3 className="w-4 h-4 mr-2" />
+                          Tabla
+                        </TabsTrigger>
+                        <TabsTrigger value="tarjetas">Tarjetas</TabsTrigger>
                       </TabsList>
                     </Tabs>
                   </div>
@@ -320,6 +401,7 @@ export function CochesScreen({ onNavigate }: CochesScreenProps) {
                 {!loading.fetching && cochesFiltrados.length > 0 && (
                   <Tabs value={vistaActual}>
                     <TabsContent value="tabla" className="space-y-4">
+                      <div className="overflow-x-auto">
                       <Table>
                         <TableHeader>
                           <TableRow>
@@ -328,6 +410,7 @@ export function CochesScreen({ onNavigate }: CochesScreenProps) {
                             <TableHead>Color</TableHead>
                             <TableHead>Kilómetros</TableHead>
                             <TableHead>Estado</TableHead>
+                            <TableHead>Factura</TableHead>
                             <TableHead>Chasis</TableHead>
                             <TableHead className="text-right">Acciones</TableHead>
                           </TableRow>
@@ -349,9 +432,21 @@ export function CochesScreen({ onNavigate }: CochesScreenProps) {
                               </TableCell>
                               <TableCell>
                                 {coche.vendido ? (
-                                  <Badge variant="destructive">Vendido</Badge>
+                                  <Badge className="bg-blue-100 text-blue-800">Vendido</Badge>
                                 ) : (
                                   <Badge variant="default">Disponible</Badge>
+                                )}
+                              </TableCell>
+                              <TableCell>
+                                {coche.numero_factura ? (
+                                  <div className="flex flex-col text-sm">
+                                    <span className="font-semibold text-blue-600">{coche.numero_factura}</span>
+                                    {coche.fecha_venta && (
+                                      <span className="text-xs text-gray-500">{new Date(coche.fecha_venta).toLocaleDateString()}</span>
+                                    )}
+                                  </div>
+                                ) : (
+                                  <span className="text-gray-400 text-sm">—</span>
                                 )}
                               </TableCell>
                               <TableCell>
@@ -363,13 +458,18 @@ export function CochesScreen({ onNavigate }: CochesScreenProps) {
                                     variant="outline" 
                                     size="icon"
                                     onClick={() => abrirEdicion(coche)}
+                                    title={coche.vendido ? "No se puede editar un vehículo vendido" : "Editar vehículo"}
+                                    disabled={coche.vendido === 1 || coche.vendido === true}
                                   >
                                     <Edit className="h-4 w-4" />
                                   </Button>
+                                  {/* Botón de eliminar */}
                                   <Button 
                                     variant="destructive" 
                                     size="icon"
-                                    onClick={() => handleEliminarCoche(coche.id)}
+                                    onClick={() => abrirDialogEliminar(coche)}
+                                    title={coche.vendido ? "Este vehículo está vendido y no puede eliminarse" : "Eliminar vehículo"}
+                                    disabled={coche.vendido === 1 || coche.vendido === true}
                                   >
                                     <Trash2 className="h-4 w-4" />
                                   </Button>
@@ -379,6 +479,7 @@ export function CochesScreen({ onNavigate }: CochesScreenProps) {
                           ))}
                         </TableBody>
                       </Table>
+                      </div>
                     </TabsContent>
                   
                     <TabsContent value="tarjetas" className="space-y-4">
@@ -414,22 +515,39 @@ export function CochesScreen({ onNavigate }: CochesScreenProps) {
                                   <p className="text-gray-500">Chasis</p>
                                   <p className="text-xs">{coche.chasis || 'N/A'}</p>
                                 </div>
+                                {coche.numero_factura && (
+                                  <div className="col-span-2">
+                                    <p className="text-gray-500">Factura asociada</p>
+                                    <p className="font-semibold text-blue-600">{coche.numero_factura}</p>
+                                    {coche.fecha_venta && (
+                                      <p className="text-xs text-gray-500">
+                                        {new Date(coche.fecha_venta).toLocaleDateString()}
+                                      </p>
+                                    )}
+                                  </div>
+                                )}
                               </div>
                               <div className="flex space-x-2 pt-2">
                                 <Button 
                                   variant="outline" 
                                   size="sm"
                                   onClick={() => abrirEdicion(coche)}
+                                  disabled={coche.vendido === 1 || coche.vendido === true}
+                                  title={coche.vendido ? "No se puede editar un vehículo vendido" : "Editar vehículo"}
                                 >
                                   <Edit className="h-4 w-4 mr-1" />
                                   Editar
                                 </Button>
+                                {/* Botón de eliminar */}
                                 <Button 
                                   variant="destructive" 
                                   size="sm"
-                                  onClick={() => handleEliminarCoche(coche.id)}
+                                  onClick={() => abrirDialogEliminar(coche)}
+                                  title={coche.vendido ? "Este vehículo está vendido y no puede eliminarse" : "Eliminar vehículo"}
+                                  disabled={coche.vendido === 1 || coche.vendido === true}
                                 >
-                                  <Trash2 className="h-4 w-4" />
+                                  <Trash2 className="h-4 w-4 mr-1" />
+                                  Eliminar
                                 </Button>
                               </div>
                             </CardContent>
@@ -477,6 +595,14 @@ export function CochesScreen({ onNavigate }: CochesScreenProps) {
                 <Button 
                   variant="outline" 
                   className="w-full justify-start"
+                  onClick={() => setMostrarDialogImportar(true)}
+                >
+                  <Upload className="h-4 w-4 mr-2" />
+                  Importar Lista
+                </Button>
+                <Button 
+                  variant="outline" 
+                  className="w-full justify-start"
                   onClick={handleExportarCoches}
                 >
                   <Download className="h-4 w-4 mr-2" />
@@ -519,6 +645,139 @@ export function CochesScreen({ onNavigate }: CochesScreenProps) {
             />
           </DialogContent>
         </Dialog>
+
+        {/* Dialog de Importar Coches */}
+        <Dialog open={mostrarDialogImportar} onOpenChange={setMostrarDialogImportar}>
+          <DialogContent className="max-w-md">
+            <DialogHeader>
+              <DialogTitle className="flex items-center space-x-2">
+                <Upload className="h-5 w-5" />
+                <span>Importar Vehículos desde Excel</span>
+              </DialogTitle>
+            </DialogHeader>
+            <div className="space-y-4">
+              <div className="space-y-2">
+                <p className="text-sm text-gray-600">
+                  Selecciona un archivo Excel (.xlsx o .xls) con la lista de vehículos.
+                </p>
+                <p className="text-xs text-gray-500">
+                  El archivo debe contener las columnas: Matrícula, Modelo, Color, Chasis, Kms
+                </p>
+              </div>
+
+              <div className="space-y-2">
+                <label className="block">
+                  <input
+                    type="file"
+                    accept=".xlsx,.xls"
+                    onChange={handleImportarCoches}
+                    disabled={importando}
+                    className="hidden"
+                    id="file-import-coches"
+                  />
+                  <Button
+                    asChild
+                    variant="outline"
+                    className="w-full"
+                    disabled={importando}
+                  >
+                    <label htmlFor="file-import-coches" className="cursor-pointer">
+                      {importando ? (
+                        <>
+                          <RefreshCw className="h-4 w-4 mr-2 animate-spin" />
+                          Importando...
+                        </>
+                      ) : (
+                        <>
+                          <Upload className="h-4 w-4 mr-2" />
+                          Seleccionar Archivo Excel
+                        </>
+                      )}
+                    </label>
+                  </Button>
+                </label>
+              </div>
+
+              {resultadoImportacion && (
+                <div className={`p-4 rounded-lg ${resultadoImportacion.errores > 0 ? 'bg-yellow-50 border border-yellow-200' : 'bg-green-50 border border-green-200'}`}>
+                  <div className="space-y-2">
+                    <p className={`font-semibold ${resultadoImportacion.errores > 0 ? 'text-yellow-800' : 'text-green-800'}`}>
+                      Resultado de la importación:
+                    </p>
+                    <div className="text-sm space-y-1">
+                      <p className="text-green-700">
+                        ✅ Vehículos importados: {resultadoImportacion.importados}
+                      </p>
+                      {resultadoImportacion.errores > 0 && (
+                        <p className="text-yellow-700">
+                          ⚠️ Errores: {resultadoImportacion.errores}
+                        </p>
+                      )}
+                    </div>
+                    {resultadoImportacion.erroresDetalle && resultadoImportacion.erroresDetalle.length > 0 && (
+                      <div className="mt-2 max-h-32 overflow-y-auto">
+                        <p className="text-xs font-semibold text-yellow-800 mb-1">Detalles de errores:</p>
+                        <ul className="text-xs text-yellow-700 space-y-1">
+                          {resultadoImportacion.erroresDetalle.slice(0, 5).map((error: any, index: number) => (
+                            <li key={index}>• {error.fila ? `Fila ${error.fila}: ` : ''}{error.mensaje || error}</li>
+                          ))}
+                          {resultadoImportacion.erroresDetalle.length > 5 && (
+                            <li className="text-yellow-600">... y {resultadoImportacion.erroresDetalle.length - 5} errores más</li>
+                          )}
+                        </ul>
+                      </div>
+                    )}
+                  </div>
+                </div>
+              )}
+
+              <div className="flex justify-end space-x-2">
+                <Button
+                  variant="outline"
+                  onClick={() => {
+                    setMostrarDialogImportar(false);
+                    setResultadoImportacion(null);
+                  }}
+                  disabled={importando}
+                >
+                  Cerrar
+                </Button>
+              </div>
+            </div>
+          </DialogContent>
+        </Dialog>
+
+        {/* Diálogo de confirmación para eliminar coche */}
+        <AlertDialog open={mostrarDialogEliminar} onOpenChange={setMostrarDialogEliminar}>
+          <AlertDialogContent>
+            <AlertDialogHeader>
+              <AlertDialogTitle>¿Estás seguro de eliminar este vehículo?</AlertDialogTitle>
+              <AlertDialogDescription>
+                Esta acción no se puede deshacer. Se eliminará permanentemente el vehículo
+                {cocheAEliminar && ` con matrícula ${cocheAEliminar.matricula}`}.
+                {cocheAEliminar && coches.find(c => c.id === cocheAEliminar.id && c.vendido) && (
+                  <span className="block mt-2 text-red-600 font-semibold">
+                    ⚠️ Advertencia: Este vehículo está vendido. Eliminarlo puede afectar la integridad de las facturas asociadas.
+                  </span>
+                )}
+              </AlertDialogDescription>
+            </AlertDialogHeader>
+            <AlertDialogFooter>
+              <AlertDialogCancel onClick={() => {
+                setMostrarDialogEliminar(false);
+                setCocheAEliminar(null);
+              }}>
+                Cancelar
+              </AlertDialogCancel>
+              <AlertDialogAction
+                onClick={confirmarEliminarCoche}
+                className="bg-red-600 hover:bg-red-700"
+              >
+                Eliminar
+              </AlertDialogAction>
+            </AlertDialogFooter>
+          </AlertDialogContent>
+        </AlertDialog>
       </div>
     </CochesErrorBoundary>
   );

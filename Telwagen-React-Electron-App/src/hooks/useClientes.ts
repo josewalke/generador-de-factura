@@ -46,9 +46,16 @@ export function useClientes(): UseClientesReturn {
     try {
       setError(null);
       const updatedCliente = await clienteService.update(id, data);
-      setClientes(prev => prev.map(cliente => 
-        cliente.id === id ? updatedCliente : cliente
-      ));
+      // Normalizar IDs para comparación (ambos a string)
+      const normalizedId = id.toString();
+      setClientes(prev => prev.map(cliente => {
+        const clienteId = cliente.id?.toString();
+        // Si el ID coincide, reemplazar con el cliente actualizado
+        if (clienteId === normalizedId) {
+          return updatedCliente;
+        }
+        return cliente;
+      }));
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Error al actualizar cliente');
       throw err;

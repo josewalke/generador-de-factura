@@ -111,7 +111,7 @@ export function GestionCertificadosScreen({ onNavigate }: GestionCertificadosScr
                 <RefreshCw className={`h-4 w-4 mr-2 ${loading ? 'animate-spin' : ''}`} />
                 Actualizar
               </Button>
-              <Button onClick={handleExportarCertificados} className="bg-green-600 hover:bg-green-700 text-white">
+              <Button onClick={handleExportarCertificados} className="bg-blue-600 hover:bg-blue-700 text-white">
                 <Download className="h-4 w-4 mr-2" />
                 Exportar Excel
               </Button>
@@ -143,12 +143,12 @@ export function GestionCertificadosScreen({ onNavigate }: GestionCertificadosScr
               <Card>
                 <CardContent className="p-4">
                   <div className="flex items-center space-x-3">
-                    <div className="bg-green-100 p-2 rounded-lg">
-                      <CheckCircle className="h-5 w-5 text-green-600" />
+                    <div className="bg-blue-100 p-2 rounded-lg">
+                      <CheckCircle className="h-5 w-5 text-blue-600" />
                     </div>
                     <div>
                       <p className="text-sm text-gray-600">Válidos</p>
-                      <p className="text-2xl font-bold text-green-600">{stats.validos}</p>
+                      <p className="text-2xl font-bold text-blue-600">{stats.validos}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -157,12 +157,12 @@ export function GestionCertificadosScreen({ onNavigate }: GestionCertificadosScr
               <Card>
                 <CardContent className="p-4">
                   <div className="flex items-center space-x-3">
-                    <div className="bg-red-100 p-2 rounded-lg">
-                      <AlertCircle className="h-5 w-5 text-red-600" />
+                    <div className="bg-blue-100 p-2 rounded-lg">
+                      <AlertCircle className="h-5 w-5 text-blue-600" />
                     </div>
                     <div>
                       <p className="text-sm text-gray-600">Inválidos</p>
-                      <p className="text-2xl font-bold text-red-600">{stats.invalidos}</p>
+                      <p className="text-2xl font-bold text-blue-600">{stats.invalidos}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -171,12 +171,12 @@ export function GestionCertificadosScreen({ onNavigate }: GestionCertificadosScr
               <Card>
                 <CardContent className="p-4">
                   <div className="flex items-center space-x-3">
-                    <div className="bg-orange-100 p-2 rounded-lg">
-                      <Clock className="h-5 w-5 text-orange-600" />
+                    <div className="bg-blue-100 p-2 rounded-lg">
+                      <Clock className="h-5 w-5 text-blue-600" />
                     </div>
                     <div>
                       <p className="text-sm text-gray-600">Próximos a Vencer</p>
-                      <p className="text-2xl font-bold text-orange-600">{stats.proximos}</p>
+                      <p className="text-2xl font-bold text-blue-600">{stats.proximos}</p>
                     </div>
                   </div>
                 </CardContent>
@@ -267,7 +267,7 @@ export function GestionCertificadosScreen({ onNavigate }: GestionCertificadosScr
                                   {certificado.DaysUntilExpiry && (
                                     <div className="col-span-2">
                                       <p className="font-medium">Días restantes:</p>
-                                      <p className={certificado.DaysUntilExpiry < 30 ? 'text-orange-600' : 'text-green-600'}>
+                                      <p className="text-blue-600">
                                         {certificado.DaysUntilExpiry} días
                                       </p>
                                     </div>
@@ -372,7 +372,7 @@ export function GestionCertificadosScreen({ onNavigate }: GestionCertificadosScr
                 </div>
                 <div>
                   <p className="font-medium text-gray-600">Días Restantes</p>
-                  <p className={certificadoSeleccionado.DaysUntilExpiry && certificadoSeleccionado.DaysUntilExpiry < 30 ? 'text-orange-600' : 'text-green-600'}>
+                  <p className="text-blue-600">
                     {certificadoSeleccionado.DaysUntilExpiry || 'N/A'} días
                   </p>
                 </div>
