@@ -84,6 +84,23 @@ function createWindow() {
 
   // Crear menú de la aplicación
   createMenu();
+
+  // Habilitar menú contextual (click derecho) con opciones básicas de edición
+  mainWindow.webContents.on('context-menu', (_event, params) => {
+    const contextMenu = Menu.buildFromTemplate([
+      { role: 'undo', enabled: params.editFlags.canUndo },
+      { role: 'redo', enabled: params.editFlags.canRedo },
+      { type: 'separator' },
+      { role: 'cut', enabled: params.editFlags.canCut },
+      { role: 'copy', enabled: params.editFlags.canCopy },
+      { role: 'paste', enabled: params.editFlags.canPaste },
+      { role: 'pasteAndMatchStyle', enabled: params.editFlags.canPaste },
+      { role: 'delete', enabled: params.editFlags.canDelete },
+      { type: 'separator' },
+      { role: 'selectAll' }
+    ]);
+    contextMenu.popup({ window: mainWindow });
+  });
 }
 
 function createMenu() {
