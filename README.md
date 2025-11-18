@@ -100,7 +100,7 @@ npm run dev:electron   # abre la app Desktop (requiere Vite corriendo)
   ```bash
   npm run build
   ```
-  Equivale a `npm run build:react` + `npm run build:electron`.
+  Equivale a `npm run build:react` + `npm run build:electron`. Además, antes de cada `npm run build` se ejecuta automáticamente `npm run version:increment`, por lo que la versión del instalador sube sola en cada compilación completa.
 
 - **Targets específicos**  
   ```bash
