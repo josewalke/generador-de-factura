@@ -5,6 +5,10 @@ const fs = require('fs');
 
 const isDev = process.env.NODE_ENV === 'development';
 
+// Obtener versión del package.json
+const packageJson = JSON.parse(fs.readFileSync(path.join(__dirname, '../package.json'), 'utf8'));
+const appVersion = packageJson.version || '1.0.0';
+
 let mainWindow;
 let backendProcess = null;
 
@@ -26,6 +30,7 @@ function createWindow() {
     icon: path.join(__dirname, '../assets/icon.png'),
     show: false, // No mostrar hasta que esté listo
     titleBarStyle: 'default',
+    title: `Generador de Facturas Telwagen v${appVersion}`,
   });
 
   // Configurar Content Security Policy - Solo permitir ngrok (https) y recursos locales

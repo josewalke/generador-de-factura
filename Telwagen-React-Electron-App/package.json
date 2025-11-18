@@ -6,6 +6,7 @@
   "homepage": "./",
   "scripts": {
     "prebuild": "npm run version:increment",
+    "prebuild:electron": "npm run version:increment",
     "dev": "vite",
     "dev:react": "vite",
     "dev:electron": "wait-on http://localhost:5173 && electron .",

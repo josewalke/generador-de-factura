@@ -12,6 +12,7 @@ import { empresaService } from '../services/empresaService';
 import { statsService } from '../services/statsService';
 import { SelectorCertificado } from './ui/SelectorCertificado';
 import { CertificadoDigital } from '../services/certificadoService';
+import { useElectronAPI } from '../hooks/useElectronAPI';
 import { RefreshCw, Trash2, Users, Car, Building2, BarChart3, Zap } from 'lucide-react';
 
 interface DashboardProps {
@@ -36,11 +37,27 @@ export function Dashboard({ onNavigate }: DashboardProps) {
     ingresosMes: 0
   });
   const [loading, setLoading] = React.useState(true);
+  const [appVersion, setAppVersion] = React.useState<string>('1.0.0');
+  const { getAppVersion } = useElectronAPI();
   
   // Estados para los modales
   const [mostrarModalCliente, setMostrarModalCliente] = useState(false);
   const [mostrarModalCoche, setMostrarModalCoche] = useState(false);
   const [mostrarModalEmpresa, setMostrarModalEmpresa] = useState(false);
+
+  // Cargar versión de la app
+  React.useEffect(() => {
+    const loadVersion = async () => {
+      try {
+        const version = await getAppVersion();
+        setAppVersion(version);
+      } catch (error) {
+        console.error('❌ Error cargando versión:', error);
+      }
+    };
+
+    loadVersion();
+  }, [getAppVersion]);
 
   // Cargar estadísticas reales de la API
   React.useEffect(() => {
@@ -138,7 +155,10 @@ export function Dashboard({ onNavigate }: DashboardProps) {
           <div className="flex items-center justify-between">
             <div>
               <h1 className="text-3xl font-bold text-blue-900">Telwagen</h1>
-              <p className="text-gray-600 mt-1">Generador de Facturas</p>
+              <p className="text-gray-600 mt-1">
+                Generador de Facturas
+                <span className="ml-2 text-sm text-gray-500">v{appVersion}</span>
+              </p>
             </div>
             <div className="flex items-center space-x-4">
               <Button 
