@@ -406,6 +406,7 @@ export function CochesScreen({ onNavigate }: CochesScreenProps) {
                         <TableHeader>
                           <TableRow>
                             <TableHead>Matrícula</TableHead>
+                            <TableHead>Marca</TableHead>
                             <TableHead>Modelo</TableHead>
                             <TableHead>Color</TableHead>
                             <TableHead>Kilómetros</TableHead>
@@ -416,13 +417,23 @@ export function CochesScreen({ onNavigate }: CochesScreenProps) {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {cochesFiltrados.map((coche, index) => (
+                          {cochesFiltrados.map((coche, index) => {
+                            // Extraer marca y modelo del campo modelo
+                            const modeloCompleto = coche.modelo || '';
+                            const partesModelo = modeloCompleto.split(' ');
+                            const marca = partesModelo.length > 0 ? partesModelo[0] : '';
+                            const modelo = partesModelo.length > 1 ? partesModelo.slice(1).join(' ') : modeloCompleto;
+                            
+                            return (
                             <TableRow key={coche.id || `coche-${index}`}>
                               <TableCell>
                                 <p className="font-semibold">{coche.matricula || 'N/A'}</p>
                               </TableCell>
                               <TableCell>
-                                <p>{coche.modelo || 'N/A'}</p>
+                                <p>{marca || 'N/A'}</p>
+                              </TableCell>
+                              <TableCell>
+                                <p>{modelo || 'N/A'}</p>
                               </TableCell>
                               <TableCell>
                                 <p>{coche.color || 'N/A'}</p>

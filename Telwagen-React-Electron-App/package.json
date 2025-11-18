@@ -1,6 +1,6 @@
 {
   "name": "telwagen-generador-facturas",
-  "version": "1.0.2",
+  "version": "1.0.4",
   "description": "Aplicación de escritorio Telwagen con React y Electron",
   "main": "electron/main.js",
   "homepage": "./",
