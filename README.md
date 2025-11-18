@@ -64,6 +64,10 @@ npm install
    ```
 3. Copia la URL pública que muestra ngrok (algo como `https://xxxxx.ngrok-free.dev`) y actualiza `Telwagen-React-Electron-App/src/config/backend.ts` o las variables de entorno que uses para que el frontend apunte a esa URL. Recuerda mantener el header `ngrok-skip-browser-warning: true` en tus peticiones (ya lo hace el cliente actual).
 
+> Nota: si prefieres reutilizar tu comando habitual de PowerShell, puedes ejecutar directamente  
+> `C:\ngrok\ngrok.exe http 3000`  
+> (equivale a exponer `http://localhost:3000`; ajusta el puerto si tu backend corre en otro).
+
 ---
 
 ## 3. Configurar el frontend/Electron (`/Telwagen-React-Electron-App`)
