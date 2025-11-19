@@ -6,8 +6,9 @@ import { CochesScreen } from './components/screens/CochesScreen';
 import { EmpresasScreen } from './components/screens/EmpresasScreen';
 import { HistorialScreen } from './components/screens/HistorialScreen';
 import { GestionCertificadosScreen } from './components/screens/GestionCertificadosScreen';
+import { ProformasScreen } from './components/screens/ProformasScreen';
 
-export type Screen = 'dashboard' | 'facturas' | 'clientes' | 'coches' | 'empresas' | 'historial' | 'certificados';
+export type Screen = 'dashboard' | 'facturas' | 'clientes' | 'coches' | 'empresas' | 'historial' | 'certificados' | 'proformas';
 
 export default function App() {
   const [currentScreen, setCurrentScreen] = useState<Screen>('dashboard');
@@ -28,6 +29,8 @@ export default function App() {
         return <HistorialScreen onNavigate={setCurrentScreen} />;
       case 'certificados':
         return <GestionCertificadosScreen onNavigate={setCurrentScreen} />;
+      case 'proformas':
+        return <ProformasScreen onNavigate={setCurrentScreen} />;
       default:
         return <Dashboard onNavigate={setCurrentScreen} />;
     }

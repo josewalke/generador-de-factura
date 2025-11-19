@@ -206,13 +206,21 @@ export function Dashboard({ onNavigate }: DashboardProps) {
                 </CardTitle>
               </CardHeader>
               <CardContent>
-                <p className="text-gray-600 mb-4">Genera y gestiona facturas para tus clientes</p>
-                <Button 
-                  onClick={() => onNavigate('facturas')}
-                  className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 text-lg"
-                >
-                  Generar Nueva Factura
-                </Button>
+                <p className="text-gray-600 mb-4">Genera y gestiona facturas y proformas para tus clientes</p>
+                <div className="flex flex-wrap gap-3">
+                  <Button 
+                    onClick={() => onNavigate('facturas')}
+                    className="bg-blue-600 hover:bg-blue-700 text-white px-8 py-3 text-lg"
+                  >
+                    Generar Nueva Factura
+                  </Button>
+                  <Button 
+                    onClick={() => onNavigate('proformas')}
+                    className="bg-green-600 hover:bg-green-700 text-white px-8 py-3 text-lg"
+                  >
+                    Generar Proforma
+                  </Button>
+                </div>
               </CardContent>
             </Card>
 

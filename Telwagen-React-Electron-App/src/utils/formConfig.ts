@@ -25,6 +25,13 @@ export const validationConfig = {
     patternMessage: 'Solo letras, números y guiones'
   },
   
+  // Marca
+  marca: {
+    required: true,
+    minLength: 1,
+    maxLength: 50
+  },
+  
   // Modelo
   modelo: {
     required: true,

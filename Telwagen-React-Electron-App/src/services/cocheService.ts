@@ -7,6 +7,7 @@ export interface Coche {
   color: string;
   kms: number;
   modelo: string;
+  marca?: string;
   precio?: number;
   vendido: number;
   numero_factura?: string;
@@ -21,6 +22,7 @@ export interface CocheCreateData {
   color: string;
   kms: number;
   modelo: string;
+  marca?: string;
 }
 
 export interface CocheUpdateData extends Partial<CocheCreateData> {

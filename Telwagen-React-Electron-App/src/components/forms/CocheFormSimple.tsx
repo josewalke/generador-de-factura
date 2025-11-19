@@ -20,6 +20,7 @@ export function CocheFormSimple({ coche, onSubmit, onCancel, isLoading = false }
   
   const [formData, setFormData] = useState({
     matricula: '',
+    marca: '',
     modelo: '',
     chasis: '',
     color: '',
@@ -34,6 +35,7 @@ export function CocheFormSimple({ coche, onSubmit, onCancel, isLoading = false }
     if (coche) {
       setFormData({
         matricula: coche.matricula || '',
+        marca: coche.marca || '',
         modelo: coche.modelo || '',
         chasis: coche.chasis || '',
         color: coche.color || '',
@@ -42,6 +44,7 @@ export function CocheFormSimple({ coche, onSubmit, onCancel, isLoading = false }
     } else {
       setFormData({
         matricula: '',
+        marca: '',
         modelo: '',
         chasis: '',
         color: '',
@@ -128,20 +131,36 @@ export function CocheFormSimple({ coche, onSubmit, onCancel, isLoading = false }
         )}
       </div>
 
-      {/* Modelo */}
-      <div>
-        <Label htmlFor="modelo">Modelo *</Label>
-        <Input
-          id="modelo"
-          value={formData.modelo}
-          onChange={(e) => handleInputChange('modelo', e.target.value)}
-          placeholder="Nissan Qashqai"
-          disabled={isFormLoading}
-          className={errors.modelo ? 'border-red-500' : ''}
-        />
-        {errors.modelo && (
-          <p className="text-sm text-red-600 mt-1">{errors.modelo}</p>
-        )}
+      {/* Marca y Modelo */}
+      <div className="grid grid-cols-2 gap-3">
+        <div>
+          <Label htmlFor="marca">Marca *</Label>
+          <Input
+            id="marca"
+            value={formData.marca}
+            onChange={(e) => handleInputChange('marca', e.target.value)}
+            placeholder="Nissan"
+            disabled={isFormLoading}
+            className={errors.marca ? 'border-red-500' : ''}
+          />
+          {errors.marca && (
+            <p className="text-sm text-red-600 mt-1">{errors.marca}</p>
+          )}
+        </div>
+        <div>
+          <Label htmlFor="modelo">Modelo *</Label>
+          <Input
+            id="modelo"
+            value={formData.modelo}
+            onChange={(e) => handleInputChange('modelo', e.target.value)}
+            placeholder="Qashqai"
+            disabled={isFormLoading}
+            className={errors.modelo ? 'border-red-500' : ''}
+          />
+          {errors.modelo && (
+            <p className="text-sm text-red-600 mt-1">{errors.modelo}</p>
+          )}
+        </div>
       </div>
 
       {/* Chasis */}

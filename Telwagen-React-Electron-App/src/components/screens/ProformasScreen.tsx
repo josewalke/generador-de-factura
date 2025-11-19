@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo, useCallback } from 'react';
+import { useState, useEffect, useMemo, useCallback, useRef } from 'react';
 import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
@@ -13,23 +13,14 @@ import { useEmpresas } from '../../hooks/useEmpresas';
 import { Cliente } from '../../services/clienteService';
 import { Coche } from '../../services/cocheService';
 import { Empresa } from '../../services/empresaService';
-import { facturaService, SiguienteNumeroResponse } from '../../services/facturaService';
-import { facturaPDFService, FacturaPDFData } from '../../services/facturaPDFService';
+import { proformaService, SiguienteNumeroResponse } from '../../services/proformaService';
+import { ProductoProforma } from '../../services/proformaService';
 import { toast } from 'sonner';
 import { Building2, RefreshCw, Plus, Car, DollarSign, Eye, FileText, Download, Zap, Info, Trash2, Home, Search } from 'lucide-react';
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '../ui/pagination';
 
-interface FacturasScreenProps {
+interface ProformasScreenProps {
   onNavigate: (screen: Screen) => void;
-}
-
-interface ProductoFactura {
-  id: string;
-  descripcion: string;
-  cantidad: number;
-  precio: number;
-  impuesto: number;
-  total: number;
 }
 
 type TipoImpuesto = 'igic' | 'iva';
@@ -40,29 +31,35 @@ interface ConfiguracionImpuesto {
   nombre: string;
 }
 
-export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
+export function ProformasScreen({ onNavigate }: ProformasScreenProps) {
   const [clienteSeleccionado, setClienteSeleccionado] = useState<Cliente | null>(null);
   const [empresaSeleccionada, setEmpresaSeleccionada] = useState<Empresa | null>(null);
-  const [productos, setProductos] = useState<ProductoFactura[]>([]);
+  const [cocheSeleccionado, setCocheSeleccionado] = useState<Coche | null>(null);
+  const [productos, setProductos] = useState<ProductoProforma[]>([]);
   const [busquedaCliente, setBusquedaCliente] = useState('');
   const [dropdownAbierto, setDropdownAbierto] = useState(false);
   const [mostrarModalEmpresa, setMostrarModalEmpresa] = useState(false);
   const [tipoImpuesto, setTipoImpuesto] = useState<TipoImpuesto>('igic');
-  const [facturaGenerada, setFacturaGenerada] = useState<any>(null);
-  const [generandoFactura, setGenerandoFactura] = useState(false);
+  const [porcentajeIGIC, setPorcentajeIGIC] = useState<number>(9.5);
+  const [porcentajeIVA, setPorcentajeIVA] = useState<number>(21);
+  const [proformaGenerada, setProformaGenerada] = useState<any>(null);
+  const [generandoProforma, setGenerandoProforma] = useState(false);
+  const [fechaValidez, setFechaValidez] = useState<string>('');
+  const [notas, setNotas] = useState<string>('');
   const [busquedaCoche, setBusquedaCoche] = useState<string>('');
   const [paginaCoches, setPaginaCoches] = useState<number>(1);
   const cochesPorPagina = 10;
+  const notasTextareaRef = useRef<HTMLTextAreaElement>(null);
   
   // Hooks para obtener datos reales
   const { clientes } = useClientes();
   const { coches, cochesDisponibles: cochesDisponiblesHook, loading, refreshCoches } = useCoches();
   const { empresas } = useEmpresas();
 
-  // Configuración de impuestos
+  // Configuración de impuestos con porcentajes editables
   const configuracionImpuestos: Record<TipoImpuesto, ConfiguracionImpuesto> = {
-    igic: { tipo: 'igic', porcentaje: 9.5, nombre: 'IGIC' },
-    iva: { tipo: 'iva', porcentaje: 21, nombre: 'IVA' }
+    igic: { tipo: 'igic', porcentaje: porcentajeIGIC, nombre: 'IGIC' },
+    iva: { tipo: 'iva', porcentaje: porcentajeIVA, nombre: 'IVA' }
   };
 
   const impuestoActual = configuracionImpuestos[tipoImpuesto];
@@ -74,6 +71,24 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
     }
   }, [empresas, empresaSeleccionada]);
 
+  // Establecer fecha de validez por defecto (hoy)
+  useEffect(() => {
+    const fecha = new Date();
+    setFechaValidez(fecha.toISOString().split('T')[0]);
+  }, []);
+
+  // Función para ajustar altura del textarea automáticamente
+  const ajustarAlturaTextarea = useCallback((textarea: HTMLTextAreaElement) => {
+    textarea.style.height = 'auto';
+    textarea.style.height = `${Math.max(100, textarea.scrollHeight)}px`;
+  }, []);
+
+  // Obtener fecha mínima (hoy)
+  const fechaMinima = useMemo(() => {
+    const hoy = new Date();
+    return hoy.toISOString().split('T')[0];
+  }, []);
+
   // Filtrar clientes basado en la búsqueda (memoizado)
   const clientesFiltrados = useMemo(() => 
     clientes.filter(cliente =>
@@ -82,18 +97,13 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
     ), [clientes, busquedaCliente]
   );
 
-  // Filtrar coches disponibles (excluir los ya agregados a la factura)
-  // Usamos cochesDisponiblesHook que ya filtra los vendidos, y luego excluimos los ya en la factura
+  // Filtrar coches disponibles (excluir los ya agregados a la proforma)
   const cochesDisponibles = useMemo(() => {
-    // Obtener las matrículas de los coches ya agregados a la factura
     const matriculasAgregadas = productos.map(producto => {
-      // Extraer la matrícula del texto de descripción
-      const match = producto.descripcion.match(/Matrícula: ([A-Z0-9-]+)/);
+      const match = producto.descripcion?.match(/Matrícula: ([A-Z0-9-]+)/);
       return match ? match[1] : null;
     }).filter(Boolean);
 
-    // Filtrar coches que no estén ya en la factura
-    // cochesDisponiblesHook ya excluye los vendidos (activo = false/0)
     return cochesDisponiblesHook.filter(coche => 
       !matriculasAgregadas.includes(coche.matricula)
     );
@@ -137,12 +147,10 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
     setBusquedaCliente(value);
     setDropdownAbierto(value.length > 0);
     
-    // Si el input está vacío, limpiar la selección
     if (value === '') {
       setClienteSeleccionado(null);
     }
     
-    // Si no coincide exactamente con el cliente seleccionado, limpiar la selección
     if (clienteSeleccionado && value !== (clienteSeleccionado.nombre || '')) {
       setClienteSeleccionado(null);
     }
@@ -151,47 +159,90 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
   // Función para recalcular impuestos de un producto
   const recalcularProducto = useCallback((precio: number, cantidad: number = 1): { impuesto: number; total: number } => {
     const subtotal = precio * cantidad;
-    const impuesto = subtotal * (impuestoActual.porcentaje / 100);
+    const porcentaje = tipoImpuesto === 'igic' ? porcentajeIGIC : porcentajeIVA;
+    const impuesto = subtotal * (porcentaje / 100);
     const total = subtotal + impuesto;
     return { impuesto, total };
-  }, [impuestoActual.porcentaje]);
+  }, [tipoImpuesto, porcentajeIGIC, porcentajeIVA]);
+
+  // Cargar coche seleccionado desde sessionStorage (si viene de CochesScreen)
+  // Este useEffect debe ir después de recalcularProducto
+  useEffect(() => {
+    const cocheSeleccionadoStr = sessionStorage.getItem('cocheSeleccionadoParaProforma');
+    if (cocheSeleccionadoStr) {
+      try {
+        const coche = JSON.parse(cocheSeleccionadoStr);
+        if (coche && !cocheSeleccionado) {
+          setCocheSeleccionado(coche);
+          // Agregar el producto directamente usando recalcularProducto
+          const precio = coche.precio || 0;
+          const { impuesto, total } = recalcularProducto(precio);
+          const nuevoProducto: ProductoProforma = {
+            id: Date.now().toString(),
+            descripcion: `${coche.marca || ''} ${coche.modelo} - Matrícula: ${coche.matricula} - ${coche.color}`.trim(),
+            cantidad: 1,
+            precio: precio,
+            precioUnitario: precio,
+            igic: impuesto,
+            impuesto: impuesto,
+            total: total,
+            subtotal: precio,
+            cocheId: coche.id?.toString(),
+            coche_id: coche.id?.toString()
+          };
+          setProductos(prev => [...prev, nuevoProducto]);
+          // Limpiar sessionStorage después de usar
+          sessionStorage.removeItem('cocheSeleccionadoParaProforma');
+        }
+      } catch (error) {
+        console.error('Error al cargar coche seleccionado:', error);
+        sessionStorage.removeItem('cocheSeleccionadoParaProforma');
+      }
+    }
+  }, [recalcularProducto, cocheSeleccionado]);
 
   const agregarProducto = useCallback((coche: Coche) => {
-    // Verificar si el coche ya está en la factura
     const yaExiste = productos.some(producto => 
-      producto.descripcion.includes(coche.matricula)
+      producto.descripcion?.includes(coche.matricula)
     );
     
     if (yaExiste) {
-      toast.warning('Este vehículo ya está en la factura');
+      toast.warning('Este vehículo ya está en la proforma');
       return;
     }
     
     const precio = coche.precio || 0;
     const { impuesto, total } = recalcularProducto(precio);
     
-    const nuevoProducto: ProductoFactura = {
+    const nuevoProducto: ProductoProforma = {
       id: Date.now().toString(),
-      descripcion: `${coche.modelo} - Matrícula: ${coche.matricula} - ${coche.color}`,
+      descripcion: `${coche.marca || ''} ${coche.modelo} - Matrícula: ${coche.matricula} - ${coche.color}`.trim(),
       cantidad: 1,
       precio: precio,
+      precioUnitario: precio,
+      igic: impuesto,
       impuesto: impuesto,
       total: total,
-      cocheId: coche.id?.toString()
+      subtotal: precio,
+      cocheId: coche.id?.toString(),
+      coche_id: coche.id?.toString()
     };
     
     setProductos(prev => [...prev, nuevoProducto]);
-    toast.success(`Vehículo ${coche.matricula} agregado a la factura`);
+    setCocheSeleccionado(coche);
+    toast.success(`Vehículo ${coche.matricula} agregado a la proforma`);
   }, [productos, recalcularProducto]);
 
   const eliminarProducto = useCallback((id: string) => {
     const producto = productos.find(p => p.id === id);
     setProductos(prev => prev.filter(p => p.id !== id));
     if (producto) {
-      toast.success(`Vehículo eliminado de la factura`);
+      toast.success(`Vehículo eliminado de la proforma`);
+    }
+    if (productos.length === 1) {
+      setCocheSeleccionado(null);
     }
   }, [productos]);
-
 
   // Función para actualizar precio de un producto
   const actualizarPrecioProducto = useCallback((id: string, nuevoPrecio: number) => {
@@ -201,8 +252,11 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
         return {
           ...producto,
           precio: nuevoPrecio,
+          precioUnitario: nuevoPrecio,
+          igic: impuesto,
           impuesto,
-          total
+          total,
+          subtotal: nuevoPrecio * producto.cantidad
         };
       }
       return producto;
@@ -215,144 +269,105 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
       const { impuesto, total } = recalcularProducto(producto.precio, producto.cantidad);
       return {
         ...producto,
+        igic: impuesto,
         impuesto,
-        total
+        total,
+        subtotal: producto.precio * producto.cantidad
       };
     }));
   }, [recalcularProducto]);
 
-  // Efecto para recalcular cuando cambia el tipo de impuesto
+  // Efecto para recalcular cuando cambia el tipo de impuesto o los porcentajes
   useEffect(() => {
     if (productos.length > 0) {
       recalcularTodosLosProductos();
     }
-  }, [tipoImpuesto, recalcularTodosLosProductos]);
+  }, [tipoImpuesto, porcentajeIGIC, porcentajeIVA, recalcularTodosLosProductos]);
 
   const calcularTotales = useMemo(() => {
     const subtotal = productos.reduce((sum, p) => sum + (p.precio * p.cantidad), 0);
-    const totalImpuestos = productos.reduce((sum, p) => sum + p.impuesto, 0);
+    const totalImpuestos = productos.reduce((sum, p) => sum + (p.igic || p.impuesto || 0), 0);
     const total = subtotal + totalImpuestos;
     return { subtotal, totalImpuestos, total };
   }, [productos]);
 
   const { subtotal, totalImpuestos, total } = calcularTotales;
 
-  // Función para generar factura
-  const generarFactura = useCallback(async () => {
-    if (!clienteSeleccionado || !empresaSeleccionada || productos.length === 0) {
-      toast.error('Faltan datos para generar la factura');
+  // Función para generar proforma
+  const generarProforma = useCallback(async () => {
+    if (!empresaSeleccionada || productos.length === 0) {
+      toast.error('Faltan datos para generar la proforma');
       return;
     }
 
     try {
-      setGenerandoFactura(true);
+      setGenerandoProforma(true);
       
-      // Obtener siguiente número de factura
-      const numeroFacturaData: SiguienteNumeroResponse = await facturaService.getSiguienteNumero(empresaSeleccionada.id);
-      const numeroFactura = numeroFacturaData.numero_factura;
+      // Obtener siguiente número de proforma
+      const numeroProformaData: SiguienteNumeroResponse = await proformaService.getSiguienteNumero(empresaSeleccionada.id);
+      const numeroProforma = numeroProformaData.data.numero_proforma;
       
-      // Preparar datos de la factura (versión simplificada)
-      const facturaData = {
-        numero_factura: numeroFactura,
-        cliente_id: clienteSeleccionado.id,
+      // Preparar datos de la proforma
+      const proformaData = {
+        numero_proforma: numeroProforma,
+        cliente_id: clienteSeleccionado?.id || undefined,
         empresa_id: empresaSeleccionada.id,
+        coche_id: cocheSeleccionado?.id || undefined,
         fecha_emision: new Date().toISOString().split('T')[0],
+        fecha_validez: fechaValidez || undefined,
         subtotal: subtotal,
         igic: totalImpuestos,
         total: total,
-        notas: `Factura generada el ${new Date().toLocaleDateString()}`,
+        notas: notas || `Proforma generada el ${new Date().toLocaleDateString()}`,
+        estado: 'pendiente',
         productos: productos.map(producto => ({
-          descripcion: producto.descripcion,
-          cantidad: 1,
-          precio_unitario: producto.precio,
-          subtotal: producto.precio,
-          igic: producto.impuesto,
-          total: producto.total,
-          coche_id: producto.cocheId || producto.coche_id || null
+          descripcion: producto.descripcion || '',
+          cantidad: producto.cantidad || 1,
+          precio_unitario: producto.precioUnitario || producto.precio || 0,
+          subtotal: producto.subtotal || (producto.precio * producto.cantidad),
+          igic: producto.igic !== undefined ? producto.igic : (producto.impuesto || 0),
+          total: producto.total || (producto.precio * producto.cantidad + (producto.igic || producto.impuesto || 0)),
+          coche_id: producto.coche_id || producto.cocheId || cocheSeleccionado?.id || null,
+          tipo_impuesto: producto.tipo_impuesto || producto.tipoImpuesto || tipoImpuesto
         }))
       };
 
-      // Crear la factura
-      const facturaCreada = await facturaService.create(facturaData);
+      // Crear la proforma
+      const proformaCreada = await proformaService.create(proformaData);
       
-      // Guardar la factura generada para el PDF
-      setFacturaGenerada({
-        ...facturaCreada,
-        numero: numeroFactura,
+      // Guardar la proforma generada
+      setProformaGenerada({
+        ...proformaCreada,
+        numero: numeroProforma,
         cliente: clienteSeleccionado,
         empresa: empresaSeleccionada,
+        coche: cocheSeleccionado,
         productos: productos
       });
 
-      toast.success(`Factura ${numeroFactura} generada exitosamente`);
-      
-      // Recargar coches para que los vendidos no aparezcan en la lista
-      await refreshCoches();
+      toast.success(`Proforma ${numeroProforma} generada exitosamente`);
       
       // Limpiar el formulario
       setProductos([]);
       setClienteSeleccionado(null);
+      setCocheSeleccionado(null);
+      setNotas('');
       
     } catch (error) {
-      console.error('Error al generar factura:', error);
+      console.error('Error al generar proforma:', error);
       
-      // Manejar errores específicos
       const errorMessage = error instanceof Error ? error.message : String(error);
       if (errorMessage.includes('ya existe')) {
-        toast.error('El número de factura ya existe. Inténtalo de nuevo.');
+        toast.error('El número de proforma ya existe. Inténtalo de nuevo.');
       } else if (errorMessage.includes('empresa_id')) {
         toast.error('Error con la empresa seleccionada');
       } else {
-        toast.error('Error al generar la factura. Inténtalo de nuevo.');
+        toast.error('Error al generar la proforma. Inténtalo de nuevo.');
       }
     } finally {
-      setGenerandoFactura(false);
+      setGenerandoProforma(false);
     }
-  }, [clienteSeleccionado, empresaSeleccionada, productos, subtotal, totalImpuestos, total, refreshCoches]);
-
-  // Función para descargar PDF
-  const descargarPDF = useCallback(async () => {
-    if (!facturaGenerada) {
-      toast.error('No hay factura generada para descargar');
-      return;
-    }
-
-    try {
-      // Preparar datos para el PDF
-      const pdfData: FacturaPDFData = {
-        numero: facturaGenerada.numero,
-        fecha: facturaGenerada.fecha_emision,
-        cliente: facturaGenerada.cliente.nombre,
-        empresa: facturaGenerada.empresa.nombre,
-        subtotal: facturaGenerada.subtotal,
-        impuesto: facturaGenerada.impuestos,
-        total: facturaGenerada.total,
-        estado: facturaGenerada.estado,
-        productos: facturaGenerada.productos.map((producto: ProductoFactura) => ({
-          descripcion: producto.descripcion,
-          cantidad: 1, // Siempre 1 para vehículos
-          precio: producto.precio
-        }))
-      };
-
-      // Generar y descargar PDF
-      await facturaPDFService.generarPDFFactura(pdfData);
-      toast.success('PDF descargado exitosamente');
-      
-    } catch (error) {
-      console.error('Error al descargar PDF:', error);
-      toast.error('Error al descargar el PDF');
-    }
-  }, [facturaGenerada]);
-
-  // Funciones para manejar el modal de empresa
-  const handleSeleccionarEmpresa = useCallback(() => {
-    setMostrarModalEmpresa(false);
-  }, []);
-
-  const handleCancelarSeleccionEmpresa = useCallback(() => {
-    setMostrarModalEmpresa(false);
-  }, []);
+  }, [clienteSeleccionado, empresaSeleccionada, cocheSeleccionado, productos, subtotal, totalImpuestos, total, fechaValidez, notas, tipoImpuesto]);
 
   return (
     <div className="min-h-screen bg-gray-50">
@@ -370,8 +385,8 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
                 <span>Home</span>
               </Button>
               <div>
-                <h1 className="text-2xl font-bold text-gray-900">Generar Factura</h1>
-                <p className="text-gray-600">Nueva factura de venta</p>
+                <h1 className="text-2xl font-bold text-gray-900">Generar Proforma</h1>
+                <p className="text-gray-600">Presupuesto sin validez fiscal</p>
               </div>
             </div>
           </div>
@@ -406,7 +421,7 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
                       <DialogHeader>
                         <DialogTitle>Seleccionar Empresa</DialogTitle>
                         <DialogDescription>
-                          Elige la empresa que emitirá esta factura.
+                          Elige la empresa que emitirá esta proforma.
                         </DialogDescription>
                       </DialogHeader>
                       <div className="space-y-4">
@@ -419,7 +434,10 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
                                   ? 'border-blue-500 bg-blue-50' 
                                   : 'border-gray-200'
                               }`}
-                              onClick={() => setEmpresaSeleccionada(empresa)}
+                              onClick={() => {
+                                setEmpresaSeleccionada(empresa);
+                                setMostrarModalEmpresa(false);
+                              }}
                             >
                               <div className="flex items-center justify-between">
                                 <div>
@@ -439,15 +457,6 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
                               <p>No hay empresas disponibles</p>
                             </div>
                           )}
-                        </div>
-                        
-                        <div className="flex justify-end space-x-2 pt-4">
-                          <Button variant="outline" size="sm" onClick={handleCancelarSeleccionEmpresa}>
-                            Cancelar
-                          </Button>
-                          <Button size="sm" onClick={handleSeleccionarEmpresa}>
-                            Seleccionar
-                          </Button>
                         </div>
                       </div>
                     </DialogContent>
@@ -473,7 +482,7 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
               <CardHeader>
                 <CardTitle className="flex items-center space-x-2">
                   <span className="text-lg">👤</span>
-                  <span>Datos del Cliente</span>
+                  <span>Datos del Cliente (Opcional)</span>
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-4">
@@ -487,12 +496,10 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
                       onChange={(e) => handleInputChange(e.target.value)}
                       onFocus={() => setDropdownAbierto(busquedaCliente.length > 0)}
                       onBlur={() => {
-                        // Retrasar el cierre para permitir la selección
                         setTimeout(() => setDropdownAbierto(false), 200);
                       }}
                     />
                     
-                    {/* Dropdown con sugerencias */}
                     {dropdownAbierto && clientesFiltrados.length > 0 && (
                       <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg max-h-60 overflow-auto">
                         {clientesFiltrados.map((cliente) => (
@@ -506,16 +513,12 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
                                 <p className="font-medium text-gray-900">{cliente.nombre || 'Sin nombre'}</p>
                                 <p className="text-sm text-gray-500">CIF: {cliente.identificacion || 'Sin CIF'}</p>
                               </div>
-                              <div className="text-right">
-                                <p className="text-xs text-gray-400">{cliente.email || 'Sin email'}</p>
-                              </div>
                             </div>
                           </div>
                         ))}
                       </div>
                     )}
                     
-                    {/* Mensaje cuando no hay resultados */}
                     {dropdownAbierto && busquedaCliente.length > 0 && clientesFiltrados.length === 0 && (
                       <div className="absolute z-50 w-full mt-1 bg-white border border-gray-200 rounded-md shadow-lg">
                         <div className="px-4 py-3 text-gray-500 text-center">
@@ -531,14 +534,8 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
                     <p className="font-semibold">{clienteSeleccionado.nombre || 'Sin nombre'}</p>
                     <p className="text-gray-600">CIF: {clienteSeleccionado.identificacion || 'Sin CIF'}</p>
                     <p className="text-gray-600">{clienteSeleccionado.direccion || 'Sin dirección'}</p>
-                    <p className="text-gray-600">{clienteSeleccionado.email || 'Sin email'}</p>
                   </div>
                 )}
-
-                <Button variant="outline" className="w-full">
-                  <Plus className="w-4 h-4 mr-2" />
-                  Nuevo Cliente
-                </Button>
               </CardContent>
             </Card>
 
@@ -585,18 +582,8 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
                         {cochesPaginados.map(coche => (
                           <div
                             key={coche.id}
-                            className={`p-3 border rounded-lg cursor-pointer transition-colors hover:bg-gray-50 ${
-                              !coche.vendido 
-                                ? 'border-gray-200 hover:border-blue-300' 
-                                : 'border-gray-200 opacity-60'
-                            }`}
-                            onClick={(e) => {
-                              e.preventDefault();
-                              e.stopPropagation();
-                              if (!coche.vendido) {
-                                agregarProducto(coche);
-                              }
-                            }}
+                            className="p-3 border rounded-lg cursor-pointer transition-colors hover:bg-gray-50 border-gray-200 hover:border-blue-300"
+                            onClick={() => agregarProducto(coche)}
                           >
                             <div className="flex justify-between items-center">
                               <div className="flex items-center space-x-3">
@@ -680,7 +667,7 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
                           {busquedaCoche
                             ? `No se encontraron vehículos que coincidan con "${busquedaCoche}"`
                             : productos.length > 0 
-                            ? 'Todos los vehículos han sido agregados a la factura' 
+                            ? 'Todos los vehículos han sido agregados a la proforma' 
                             : 'No hay vehículos registrados'
                           }
                         </p>
@@ -691,13 +678,13 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
               </CardContent>
             </Card>
 
-            {/* Productos en la Factura */}
+            {/* Productos en la Proforma */}
             {productos.length > 0 && (
               <Card>
                 <CardHeader>
                   <CardTitle className="flex items-center space-x-2">
                     <span className="text-lg">📋</span>
-                    <span>Productos en la Factura</span>
+                    <span>Productos en la Proforma</span>
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
@@ -739,9 +726,16 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
                         <Input
                           id="tax-rate"
                           type="number"
-                          value={impuestoActual.porcentaje}
-                          readOnly
-                          className="w-16 text-center bg-gray-100"
+                          value={tipoImpuesto === 'igic' ? porcentajeIGIC : porcentajeIVA}
+                          onChange={(e) => {
+                            const valor = parseFloat(e.target.value) || 0;
+                            if (tipoImpuesto === 'igic') {
+                              setPorcentajeIGIC(valor);
+                            } else {
+                              setPorcentajeIVA(valor);
+                            }
+                          }}
+                          className="w-16 text-center"
                           min="0"
                           max="100"
                           step="0.1"
@@ -770,20 +764,20 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
                                 value={producto.precio}
                                 onChange={(e) => {
                                   const nuevoPrecio = parseFloat(e.target.value) || 0;
-                                  actualizarPrecioProducto(producto.id, nuevoPrecio);
+                                  actualizarPrecioProducto(producto.id!, nuevoPrecio);
                                 }}
                                 className="w-24 text-right"
                                 min="0"
                                 step="0.01"
                               />
                             </TableCell>
-                            <TableCell>€{producto.impuesto.toLocaleString()}</TableCell>
-                            <TableCell className="font-semibold">€{producto.total.toLocaleString()}</TableCell>
+                            <TableCell>€{(producto.igic || producto.impuesto || 0).toLocaleString()}</TableCell>
+                            <TableCell className="font-semibold">€{(producto.total || 0).toLocaleString()}</TableCell>
                             <TableCell>
                               <Button 
                                 variant="destructive" 
                                 size="sm"
-                                onClick={() => eliminarProducto(producto.id)}
+                                onClick={() => eliminarProducto(producto.id!)}
                               >
                                 <Trash2 className="w-4 h-4" />
                               </Button>
@@ -792,6 +786,50 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
                         ))}
                       </TableBody>
                     </Table>
+                  </div>
+                </CardContent>
+              </Card>
+            )}
+
+            {/* Fecha de Validez y Notas */}
+            {productos.length > 0 && (
+              <Card>
+                <CardHeader>
+                  <CardTitle>Información Adicional</CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div>
+                    <Label htmlFor="fechaValidez">Fecha de Validez</Label>
+                    <Input
+                      id="fechaValidez"
+                      type="date"
+                      value={fechaValidez}
+                      min={fechaMinima}
+                      onChange={(e) => {
+                        const fechaSeleccionada = e.target.value;
+                        if (fechaSeleccionada >= fechaMinima) {
+                          setFechaValidez(fechaSeleccionada);
+                        }
+                      }}
+                      className="w-auto max-w-[200px]"
+                    />
+                  </div>
+                  <div>
+                    <Label htmlFor="notas">Notas (Opcional)</Label>
+                    <textarea
+                      ref={notasTextareaRef}
+                      id="notas"
+                      className="w-full min-h-[100px] p-2 border rounded-md resize-none overflow-hidden"
+                      value={notas}
+                      onChange={(e) => {
+                        setNotas(e.target.value);
+                        ajustarAlturaTextarea(e.target);
+                      }}
+                      onInput={(e) => {
+                        ajustarAlturaTextarea(e.target as HTMLTextAreaElement);
+                      }}
+                      placeholder="Añade notas adicionales para la proforma..."
+                    />
                   </div>
                 </CardContent>
               </Card>
@@ -835,118 +873,13 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
                 </CardTitle>
               </CardHeader>
               <CardContent className="space-y-3">
-                <Dialog>
-                  <DialogTrigger asChild>
-                    <Button 
-                      className="w-full" 
-                      disabled={!clienteSeleccionado || productos.length === 0}
-                    >
-                      <Eye className="w-4 h-4 mr-2" />
-                      Vista Previa
-                    </Button>
-                  </DialogTrigger>
-                  <DialogContent className="max-w-[98vw] w-[98vw] max-h-[95vh] overflow-hidden">
-                    <DialogHeader>
-                      <DialogTitle>Vista Previa de Factura</DialogTitle>
-                      <DialogDescription>
-                        Revisa los detalles de la factura antes de generarla.
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="bg-white p-10 border rounded-lg overflow-y-auto max-h-[80vh]">
-                      <div className="text-center mb-8">
-                        <h2 className="text-3xl font-bold text-blue-900">FACTURA</h2>
-                        <p className="text-lg text-gray-600">Nº C001/2024</p>
-                      </div>
-                      
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
-                        <div>
-                          <h3 className="font-bold mb-3 text-base border-b pb-1">EMISOR</h3>
-                          {empresaSeleccionada ? (
-                            <div className="text-base">
-                              <p className="font-semibold text-lg tracking-wide">{empresaSeleccionada.nombre}</p>
-                              <p className="text-gray-700">CIF: {empresaSeleccionada.cif}</p>
-                              <p className="break-words text-gray-700">{empresaSeleccionada.direccion}</p>
-                            </div>
-                          ) : (
-                            <p className="text-gray-500">No hay empresa seleccionada</p>
-                          )}
-                        </div>
-                        {clienteSeleccionado && (
-                          <div>
-                            <h3 className="font-bold mb-3 text-base border-b pb-1">CLIENTE</h3>
-                            <div className="text-base">
-                              <p className="font-semibold text-lg">{clienteSeleccionado.nombre}</p>
-                              <p className="text-gray-700">CIF: {clienteSeleccionado.identificacion}</p>
-                              <p className="break-words text-gray-700">{clienteSeleccionado.direccion}</p>
-                            </div>
-                          </div>
-                        )}
-                      </div>
-
-                      <div className="mb-6">
-                        <Table className="w-full">
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead className="w-3/5">Descripción</TableHead>
-                              <TableHead className="w-48 text-right">Precio</TableHead>
-                              <TableHead className="w-48 text-right">{impuestoActual.nombre}</TableHead>
-                              <TableHead className="w-52 text-right">Total</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {productos.map(producto => (
-                              <TableRow key={producto.id}>
-                                <TableCell className="break-words text-sm">
-                                  {producto.descripcion}
-                                </TableCell>
-                                <TableCell className="text-right">€{producto.precio.toLocaleString()}</TableCell>
-                                <TableCell className="text-right">€{producto.impuesto.toLocaleString()}</TableCell>
-                                <TableCell className="text-right font-semibold">€{producto.total.toLocaleString()}</TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </div>
-
-                      <div className="border-t-2 pt-6">
-                        <div className="flex justify-end">
-                          <div className="text-right space-y-3 min-w-[400px]">
-                            <div className="flex justify-between text-lg">
-                              <span>Subtotal:</span>
-                              <span>€{subtotal.toLocaleString()}</span>
-                            </div>
-                            <div className="flex justify-between text-lg">
-                              <span>{impuestoActual.nombre} ({impuestoActual.porcentaje}%):</span>
-                              <span>€{totalImpuestos.toLocaleString()}</span>
-                            </div>
-                            <div className="flex justify-between text-2xl font-bold text-blue-900 border-t-2 pt-3">
-                              <span>TOTAL:</span>
-                              <span>€{total.toLocaleString()}</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </DialogContent>
-                </Dialog>
-
                 <Button 
                   className="w-full bg-blue-600 hover:bg-blue-700" 
-                  disabled={!clienteSeleccionado || productos.length === 0 || generandoFactura}
-                  onClick={generarFactura}
+                  disabled={productos.length === 0 || generandoProforma}
+                  onClick={generarProforma}
                 >
                   <FileText className="w-4 h-4 mr-2" />
-                  {generandoFactura ? 'Generando...' : 'Generar Factura'}
-                </Button>
-
-                <Button 
-                  variant="outline" 
-                  className="w-full"
-                  disabled={!facturaGenerada}
-                  onClick={descargarPDF}
-                >
-                  <Download className="w-4 h-4 mr-2" />
-                  Descargar PDF
+                  {generandoProforma ? 'Generando...' : 'Generar Proforma'}
                 </Button>
               </CardContent>
             </Card>
@@ -961,7 +894,7 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
               </CardHeader>
               <CardContent>
                 <p className="text-sm text-gray-600">
-                  Las facturas se numeran automáticamente siguiendo el formato C001/2024.
+                  Las proformas son presupuestos sin validez fiscal. Se numeran automáticamente siguiendo el formato PRO-XXX/YYYY.
                   Puedes cambiar entre IGIC (9.5%) para Canarias o IVA (21%) para península.
                 </p>
               </CardContent>
@@ -972,3 +905,4 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
     </div>
   );
 }
+

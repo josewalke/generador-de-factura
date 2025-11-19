@@ -316,6 +316,72 @@ async function migrateDetalleFacturaCocheId() {
     }
 }
 
+async function ensureCocheMarcaColumn(isPostgreSQL) {
+    try {
+        if (isPostgreSQL) {
+            await db.query('ALTER TABLE coches ADD COLUMN IF NOT EXISTS marca TEXT');
+        } else {
+            await new Promise((resolve, reject) => {
+                db.run(`ALTER TABLE coches ADD COLUMN marca TEXT`, (err) => {
+                    if (err && !err.message.toLowerCase().includes('duplicate column name')) {
+                        reject(err);
+                    } else {
+                        resolve();
+                    }
+                });
+            });
+        }
+        logger.systemEvent('Columna marca verificada en coches');
+    } catch (error) {
+        logger.error('Error asegurando columna marca en coches', { error: error.message });
+    }
+}
+
+async function migrateCocheMarcaFromModelo() {
+    if (!db) return;
+    const dbType = config.get('database.type') || 'postgresql';
+    try {
+        if (dbType === 'postgresql') {
+            // Actualizar marca desde modelo para registros con marca NULL, vacía o 'N/A'
+            await db.query(`
+                UPDATE coches
+                SET marca = TRIM(SPLIT_PART(modelo, ' ', 1)),
+                    modelo = CASE 
+                        WHEN POSITION(' ' IN modelo) > 0 
+                        THEN TRIM(SUBSTRING(modelo FROM POSITION(' ' IN modelo) + 1))
+                        ELSE modelo
+                    END
+                WHERE (marca IS NULL OR marca = '' OR marca = 'N/A') 
+                  AND modelo IS NOT NULL 
+                  AND modelo != ''
+                  AND TRIM(modelo) != ''
+            `);
+        } else {
+            await new Promise((resolve, reject) => {
+                db.run(`
+                    UPDATE coches
+                    SET marca = TRIM(SUBSTR(modelo, 1, CASE WHEN INSTR(modelo || ' ', ' ') > 0 THEN INSTR(modelo || ' ', ' ') - 1 ELSE LENGTH(modelo) END)),
+                        modelo = CASE 
+                            WHEN INSTR(modelo || ' ', ' ') > 0 
+                            THEN TRIM(SUBSTR(modelo, INSTR(modelo || ' ', ' ') + 1))
+                            ELSE modelo
+                        END
+                    WHERE (marca IS NULL OR marca = '' OR marca = 'N/A') 
+                      AND modelo IS NOT NULL 
+                      AND modelo != ''
+                      AND TRIM(modelo) != ''
+                `, (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                });
+            });
+        }
+        logger.systemEvent('Migración marca desde modelo completada');
+    } catch (error) {
+        logger.warn('No se pudo migrar marca desde modelo', { error: error.message });
+    }
+}
+
 // Middleware de autenticación para endpoints protegidos
 const requireAuth = (req, res, next) => {
     authService.authMiddleware(req, res, next);
@@ -990,6 +1056,56 @@ async function initDatabase() {
         }
         
         await migrateDetalleFacturaCocheId();
+        
+        // Asegurar columna marca en coches
+        await ensureCocheMarcaColumn(isPostgreSQL);
+        
+        // Migrar marca desde modelo existente
+        await migrateCocheMarcaFromModelo();
+
+        // Tabla de proformas (presupuestos sin validez fiscal)
+        await createTable(`
+            CREATE TABLE IF NOT EXISTS proformas (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                numero_proforma TEXT NOT NULL,
+                empresa_id INTEGER NOT NULL,
+                cliente_id INTEGER,
+                coche_id INTEGER,
+                fecha_emision DATE NOT NULL,
+                fecha_validez DATE,
+                subtotal REAL NOT NULL,
+                igic REAL NOT NULL,
+                total REAL NOT NULL,
+                estado TEXT DEFAULT 'pendiente',
+                notas TEXT,
+                fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP,
+                activo ${isPostgreSQL ? 'BOOLEAN DEFAULT true' : 'INTEGER DEFAULT 1'},
+                FOREIGN KEY (empresa_id) REFERENCES empresas (id),
+                FOREIGN KEY (cliente_id) REFERENCES clientes (id),
+                FOREIGN KEY (coche_id) REFERENCES coches (id),
+                UNIQUE(numero_proforma, empresa_id)
+            )
+        `, 'proformas');
+
+        // Tabla de detalles de proforma
+        await createTable(`
+            CREATE TABLE IF NOT EXISTS detalles_proforma (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                proforma_id INTEGER NOT NULL,
+                producto_id INTEGER,
+                coche_id INTEGER,
+                cantidad INTEGER NOT NULL,
+                precio_unitario REAL NOT NULL,
+                subtotal REAL NOT NULL,
+                igic REAL NOT NULL,
+                total REAL NOT NULL,
+                descripcion TEXT,
+                tipo_impuesto TEXT DEFAULT 'igic',
+                FOREIGN KEY (proforma_id) REFERENCES proformas (id),
+                FOREIGN KEY (producto_id) REFERENCES productos (id),
+                FOREIGN KEY (coche_id) REFERENCES coches (id)
+            )
+        `, 'detalles_proforma');
 
         // Tabla de auditoría (para cumplir con Ley Antifraude)
         await createTable(`
@@ -2361,15 +2477,26 @@ app.post('/api/coches', (req, res) => {
         try {
             console.log('🔍 [POST /api/coches] Datos recibidos:', req.body);
             
-            const { matricula, chasis, color, kms, modelo } = req.body;
+            const { matricula, chasis, color, kms, modelo, marca } = req.body;
+            
+            // Si no se proporciona marca, extraerla del modelo
+            let marcaFinal = marca;
+            let modeloFinal = modelo;
+            if (!marcaFinal && modeloFinal) {
+                const partes = modeloFinal.split(' ');
+                marcaFinal = partes.length > 0 ? partes[0] : '';
+                if (partes.length > 1) {
+                    modeloFinal = partes.slice(1).join(' ');
+                }
+            }
             
             // Validar datos requeridos
-            if (!matricula || !chasis || !color || kms === undefined || kms === null || !modelo) {
-                console.log('❌ [POST /api/coches] Datos faltantes:', { matricula, chasis, color, kms, modelo });
+            if (!matricula || !chasis || !color || kms === undefined || kms === null || !modeloFinal) {
+                console.log('❌ [POST /api/coches] Datos faltantes:', { matricula, chasis, color, kms, modelo: modeloFinal, marca: marcaFinal });
                 return res.status(400).json({ 
                     error: 'Faltan datos requeridos',
                     required: ['matricula', 'chasis', 'color', 'kms', 'modelo'],
-                    received: { matricula, chasis, color, kms, modelo }
+                    received: { matricula, chasis, color, kms, modelo: modeloFinal, marca: marcaFinal }
                 });
             }
             
@@ -2397,14 +2524,14 @@ app.post('/api/coches', (req, res) => {
                 });
             }
             
-            console.log('🔍 [POST /api/coches] Ejecutando INSERT con datos:', [matricula, chasis, color, kms, modelo]);
+            console.log('🔍 [POST /api/coches] Ejecutando INSERT con datos:', [matricula, chasis, color, kms, modeloFinal, marcaFinal]);
             
             // Insertar coche
             const result = await new Promise((resolve, reject) => {
                 db.run(`
-                    INSERT INTO coches (matricula, chasis, color, kms, modelo)
-                    VALUES (?, ?, ?, ?, ?)
-                `, [matricula, chasis, color, kms, modelo], function(err) {
+                    INSERT INTO coches (matricula, chasis, color, kms, modelo, marca)
+                    VALUES (?, ?, ?, ?, ?, ?)
+                `, [matricula, chasis, color, kms, modeloFinal, marcaFinal || null], function(err) {
                     if (err) {
                         reject(err);
                         return;
@@ -2429,7 +2556,8 @@ app.post('/api/coches', (req, res) => {
                     chasis, 
                     color, 
                     kms, 
-                    modelo 
+                    modelo: modeloFinal,
+                    marca: marcaFinal
                 } 
             });
             
@@ -2452,7 +2580,7 @@ app.put('/api/coches/:id', (req, res) => {
         try {
             const { id } = req.params;
             const cocheId = parseInt(id, 10); // Convertir ID a número
-            const { matricula, chasis, color, kms, modelo } = req.body;
+            const { matricula, chasis, color, kms, modelo, marca } = req.body;
             
             console.log('🔍 [PUT /api/coches/:id] Actualizando coche ID:', cocheId);
             console.log('🔍 [PUT /api/coches/:id] Datos recibidos:', req.body);
@@ -2465,11 +2593,22 @@ app.put('/api/coches/:id', (req, res) => {
                 });
             }
             
+            // Si se proporciona modelo pero no marca, extraer marca del modelo
+            let marcaFinal = marca;
+            let modeloFinal = modelo;
+            if (modeloFinal && !marcaFinal) {
+                const partes = modeloFinal.split(' ');
+                marcaFinal = partes.length > 0 ? partes[0] : '';
+                if (partes.length > 1) {
+                    modeloFinal = partes.slice(1).join(' ');
+                }
+            }
+            
             // Validar que al menos un campo esté presente
-            if (!matricula && !chasis && !color && kms === undefined && !modelo) {
+            if (!matricula && !chasis && !color && kms === undefined && !modeloFinal && !marcaFinal) {
                 return res.status(400).json({ 
                     error: 'Al menos un campo debe ser proporcionado para actualizar',
-                    received: { matricula, chasis, color, kms, modelo }
+                    received: { matricula, chasis, color, kms, modelo: modeloFinal, marca: marcaFinal }
                 });
             }
             
@@ -2558,9 +2697,13 @@ app.put('/api/coches/:id', (req, res) => {
                 updates.push('kms = ?');
                 values.push(kms);
             }
-            if (modelo !== undefined) {
+            if (modeloFinal !== undefined) {
                 updates.push('modelo = ?');
-                values.push(modelo);
+                values.push(modeloFinal);
+            }
+            if (marcaFinal !== undefined) {
+                updates.push('marca = ?');
+                values.push(marcaFinal || null);
             }
             
             // Validar que haya campos para actualizar
@@ -3720,6 +3863,626 @@ function extraerCiudad(direccion) {
     
     return null;
 }
+
+// ==================== ENDPOINTS DE PROFORMAS ====================
+
+// GET - Obtener todas las proformas (con paginación)
+app.get('/api/proformas', async (req, res) => {
+    try {
+        const { page = 1, limit = 20, search = '', empresa_id = '', cliente_id = '', coche_id = '' } = req.query;
+        const maxLimit = Math.min(parseInt(limit) || 20, 100);
+        
+        const dbType = config.get('database.type') || 'postgresql';
+        const activoValue = dbType === 'postgresql' ? 'true' : '1';
+        
+        let whereConditions = [`(p.activo = ${activoValue} OR p.activo IS NULL)`];
+        let whereParams = [];
+        
+        if (search) {
+            whereConditions.push('(p.numero_proforma LIKE ? OR c.nombre LIKE ? OR e.nombre LIKE ?)');
+            whereParams.push(`%${search}%`, `%${search}%`, `%${search}%`);
+        }
+        
+        if (empresa_id) {
+            whereConditions.push('p.empresa_id = ?');
+            whereParams.push(empresa_id);
+        }
+        
+        if (cliente_id) {
+            whereConditions.push('p.cliente_id = ?');
+            whereParams.push(cliente_id);
+        }
+        
+        if (coche_id) {
+            whereConditions.push('p.coche_id = ?');
+            whereParams.push(coche_id);
+        }
+        
+        const whereClause = whereConditions.join(' AND ');
+        
+        const joins = [
+            { type: 'LEFT', table: 'clientes c', condition: 'p.cliente_id = c.id' },
+            { type: 'LEFT', table: 'empresas e', condition: 'p.empresa_id = e.id' },
+            { type: 'LEFT', table: 'coches co', condition: 'p.coche_id = co.id' }
+        ];
+        
+        const result = await paginationManager.getPaginatedDataWithJoins('proformas p', joins, {
+            page: parseInt(page),
+            limit: maxLimit,
+            where: whereClause,
+            whereParams: whereParams,
+            orderBy: 'p.fecha_creacion',
+            orderDirection: 'DESC',
+            select: 'p.*, c.nombre as cliente_nombre, c.identificacion as cliente_identificacion, e.nombre as empresa_nombre, e.cif as empresa_cif, co.matricula as coche_matricula, co.modelo as coche_modelo, co.marca as coche_marca'
+        });
+        
+        res.json({ success: true, data: result.data || [], pagination: result.pagination });
+    } catch (error) {
+        console.error('❌ Error al obtener proformas:', error);
+        res.status(500).json({ error: error.message });
+    }
+});
+
+// GET - Obtener proforma por ID con detalles
+app.get('/api/proformas/:id', (req, res) => {
+    const proformaId = req.params.id;
+    
+    db.get(`
+        SELECT p.*, c.nombre as cliente_nombre, c.direccion as cliente_direccion, c.identificacion as cliente_identificacion,
+               e.nombre as empresa_nombre, e.cif as empresa_cif, e.direccion as empresa_direccion,
+               co.matricula as coche_matricula, co.modelo as coche_modelo, co.marca as coche_marca, co.color as coche_color, co.kms as coche_kms, co.chasis as coche_chasis
+        FROM proformas p 
+        LEFT JOIN clientes c ON p.cliente_id = c.id 
+        LEFT JOIN empresas e ON p.empresa_id = e.id
+        LEFT JOIN coches co ON p.coche_id = co.id
+        WHERE p.id = ?
+    `, [proformaId], (err, proforma) => {
+        if (err) {
+            res.status(500).json({ error: err.message });
+            return;
+        }
+        
+        if (!proforma) {
+            res.status(404).json({ error: 'Proforma no encontrada' });
+            return;
+        }
+        
+        // Obtener detalles de la proforma
+        db.all(`
+            SELECT dp.*, COALESCE(dp.descripcion, pr.descripcion) as descripcion, COALESCE(dp.tipo_impuesto, 'igic') as tipo_impuesto,
+                   co.matricula as coche_matricula, co.chasis as coche_chasis, co.color as coche_color, 
+                   co.kms as coche_kms, co.modelo as coche_modelo, co.marca as coche_marca
+            FROM detalles_proforma dp
+            LEFT JOIN productos pr ON dp.producto_id = pr.id
+            LEFT JOIN coches co ON dp.coche_id = co.id
+            WHERE dp.proforma_id = ?
+        `, [proformaId], (err, detalles) => {
+            if (err) {
+                res.status(500).json({ error: err.message });
+                return;
+            }
+            
+            proforma.detalles = detalles;
+            res.json({ success: true, data: proforma });
+        });
+    });
+});
+
+// POST - Crear nueva proforma
+app.post('/api/proformas', async (req, res) => {
+    const startTime = Date.now();
+    
+    try {
+        const { 
+            numero_proforma, 
+            empresa_id,
+            cliente_id, 
+            coche_id,
+            fecha_emision, 
+            fecha_validez, 
+            subtotal, 
+            igic, 
+            total, 
+            notas,
+            productos
+        } = req.body;
+        
+        logger.info('Iniciando creación de proforma', {
+            numero_proforma,
+            empresa_id,
+            cliente_id,
+            coche_id,
+            total,
+            productos_count: productos?.length || 0
+        }, 'operations');
+        
+        // Validar empresa_id
+        if (!empresa_id || empresa_id === null || empresa_id === undefined) {
+            return res.status(400).json({ 
+                success: false, 
+                error: 'empresa_id es obligatorio para crear una proforma' 
+            });
+        }
+        
+        // Verificar que la empresa existe
+        const empresaExiste = await new Promise((resolve, reject) => {
+            db.get("SELECT id, nombre FROM empresas WHERE id = ?", [empresa_id], (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+        
+        if (!empresaExiste) {
+            return res.status(400).json({ 
+                success: false, 
+                error: `La empresa con ID ${empresa_id} no existe en la base de datos` 
+            });
+        }
+        
+        // Validar número de proforma único para la empresa
+        if (numero_proforma) {
+            const numeroExiste = await new Promise((resolve, reject) => {
+                db.get("SELECT id, numero_proforma FROM proformas WHERE numero_proforma = ? AND empresa_id = ?", 
+                    [numero_proforma, empresa_id], (err, row) => {
+                        if (err) reject(err);
+                        else resolve(row);
+                    });
+            });
+            
+            if (numeroExiste) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: `El número de proforma "${numero_proforma}" ya existe para la empresa "${empresaExiste.nombre}"` 
+                });
+            }
+        }
+        
+        // Validar cliente_id si se proporciona
+        if (cliente_id) {
+            const clienteExiste = await new Promise((resolve, reject) => {
+                db.get("SELECT id, nombre FROM clientes WHERE id = ?", [cliente_id], (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                });
+            });
+            
+            if (!clienteExiste) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: `El cliente con ID ${cliente_id} no existe en la base de datos` 
+                });
+            }
+        }
+        
+        // Validar coche_id si se proporciona
+        if (coche_id) {
+            const cocheExiste = await new Promise((resolve, reject) => {
+                db.get("SELECT id, matricula FROM coches WHERE id = ?", [coche_id], (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                });
+            });
+            
+            if (!cocheExiste) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: `El coche con ID ${coche_id} no existe en la base de datos` 
+                });
+            }
+        }
+        
+        // Insertar proforma
+        const dbType = config.get('database.type') || 'postgresql';
+        const activoValue = dbType === 'postgresql' ? true : 1;
+        
+        const query = `
+            INSERT INTO proformas (
+                numero_proforma, empresa_id, cliente_id, coche_id, fecha_emision, fecha_validez,
+                subtotal, igic, total, notas, activo
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        `;
+        
+        const params = [
+            numero_proforma, empresa_id, cliente_id || null, coche_id || null, fecha_emision, fecha_validez || null,
+            subtotal, igic, total, notas || null, activoValue
+        ];
+        
+        db.run(query, params, async function(err) {
+            if (err) {
+                console.error('❌ Error al crear proforma:', err.message);
+                res.status(500).json({ 
+                    success: false,
+                    error: 'Error al insertar proforma en la base de datos',
+                    details: err.message 
+                });
+                return;
+            }
+            
+            const proformaId = this.lastID;
+            
+            try {
+                // Insertar detalles de la proforma
+                if (productos && productos.length > 0) {
+                    for (const producto of productos) {
+                        const productoId = producto.id && producto.id > 0 ? producto.id : null;
+                        const cocheIdDetalle = producto.coche_id || producto.cocheId || producto.cocheID || coche_id || null;
+                        
+                        await new Promise((resolve, reject) => {
+                            const precioUnitario = producto.precio_unitario || producto.precioUnitario || producto.precio || 0;
+                            const igic = producto.igic !== undefined ? producto.igic : (producto.impuesto !== undefined ? producto.impuesto : 0);
+                            const tipoImpuesto = producto.tipo_impuesto || producto.tipoImpuesto || 'igic';
+                            const cantidad = producto.cantidad || 1;
+                            
+                            db.run(`
+                                INSERT INTO detalles_proforma (proforma_id, producto_id, coche_id, cantidad, precio_unitario, subtotal, igic, total, descripcion, tipo_impuesto)
+                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            `, [proformaId, productoId, cocheIdDetalle, cantidad, precioUnitario, producto.subtotal || (precioUnitario * cantidad), igic, producto.total || (precioUnitario * cantidad + igic), producto.descripcion || null, tipoImpuesto], function(err) {
+                                if (err) {
+                                    console.error('❌ Error al insertar detalle de proforma:', err.message);
+                                    reject(err);
+                                } else {
+                                    resolve();
+                                }
+                            });
+                        });
+                    }
+                }
+                
+                const totalDuration = Date.now() - startTime;
+                logger.info('Proforma creada exitosamente', {
+                    proformaId,
+                    numero_proforma,
+                    empresa_id,
+                    cliente_id,
+                    coche_id,
+                    total,
+                    duration: `${totalDuration}ms`,
+                    productos_count: productos?.length || 0
+                }, 'operations');
+                
+                res.json({ 
+                    success: true, 
+                    data: { 
+                        id: proformaId, 
+                        numero_proforma,
+                        total 
+                    } 
+                });
+                
+            } catch (error) {
+                const totalDuration = Date.now() - startTime;
+                logger.error('Error en proceso de creación de proforma', {
+                    error: error.message,
+                    stack: error.stack,
+                    empresa_id,
+                    cliente_id,
+                    coche_id,
+                    numero_proforma,
+                    duration: `${totalDuration}ms`
+                }, 'operations');
+                res.status(500).json({ 
+                    success: false,
+                    error: 'Error en el proceso de creación de proforma',
+                    details: error.message 
+                });
+            }
+        });
+        
+    } catch (error) {
+        console.error('❌ Error general en creación de proforma:', error);
+        res.status(500).json({ 
+            success: false,
+            error: 'Error interno del servidor',
+            details: error.message 
+        });
+    }
+});
+
+// PUT - Actualizar proforma
+app.put('/api/proformas/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const proformaId = parseInt(id, 10);
+        const { 
+            numero_proforma, 
+            empresa_id,
+            cliente_id, 
+            coche_id,
+            fecha_emision, 
+            fecha_validez, 
+            subtotal, 
+            igic, 
+            total, 
+            notas,
+            estado,
+            productos
+        } = req.body;
+        
+        // Validar ID
+        if (isNaN(proformaId) || proformaId <= 0) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'ID de proforma inválido',
+                received: id
+            });
+        }
+        
+        // Verificar que la proforma existe
+        const proformaExiste = await new Promise((resolve, reject) => {
+            db.get('SELECT * FROM proformas WHERE id = ?', [proformaId], (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+        
+        if (!proformaExiste) {
+            return res.status(404).json({ 
+                success: false,
+                error: 'Proforma no encontrada' 
+            });
+        }
+        
+        // Construir actualización
+        const updates = [];
+        const values = [];
+        
+        if (numero_proforma !== undefined) {
+            updates.push('numero_proforma = ?');
+            values.push(numero_proforma);
+        }
+        if (empresa_id !== undefined) {
+            updates.push('empresa_id = ?');
+            values.push(empresa_id);
+        }
+        if (cliente_id !== undefined) {
+            updates.push('cliente_id = ?');
+            values.push(cliente_id);
+        }
+        if (coche_id !== undefined) {
+            updates.push('coche_id = ?');
+            values.push(coche_id);
+        }
+        if (fecha_emision !== undefined) {
+            updates.push('fecha_emision = ?');
+            values.push(fecha_emision);
+        }
+        if (fecha_validez !== undefined) {
+            updates.push('fecha_validez = ?');
+            values.push(fecha_validez);
+        }
+        if (subtotal !== undefined) {
+            updates.push('subtotal = ?');
+            values.push(subtotal);
+        }
+        if (igic !== undefined) {
+            updates.push('igic = ?');
+            values.push(igic);
+        }
+        if (total !== undefined) {
+            updates.push('total = ?');
+            values.push(total);
+        }
+        if (notas !== undefined) {
+            updates.push('notas = ?');
+            values.push(notas);
+        }
+        if (estado !== undefined) {
+            updates.push('estado = ?');
+            values.push(estado);
+        }
+        
+        if (updates.length === 0) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'No hay campos para actualizar'
+            });
+        }
+        
+        values.push(proformaId);
+        
+        // Actualizar proforma
+        const changes = await new Promise((resolve, reject) => {
+            db.run(`UPDATE proformas SET ${updates.join(', ')} WHERE id = ?`, values, function(err) {
+                if (err) reject(err);
+                else resolve(this.changes);
+            });
+        });
+        
+        // Si se proporcionan productos, actualizar detalles
+        if (productos && Array.isArray(productos)) {
+            // Eliminar detalles existentes
+            await new Promise((resolve, reject) => {
+                db.run('DELETE FROM detalles_proforma WHERE proforma_id = ?', [proformaId], (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                });
+            });
+            
+            // Insertar nuevos detalles
+            for (const producto of productos) {
+                const productoId = producto.id && producto.id > 0 ? producto.id : null;
+                const cocheIdDetalle = producto.coche_id || producto.cocheId || producto.cocheID || coche_id || null;
+                
+                await new Promise((resolve, reject) => {
+                    const precioUnitario = producto.precio_unitario || producto.precioUnitario || producto.precio || 0;
+                    const igic = producto.igic !== undefined ? producto.igic : (producto.impuesto !== undefined ? producto.impuesto : 0);
+                    const tipoImpuesto = producto.tipo_impuesto || producto.tipoImpuesto || 'igic';
+                    const cantidad = producto.cantidad || 1;
+                    
+                    db.run(`
+                        INSERT INTO detalles_proforma (proforma_id, producto_id, coche_id, cantidad, precio_unitario, subtotal, igic, total, descripcion, tipo_impuesto)
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                    `, [proformaId, productoId, cocheIdDetalle, cantidad, precioUnitario, producto.subtotal || (precioUnitario * cantidad), igic, producto.total || (precioUnitario * cantidad + igic), producto.descripcion || null, tipoImpuesto], (err) => {
+                        if (err) reject(err);
+                        else resolve();
+                    });
+                });
+            }
+        }
+        
+        // Obtener proforma actualizada
+        const proformaActualizada = await new Promise((resolve, reject) => {
+            db.get('SELECT * FROM proformas WHERE id = ?', [proformaId], (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+        
+        res.json({ 
+            success: true, 
+            message: 'Proforma actualizada correctamente',
+            data: proformaActualizada
+        });
+        
+    } catch (error) {
+        console.error('❌ Error al actualizar proforma:', error);
+        res.status(500).json({ 
+            success: false,
+            error: 'Error interno del servidor',
+            details: error.message
+        });
+    }
+});
+
+// DELETE - Eliminar proforma
+app.delete('/api/proformas/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const proformaId = parseInt(id, 10);
+        
+        // Validar ID
+        if (isNaN(proformaId) || proformaId <= 0) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'ID de proforma inválido',
+                received: id
+            });
+        }
+        
+        // Eliminar detalles primero
+        await new Promise((resolve, reject) => {
+            db.run('DELETE FROM detalles_proforma WHERE proforma_id = ?', [proformaId], (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+        
+        // Eliminar proforma
+        const changes = await new Promise((resolve, reject) => {
+            db.run('DELETE FROM proformas WHERE id = ?', [proformaId], function(err) {
+                if (err) reject(err);
+                else resolve(this.changes);
+            });
+        });
+        
+        if (changes === 0) {
+            return res.status(404).json({ 
+                success: false,
+                error: 'Proforma no encontrada' 
+            });
+        }
+        
+        res.json({ 
+            success: true, 
+            message: 'Proforma eliminada correctamente'
+        });
+        
+    } catch (error) {
+        console.error('❌ Error al eliminar proforma:', error);
+        res.status(500).json({ 
+            success: false,
+            error: 'Error interno del servidor',
+            details: error.message
+        });
+    }
+});
+
+// GET - Generar siguiente número de proforma por empresa
+app.get('/api/proformas/siguiente-numero/:empresaId', (req, res) => {
+    const empresaId = req.params.empresaId;
+    const año = new Date().getFullYear();
+    
+    // Validar que empresaId es un número válido
+    if (!empresaId || isNaN(empresaId) || parseInt(empresaId) <= 0) {
+        return res.status(400).json({ 
+            success: false, 
+            error: 'ID de empresa inválido. Debe ser un número positivo.' 
+        });
+    }
+    
+    const empresaIdNumero = parseInt(empresaId);
+    
+    // Verificar que la empresa existe
+    db.get("SELECT id, nombre FROM empresas WHERE id = ?", [empresaIdNumero], (err, empresa) => {
+        if (err) {
+            console.error('❌ Error consultando empresa:', err);
+            return res.status(500).json({ 
+                success: false, 
+                error: 'Error interno al consultar la empresa' 
+            });
+        }
+        
+        if (!empresa) {
+            return res.status(404).json({ 
+                success: false, 
+                error: `La empresa con ID ${empresaIdNumero} no existe en la base de datos` 
+            });
+        }
+        
+        // Generar prefijo basado en nombre y ubicación
+        const prefijo = generarPrefijoEmpresa(empresa.nombre, empresa.direccion);
+        const prefijoProforma = `PRO-${prefijo}`;
+        
+        // Buscar el último número de proforma para esta empresa
+        db.get(`
+            SELECT MAX(CAST(SUBSTR(numero_proforma, ${prefijoProforma.length + 1}, 3) AS INTEGER)) as ultimo_numero
+            FROM proformas 
+            WHERE empresa_id = ? AND numero_proforma LIKE '${prefijoProforma}%/${año}'
+        `, [empresaIdNumero], (err, row) => {
+            if (err) {
+                console.error('❌ Error consultando último número:', err);
+                return res.status(500).json({ 
+                    success: false, 
+                    error: 'Error interno al consultar números de proforma existentes' 
+                });
+            }
+            
+            const siguienteNumero = (row.ultimo_numero || 0) + 1;
+            const numeroFormateado = `${prefijoProforma}${siguienteNumero.toString().padStart(3, '0')}/${año}`;
+            
+            // Verificar que el número generado no existe
+            db.get("SELECT id FROM proformas WHERE numero_proforma = ? AND empresa_id = ?", 
+                [numeroFormateado, empresaIdNumero], (err, existe) => {
+                if (err) {
+                    console.error('❌ Error verificando número único:', err);
+                    return res.status(500).json({ 
+                        success: false, 
+                        error: 'Error interno al verificar número único' 
+                    });
+                }
+                
+                if (existe) {
+                    console.error(`❌ Número duplicado detectado: ${numeroFormateado}`);
+                    return res.status(500).json({ 
+                        success: false, 
+                        error: `Error: El número ${numeroFormateado} ya existe. Contacte al administrador.` 
+                    });
+                }
+                
+                res.json({ 
+                    success: true, 
+                    data: { 
+                        numero_proforma: numeroFormateado,
+                        empresa_id: empresaIdNumero,
+                        prefijo: prefijoProforma,
+                        empresa_nombre: empresa.nombre,
+                        siguiente_numero: siguienteNumero
+                    } 
+                });
+            });
+        });
+    });
+});
 
 // GET - Debug: Verificar relación entre productos y coches
 app.get('/api/debug/productos-coches', (req, res) => {

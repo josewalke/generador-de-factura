@@ -216,12 +216,25 @@ class ImportadorExcel {
                     
                     // Mapear campos del Excel usando las columnas detectadas
                     // Nota: La columna "Estado" se ignora si existe, no se usa en la BD
+                    let marca = this.obtenerValor(row, columnasDetectadas.marca);
+                    let modelo = this.obtenerValor(row, columnasDetectadas.modelo);
+                    
+                    // Si no hay marca pero hay modelo, extraer marca del modelo
+                    if (!marca && modelo) {
+                        const partes = modelo.toString().trim().split(' ');
+                        marca = partes.length > 0 ? partes[0] : '';
+                        if (partes.length > 1) {
+                            modelo = partes.slice(1).join(' ');
+                        }
+                    }
+                    
                     const coche = {
                         matricula: this.obtenerValor(row, columnasDetectadas.matricula),
                         chasis: this.obtenerValor(row, columnasDetectadas.chasis),
                         color: this.obtenerValor(row, columnasDetectadas.color),
                         kms: parseInt(this.obtenerValor(row, columnasDetectadas.kms) || 0),
-                        modelo: this.obtenerValor(row, columnasDetectadas.modelo)
+                        modelo: modelo,
+                        marca: marca || null
                     };
                     
                     console.log('📋 Datos mapeados (sin Estado):', coche);
@@ -250,6 +263,7 @@ class ImportadorExcel {
                     coche.chasis = coche.chasis.toString().trim().toUpperCase();
                     coche.color = coche.color.toString().trim();
                     coche.modelo = coche.modelo.toString().trim();
+                    coche.marca = coche.marca ? coche.marca.toString().trim() : null;
                     
                     // Validar que kms sea un número válido
                     if (isNaN(coche.kms) || coche.kms < 0) {
@@ -265,16 +279,17 @@ class ImportadorExcel {
                         // Acceder directamente a database para usar query
                         try {
                             await database.query(`
-                                INSERT INTO coches (matricula, chasis, color, kms, modelo, activo)
-                                VALUES ($1, $2, $3, $4, $5, true)
+                                INSERT INTO coches (matricula, chasis, color, kms, modelo, marca, activo)
+                                VALUES ($1, $2, $3, $4, $5, $6, true)
                                 ON CONFLICT (matricula) 
                                 DO UPDATE SET 
                                     chasis = EXCLUDED.chasis,
                                     color = EXCLUDED.color,
                                     kms = EXCLUDED.kms,
                                     modelo = EXCLUDED.modelo,
+                                    marca = EXCLUDED.marca,
                                     activo = true
-                            `, [coche.matricula, coche.chasis, coche.color, coche.kms, coche.modelo]);
+                            `, [coche.matricula, coche.chasis, coche.color, coche.kms, coche.modelo, coche.marca]);
                         } catch (dbError) {
                             // Si falla por falta de constraint UNIQUE, intentar UPDATE
                             if (dbError.message.includes('duplicate key') || dbError.message.includes('unique constraint') || dbError.message.includes('violates unique constraint')) {
@@ -284,15 +299,15 @@ class ImportadorExcel {
                                     // Actualizar en lugar de insertar
                                     await database.query(`
                                         UPDATE coches 
-                                        SET chasis = $1, color = $2, kms = $3, modelo = $4, activo = true
-                                        WHERE matricula = $5
-                                    `, [coche.chasis, coche.color, coche.kms, coche.modelo, coche.matricula]);
+                                        SET chasis = $1, color = $2, kms = $3, modelo = $4, marca = $5, activo = true
+                                        WHERE matricula = $6
+                                    `, [coche.chasis, coche.color, coche.kms, coche.modelo, coche.marca, coche.matricula]);
                                 } else {
                                     // Si no existe, intentar insertar sin ON CONFLICT
                                     await database.query(`
-                                        INSERT INTO coches (matricula, chasis, color, kms, modelo, activo)
-                                        VALUES ($1, $2, $3, $4, $5, true)
-                                    `, [coche.matricula, coche.chasis, coche.color, coche.kms, coche.modelo]);
+                                        INSERT INTO coches (matricula, chasis, color, kms, modelo, marca, activo)
+                                        VALUES ($1, $2, $3, $4, $5, $6, true)
+                                    `, [coche.matricula, coche.chasis, coche.color, coche.kms, coche.modelo, coche.marca]);
                                 }
                             } else {
                                 throw dbError;
@@ -302,9 +317,9 @@ class ImportadorExcel {
                         // SQLite: usar INSERT OR REPLACE
                         await new Promise((resolve, reject) => {
                             this.db.run(`
-                                INSERT OR REPLACE INTO coches (matricula, chasis, color, kms, modelo, activo)
-                                VALUES (?, ?, ?, ?, ?, 1)
-                            `, [coche.matricula, coche.chasis, coche.color, coche.kms, coche.modelo], (err) => {
+                                INSERT OR REPLACE INTO coches (matricula, chasis, color, kms, modelo, marca, activo)
+                                VALUES (?, ?, ?, ?, ?, ?, 1)
+                            `, [coche.matricula, coche.chasis, coche.color, coche.kms, coche.modelo, coche.marca], (err) => {
                                 if (err) reject(err);
                                 else resolve();
                             });
@@ -494,10 +509,10 @@ class ImportadorExcel {
 
         switch (tipo) {
             case 'coches':
-                headers = ['Matricula', 'Chasis', 'Color', 'Kms', 'Modelo'];
+                headers = ['Matricula', 'Marca', 'Modelo', 'Chasis', 'Color', 'Kms'];
                 datosEjemplo = [
-                    ['GC-1234-AB', 'WBAVB13506PT12345', 'Blanco', 45000, 'BMW 320i'],
-                    ['GC-5678-CD', 'WVWZZZ1KZAW123456', 'Negro', 32000, 'Volkswagen Golf']
+                    ['GC-1234-AB', 'BMW', '320i', 'WBAVB13506PT12345', 'Blanco', 45000],
+                    ['GC-5678-CD', 'Volkswagen', 'Golf', 'WVWZZZ1KZAW123456', 'Negro', 32000]
                 ];
                 break;
             case 'productos':
@@ -545,7 +560,8 @@ class ImportadorExcel {
             chasis: null,
             color: null,
             kms: null,
-            modelo: null
+            modelo: null,
+            marca: null
         };
 
         // Patrones de búsqueda para cada campo
@@ -571,8 +587,11 @@ class ImportadorExcel {
             ],
             modelo: [
                 'modelo', 'modelos', 'model', 'models', 'tipo', 'type',
-                'vehiculo', 'vehículo', 'vehicle', 'car', 'coche',
-                'marca_modelo', 'brand_model', 'make_model'
+                'vehiculo', 'vehículo', 'vehicle', 'car', 'coche'
+            ],
+            marca: [
+                'marca', 'marcas', 'brand', 'brands', 'make', 'makes',
+                'fabricante', 'manufacturer', 'manufacturer'
             ]
         };
 

@@ -26,7 +26,7 @@ import { CocheFormSimple } from '../forms/CocheFormSimple';
 import { CochesErrorBoundary } from '../ErrorBoundary';
 import { logger } from '../../utils/logger';
 import { toast } from 'sonner';
-import { ArrowLeft, Plus, Search, Edit, AlertCircle, RefreshCw, Car, Download, X, BarChart3, Upload, Trash2 } from 'lucide-react';
+import { ArrowLeft, Plus, Search, Edit, AlertCircle, RefreshCw, Car, Download, X, BarChart3, Upload, Trash2, FileText } from 'lucide-react';
 
 interface CochesScreenProps {
   onNavigate: (screen: Screen) => void;
@@ -417,23 +417,16 @@ export function CochesScreen({ onNavigate }: CochesScreenProps) {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {cochesFiltrados.map((coche, index) => {
-                            // Extraer marca y modelo del campo modelo
-                            const modeloCompleto = coche.modelo || '';
-                            const partesModelo = modeloCompleto.split(' ');
-                            const marca = partesModelo.length > 0 ? partesModelo[0] : '';
-                            const modelo = partesModelo.length > 1 ? partesModelo.slice(1).join(' ') : modeloCompleto;
-                            
-                            return (
+                          {cochesFiltrados.map((coche, index) => (
                             <TableRow key={coche.id || `coche-${index}`}>
                               <TableCell>
                                 <p className="font-semibold">{coche.matricula || 'N/A'}</p>
                               </TableCell>
                               <TableCell>
-                                <p>{marca || 'N/A'}</p>
+                                <p>{coche.marca || 'N/A'}</p>
                               </TableCell>
                               <TableCell>
-                                <p>{modelo || 'N/A'}</p>
+                                <p>{coche.modelo || 'N/A'}</p>
                               </TableCell>
                               <TableCell>
                                 <p>{coche.color || 'N/A'}</p>
@@ -465,6 +458,18 @@ export function CochesScreen({ onNavigate }: CochesScreenProps) {
                               </TableCell>
                               <TableCell className="text-right">
                                 <div className="flex space-x-2 justify-end">
+                                  <Button 
+                                    variant="outline" 
+                                    size="icon"
+                                    onClick={() => {
+                                      onNavigate('proformas');
+                                      // Guardar el coche seleccionado en sessionStorage para que ProformasScreen lo use
+                                      sessionStorage.setItem('cocheSeleccionadoParaProforma', JSON.stringify(coche));
+                                    }}
+                                    title="Crear proforma para este vehículo"
+                                  >
+                                    <FileText className="h-4 w-4" />
+                                  </Button>
                                   <Button 
                                     variant="outline" 
                                     size="icon"
@@ -539,6 +544,18 @@ export function CochesScreen({ onNavigate }: CochesScreenProps) {
                                 )}
                               </div>
                               <div className="flex space-x-2 pt-2">
+                                <Button 
+                                  variant="outline" 
+                                  size="sm"
+                                  onClick={() => {
+                                    onNavigate('proformas');
+                                    sessionStorage.setItem('cocheSeleccionadoParaProforma', JSON.stringify(coche));
+                                  }}
+                                  title="Crear proforma para este vehículo"
+                                >
+                                  <FileText className="h-4 w-4 mr-1" />
+                                  Proforma
+                                </Button>
                                 <Button 
                                   variant="outline" 
                                   size="sm"
