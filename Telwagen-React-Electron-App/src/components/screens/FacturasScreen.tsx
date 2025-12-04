@@ -16,7 +16,7 @@ import { Empresa } from '../../services/empresaService';
 import { facturaService, SiguienteNumeroResponse } from '../../services/facturaService';
 import { facturaPDFService, FacturaPDFData } from '../../services/facturaPDFService';
 import { toast } from 'sonner';
-import { Building2, RefreshCw, Plus, Car, DollarSign, Eye, FileText, Download, Zap, Info, Trash2, Home, Search } from 'lucide-react';
+import { Building2, RefreshCw, Plus, Car, Eye, FileText, Download, Zap, Info, Trash2, Home, Search } from 'lucide-react';
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '../ui/pagination';
 
 interface FacturasScreenProps {
@@ -48,6 +48,8 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
   const [dropdownAbierto, setDropdownAbierto] = useState(false);
   const [mostrarModalEmpresa, setMostrarModalEmpresa] = useState(false);
   const [tipoImpuesto, setTipoImpuesto] = useState<TipoImpuesto>('igic');
+  const [porcentajeIGIC, setPorcentajeIGIC] = useState<number>(9.5);
+  const [porcentajeIVA, setPorcentajeIVA] = useState<number>(21);
   const [facturaGenerada, setFacturaGenerada] = useState<any>(null);
   const [generandoFactura, setGenerandoFactura] = useState(false);
   const [busquedaCoche, setBusquedaCoche] = useState<string>('');
@@ -60,10 +62,10 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
   const { empresas } = useEmpresas();
 
   // Configuración de impuestos
-  const configuracionImpuestos: Record<TipoImpuesto, ConfiguracionImpuesto> = {
-    igic: { tipo: 'igic', porcentaje: 9.5, nombre: 'IGIC' },
-    iva: { tipo: 'iva', porcentaje: 21, nombre: 'IVA' }
-  };
+  const configuracionImpuestos: Record<TipoImpuesto, ConfiguracionImpuesto> = useMemo(() => ({
+    igic: { tipo: 'igic', porcentaje: porcentajeIGIC, nombre: 'IGIC' },
+    iva: { tipo: 'iva', porcentaje: porcentajeIVA, nombre: 'IVA' }
+  }), [porcentajeIGIC, porcentajeIVA]);
 
   const impuestoActual = configuracionImpuestos[tipoImpuesto];
 
@@ -155,6 +157,17 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
     const total = subtotal + impuesto;
     return { impuesto, total };
   }, [impuestoActual.porcentaje]);
+
+  const handlePorcentajeChange = useCallback((valor: string) => {
+    const normalizado = parseFloat(valor.replace(',', '.'));
+    const porcentaje = isNaN(normalizado) ? 0 : Math.min(Math.max(normalizado, 0), 100);
+
+    if (tipoImpuesto === 'igic') {
+      setPorcentajeIGIC(porcentaje);
+    } else {
+      setPorcentajeIVA(porcentaje);
+    }
+  }, [tipoImpuesto]);
 
   const agregarProducto = useCallback((coche: Coche) => {
     // Verificar si el coche ya está en la factura
@@ -379,9 +392,9 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
       </header>
 
       <div className="max-w-7xl mx-auto px-6 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="grid grid-cols-1 gap-6">
           {/* Main Form Area */}
-          <div className="lg:col-span-2 space-y-6">
+          <div className="space-y-6">
             {/* Datos de la Empresa */}
             <Card>
               <CardHeader>
@@ -601,9 +614,17 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
                             <div className="flex justify-between items-center">
                               <div className="flex items-center space-x-3">
                                 <div>
-                                  <h4 className="font-semibold text-gray-900">
-                                    {coche.marca || ''} {coche.modelo}
-                                  </h4>
+                                  <div className="flex items-center gap-2">
+                                    <h4 className="font-semibold text-gray-900">
+                                      {coche.marca || ''} {coche.modelo}
+                                    </h4>
+                                    {(coche.tiene_proforma === 1 || coche.tiene_proforma === true || coche.tiene_proforma === '1') && (
+                                      <Badge className="bg-purple-100 text-purple-700 text-xs px-1.5 py-0.5">
+                                        <FileText className="w-3 h-3 mr-1" />
+                                        Proforma
+                                      </Badge>
+                                    )}
+                                  </div>
                                   <p className="text-sm text-gray-500">Matrícula: {coche.matricula}</p>
                                   <p className="text-sm text-gray-500">Color: {coche.color}</p>
                                 </div>
@@ -740,8 +761,8 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
                           id="tax-rate"
                           type="number"
                           value={impuestoActual.porcentaje}
-                          readOnly
-                          className="w-16 text-center bg-gray-100"
+                          onChange={(e) => handlePorcentajeChange(e.target.value)}
+                          className="w-24 text-center"
                           min="0"
                           max="100"
                           step="0.1"
@@ -792,180 +813,154 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
                         ))}
                       </TableBody>
                     </Table>
+
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-white border rounded-lg p-4 shadow-sm">
+                      <div className="space-y-1">
+                        <p className="text-sm text-gray-500">Subtotal</p>
+                        <p className="text-xl font-semibold text-gray-900">€{subtotal.toLocaleString()}</p>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-sm text-gray-500">{impuestoActual.nombre} ({impuestoActual.porcentaje}%):</p>
+                        <p className="text-xl font-semibold text-gray-900">€{totalImpuestos.toLocaleString()}</p>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-sm text-gray-500">Total</p>
+                        <p className="text-2xl font-bold text-blue-600">€{total.toLocaleString()}</p>
+                      </div>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
             )}
-          </div>
-
-          {/* Sidebar - Totales y Acciones */}
-          <div className="space-y-6">
-            {/* Totales */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
-                  <DollarSign className="w-5 h-5" />
-                  <span>Totales</span>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Subtotal:</span>
-                  <span>€{subtotal.toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">{impuestoActual.nombre} ({impuestoActual.porcentaje}%):</span>
-                  <span>€{totalImpuestos.toLocaleString()}</span>
-                </div>
-                <div className="border-t pt-2">
-                  <div className="flex justify-between font-bold text-lg">
-                    <span>Total:</span>
-                    <span className="text-blue-600">€{total.toLocaleString()}</span>
-                  </div>
-                </div>
-              </CardContent>
-            </Card>
 
             {/* Acciones */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
-                  <Zap className="w-5 h-5" />
-                  <span>Acciones</span>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <Dialog>
-                  <DialogTrigger asChild>
+            <div className="flex justify-center">
+              <Card className="w-full md:w-4/5 lg:w-2/3">
+                <CardHeader>
+                  <CardTitle className="flex items-center space-x-2">
+                    <Zap className="w-5 h-5" />
+                    <span>Acciones</span>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex flex-col md:flex-row gap-3">
+                    <Dialog>
+                      <DialogTrigger asChild>
+                        <Button 
+                          className="flex-1 h-12 justify-center" 
+                          disabled={!clienteSeleccionado || productos.length === 0}
+                        >
+                          <Eye className="w-4 h-4 mr-2" />
+                          Vista Previa
+                        </Button>
+                      </DialogTrigger>
+                      <DialogContent className="max-w-[90vw] w-[90vw] xl:max-w-[70vw] max-h-[95vh] overflow-hidden">
+                        <DialogHeader>
+                          <DialogTitle>Vista Previa de Factura</DialogTitle>
+                          <DialogDescription>
+                            Revisa los detalles de la factura antes de generarla.
+                          </DialogDescription>
+                        </DialogHeader>
+                        <div className="bg-white p-10 border rounded-lg overflow-y-auto max-h-[80vh]">
+                          <div className="text-center mb-8">
+                            <h2 className="text-3xl font-bold text-blue-900">FACTURA</h2>
+                            <p className="text-lg text-gray-600">Nº C001/2024</p>
+                          </div>
+                          
+                          <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
+                            <div>
+                              <h3 className="font-bold mb-3 text-base border-b pb-1">EMISOR</h3>
+                              {empresaSeleccionada ? (
+                                <div className="text-base">
+                                  <p className="font-semibold text-lg tracking-wide">{empresaSeleccionada.nombre}</p>
+                                  <p className="text-gray-700">CIF: {empresaSeleccionada.cif}</p>
+                                  <p className="break-words text-gray-700">{empresaSeleccionada.direccion}</p>
+                                </div>
+                              ) : (
+                                <p className="text-gray-500">No hay empresa seleccionada</p>
+                              )}
+                            </div>
+                            {clienteSeleccionado && (
+                              <div>
+                                <h3 className="font-bold mb-3 text-base border-b pb-1">CLIENTE</h3>
+                                <div className="text-base">
+                                  <p className="font-semibold text-lg">{clienteSeleccionado.nombre}</p>
+                                  <p className="text-gray-700">CIF: {clienteSeleccionado.identificacion}</p>
+                                  <p className="break-words text-gray-700">{clienteSeleccionado.direccion}</p>
+                                </div>
+                              </div>
+                            )}
+                          </div>
+
+                          <div className="mb-6">
+                            <Table className="w-full">
+                              <TableHeader>
+                                <TableRow>
+                                  <TableHead className="w-3/5">Descripción</TableHead>
+                                  <TableHead className="w-48 text-right">Precio</TableHead>
+                                  <TableHead className="w-48 text-right">{impuestoActual.nombre}</TableHead>
+                                  <TableHead className="w-52 text-right">Total</TableHead>
+                                </TableRow>
+                              </TableHeader>
+                              <TableBody>
+                                {productos.map(producto => (
+                                  <TableRow key={producto.id}>
+                                    <TableCell className="break-words text-sm">
+                                      {producto.descripcion}
+                                    </TableCell>
+                                    <TableCell className="text-right">€{producto.precio.toLocaleString()}</TableCell>
+                                    <TableCell className="text-right">€{producto.impuesto.toLocaleString()}</TableCell>
+                                    <TableCell className="text-right font-semibold">€{producto.total.toLocaleString()}</TableCell>
+                                  </TableRow>
+                                ))}
+                              </TableBody>
+                            </Table>
+                          </div>
+
+                          <div className="border-t-2 pt-6">
+                            <div className="flex justify-end">
+                              <div className="text-right space-y-3 min-w-[400px]">
+                                <div className="flex justify-between text-lg">
+                                  <span>Subtotal:</span>
+                                  <span>€{subtotal.toLocaleString()}</span>
+                                </div>
+                                <div className="flex justify-between text-lg">
+                                  <span>{impuestoActual.nombre} ({impuestoActual.porcentaje}%):</span>
+                                  <span>€{totalImpuestos.toLocaleString()}</span>
+                                </div>
+                                <div className="flex justify-between text-2xl font-bold text-blue-900 border-t-2 pt-3">
+                                  <span>TOTAL:</span>
+                                  <span>€{total.toLocaleString()}</span>
+                                </div>
+                              </div>
+                            </div>
+                          </div>
+                        </div>
+                      </DialogContent>
+                    </Dialog>
+
                     <Button 
-                      className="w-full" 
-                      disabled={!clienteSeleccionado || productos.length === 0}
+                      className="flex-1 h-12 bg-blue-600 hover:bg-blue-700" 
+                      disabled={!clienteSeleccionado || productos.length === 0 || generandoFactura}
+                      onClick={generarFactura}
                     >
-                      <Eye className="w-4 h-4 mr-2" />
-                      Vista Previa
+                      <FileText className="w-4 h-4 mr-2" />
+                      {generandoFactura ? 'Generando...' : 'Generar Factura'}
                     </Button>
-                  </DialogTrigger>
-                  <DialogContent className="max-w-[98vw] w-[98vw] max-h-[95vh] overflow-hidden">
-                    <DialogHeader>
-                      <DialogTitle>Vista Previa de Factura</DialogTitle>
-                      <DialogDescription>
-                        Revisa los detalles de la factura antes de generarla.
-                      </DialogDescription>
-                    </DialogHeader>
-                    <div className="bg-white p-10 border rounded-lg overflow-y-auto max-h-[80vh]">
-                      <div className="text-center mb-8">
-                        <h2 className="text-3xl font-bold text-blue-900">FACTURA</h2>
-                        <p className="text-lg text-gray-600">Nº C001/2024</p>
-                      </div>
-                      
-                      <div className="grid grid-cols-1 md:grid-cols-2 gap-8 mb-8">
-                        <div>
-                          <h3 className="font-bold mb-3 text-base border-b pb-1">EMISOR</h3>
-                          {empresaSeleccionada ? (
-                            <div className="text-base">
-                              <p className="font-semibold text-lg tracking-wide">{empresaSeleccionada.nombre}</p>
-                              <p className="text-gray-700">CIF: {empresaSeleccionada.cif}</p>
-                              <p className="break-words text-gray-700">{empresaSeleccionada.direccion}</p>
-                            </div>
-                          ) : (
-                            <p className="text-gray-500">No hay empresa seleccionada</p>
-                          )}
-                        </div>
-                        {clienteSeleccionado && (
-                          <div>
-                            <h3 className="font-bold mb-3 text-base border-b pb-1">CLIENTE</h3>
-                            <div className="text-base">
-                              <p className="font-semibold text-lg">{clienteSeleccionado.nombre}</p>
-                              <p className="text-gray-700">CIF: {clienteSeleccionado.identificacion}</p>
-                              <p className="break-words text-gray-700">{clienteSeleccionado.direccion}</p>
-                            </div>
-                          </div>
-                        )}
-                      </div>
 
-                      <div className="mb-6">
-                        <Table className="w-full">
-                          <TableHeader>
-                            <TableRow>
-                              <TableHead className="w-3/5">Descripción</TableHead>
-                              <TableHead className="w-48 text-right">Precio</TableHead>
-                              <TableHead className="w-48 text-right">{impuestoActual.nombre}</TableHead>
-                              <TableHead className="w-52 text-right">Total</TableHead>
-                            </TableRow>
-                          </TableHeader>
-                          <TableBody>
-                            {productos.map(producto => (
-                              <TableRow key={producto.id}>
-                                <TableCell className="break-words text-sm">
-                                  {producto.descripcion}
-                                </TableCell>
-                                <TableCell className="text-right">€{producto.precio.toLocaleString()}</TableCell>
-                                <TableCell className="text-right">€{producto.impuesto.toLocaleString()}</TableCell>
-                                <TableCell className="text-right font-semibold">€{producto.total.toLocaleString()}</TableCell>
-                              </TableRow>
-                            ))}
-                          </TableBody>
-                        </Table>
-                      </div>
-
-                      <div className="border-t-2 pt-6">
-                        <div className="flex justify-end">
-                          <div className="text-right space-y-3 min-w-[400px]">
-                            <div className="flex justify-between text-lg">
-                              <span>Subtotal:</span>
-                              <span>€{subtotal.toLocaleString()}</span>
-                            </div>
-                            <div className="flex justify-between text-lg">
-                              <span>{impuestoActual.nombre} ({impuestoActual.porcentaje}%):</span>
-                              <span>€{totalImpuestos.toLocaleString()}</span>
-                            </div>
-                            <div className="flex justify-between text-2xl font-bold text-blue-900 border-t-2 pt-3">
-                              <span>TOTAL:</span>
-                              <span>€{total.toLocaleString()}</span>
-                            </div>
-                          </div>
-                        </div>
-                      </div>
-                    </div>
-                  </DialogContent>
-                </Dialog>
-
-                <Button 
-                  className="w-full bg-blue-600 hover:bg-blue-700" 
-                  disabled={!clienteSeleccionado || productos.length === 0 || generandoFactura}
-                  onClick={generarFactura}
-                >
-                  <FileText className="w-4 h-4 mr-2" />
-                  {generandoFactura ? 'Generando...' : 'Generar Factura'}
-                </Button>
-
-                <Button 
-                  variant="outline" 
-                  className="w-full"
-                  disabled={!facturaGenerada}
-                  onClick={descargarPDF}
-                >
-                  <Download className="w-4 h-4 mr-2" />
-                  Descargar PDF
-                </Button>
-              </CardContent>
-            </Card>
-
-            {/* Info */}
-            <Card className="bg-blue-50">
-              <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
-                  <Info className="w-5 h-5" />
-                  <span>Información</span>
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-gray-600">
-                  Las facturas se numeran automáticamente siguiendo el formato C001/2024.
-                  Puedes cambiar entre IGIC (9.5%) para Canarias o IVA (21%) para península.
-                </p>
-              </CardContent>
-            </Card>
+                    <Button 
+                      variant="outline" 
+                      className="flex-1 h-12"
+                      disabled={!facturaGenerada}
+                      onClick={descargarPDF}
+                    >
+                      <Download className="w-4 h-4 mr-2" />
+                      Descargar PDF
+                    </Button>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
           </div>
         </div>
       </div>

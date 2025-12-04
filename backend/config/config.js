@@ -3,6 +3,13 @@ const path = require('path');
 const fs = require('fs');
 const sqlite3 = require('sqlite3').verbose();
 
+const ensureString = (value, fallback = '') => {
+    if (value === undefined || value === null) {
+        return fallback;
+    }
+    return String(value);
+};
+
 class ConfigManager {
     constructor() {
         this.config = {};
@@ -67,8 +74,8 @@ class ConfigManager {
                 host: process.env.DB_HOST || 'localhost',
                 port: parseInt(process.env.DB_PORT) || 5432,
                 database: process.env.DB_NAME || 'telwagen',
-                user: process.env.DB_USER || 'postgres',
-                password: process.env.DB_PASSWORD || '',
+                user: ensureString(process.env.DB_USER, 'postgres'),
+                password: ensureString(process.env.DB_PASSWORD, ''),
                 maxConnections: parseInt(process.env.DB_MAX_CONNECTIONS) || 20,
                 connectionTimeout: parseInt(process.env.DB_CONNECTION_TIMEOUT) || 2000,
                 idleTimeout: parseInt(process.env.DB_IDLE_TIMEOUT) || 30000,

@@ -304,8 +304,14 @@ export function ProformasScreen({ onNavigate }: ProformasScreenProps) {
       setGenerandoProforma(true);
       
       // Obtener siguiente número de proforma
-      const numeroProformaData: SiguienteNumeroResponse = await proformaService.getSiguienteNumero(empresaSeleccionada.id);
-      const numeroProforma = numeroProformaData.data.numero_proforma;
+      const numeroProformaData: any = await proformaService.getSiguienteNumero(empresaSeleccionada.id);
+      // handleApiResponse devuelve response.data.data si existe, o response.data
+      // Por lo tanto, puede ser { numero_proforma, ... } o { data: { numero_proforma, ... } }
+      const numeroProforma = numeroProformaData.data?.numero_proforma || numeroProformaData.numero_proforma;
+      
+      if (!numeroProforma) {
+        throw new Error('No se pudo obtener el número de proforma');
+      }
       
       // Preparar datos de la proforma
       const proformaData = {
@@ -394,9 +400,9 @@ export function ProformasScreen({ onNavigate }: ProformasScreenProps) {
       </header>
 
       <div className="max-w-7xl mx-auto px-6 py-8">
-        <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        <div className="space-y-6">
           {/* Main Form Area */}
-          <div className="lg:col-span-2 space-y-6">
+          <div className="space-y-6">
             {/* Datos de la Empresa */}
             <Card>
               <CardHeader>
@@ -588,9 +594,17 @@ export function ProformasScreen({ onNavigate }: ProformasScreenProps) {
                             <div className="flex justify-between items-center">
                               <div className="flex items-center space-x-3">
                                 <div>
-                                  <h4 className="font-semibold text-gray-900">
-                                    {coche.marca || ''} {coche.modelo}
-                                  </h4>
+                                  <div className="flex items-center gap-2">
+                                    <h4 className="font-semibold text-gray-900">
+                                      {coche.marca || ''} {coche.modelo}
+                                    </h4>
+                                    {(coche.tiene_proforma === 1 || coche.tiene_proforma === true || coche.tiene_proforma === '1') && (
+                                      <Badge className="bg-purple-100 text-purple-700 text-xs px-1.5 py-0.5">
+                                        <FileText className="w-3 h-3 mr-1" />
+                                        Proforma
+                                      </Badge>
+                                    )}
+                                  </div>
                                   <p className="text-sm text-gray-500">Matrícula: {coche.matricula}</p>
                                   <p className="text-sm text-gray-500">Color: {coche.color}</p>
                                 </div>
@@ -786,6 +800,22 @@ export function ProformasScreen({ onNavigate }: ProformasScreenProps) {
                         ))}
                       </TableBody>
                     </Table>
+
+                    {/* Totales integrados */}
+                    <div className="grid grid-cols-1 md:grid-cols-3 gap-4 bg-white border rounded-lg p-4 shadow-sm">
+                      <div className="space-y-1">
+                        <p className="text-sm text-gray-500">Subtotal</p>
+                        <p className="text-xl font-semibold text-gray-900">€{subtotal.toLocaleString()}</p>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-sm text-gray-500">{impuestoActual.nombre} ({impuestoActual.porcentaje}%):</p>
+                        <p className="text-xl font-semibold text-gray-900">€{totalImpuestos.toLocaleString()}</p>
+                      </div>
+                      <div className="space-y-1">
+                        <p className="text-sm text-gray-500">Total</p>
+                        <p className="text-2xl font-bold text-purple-600">€{total.toLocaleString()}</p>
+                      </div>
+                    </div>
                   </div>
                 </CardContent>
               </Card>
@@ -834,71 +864,41 @@ export function ProformasScreen({ onNavigate }: ProformasScreenProps) {
                 </CardContent>
               </Card>
             )}
-          </div>
 
-          {/* Sidebar - Totales y Acciones */}
-          <div className="space-y-6">
-            {/* Totales */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
-                  <DollarSign className="w-5 h-5" />
-                  <span>Totales</span>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <div className="flex justify-between">
-                  <span className="text-gray-600">Subtotal:</span>
-                  <span>€{subtotal.toLocaleString()}</span>
-                </div>
-                <div className="flex justify-between">
-                  <span className="text-gray-600">{impuestoActual.nombre} ({impuestoActual.porcentaje}%):</span>
-                  <span>€{totalImpuestos.toLocaleString()}</span>
-                </div>
-                <div className="border-t pt-2">
-                  <div className="flex justify-between font-bold text-lg">
-                    <span>Total:</span>
-                    <span className="text-blue-600">€{total.toLocaleString()}</span>
+            {/* Acciones - al final del contenido */}
+            <div className="flex justify-center">
+              <Card className="w-full md:w-4/5 lg:w-2/3">
+                <CardHeader>
+                  <CardTitle className="flex items-center space-x-2">
+                    <Zap className="w-5 h-5" />
+                    <span>Acciones</span>
+                  </CardTitle>
+                </CardHeader>
+                <CardContent className="space-y-4">
+                  <div className="flex flex-col md:flex-row gap-3">
+                    <Button 
+                      className="flex-1 h-12 bg-purple-600 hover:bg-purple-700" 
+                      disabled={productos.length === 0 || generandoProforma}
+                      onClick={generarProforma}
+                    >
+                      <FileText className="w-4 h-4 mr-2" />
+                      {generandoProforma ? 'Generando...' : 'Generar Proforma'}
+                    </Button>
                   </div>
-                </div>
-              </CardContent>
-            </Card>
-
-            {/* Acciones */}
-            <Card>
-              <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
-                  <Zap className="w-5 h-5" />
-                  <span>Acciones</span>
-                </CardTitle>
-              </CardHeader>
-              <CardContent className="space-y-3">
-                <Button 
-                  className="w-full bg-blue-600 hover:bg-blue-700" 
-                  disabled={productos.length === 0 || generandoProforma}
-                  onClick={generarProforma}
-                >
-                  <FileText className="w-4 h-4 mr-2" />
-                  {generandoProforma ? 'Generando...' : 'Generar Proforma'}
-                </Button>
-              </CardContent>
-            </Card>
-
-            {/* Info */}
-            <Card className="bg-blue-50">
-              <CardHeader>
-                <CardTitle className="flex items-center space-x-2">
-                  <Info className="w-5 h-5" />
-                  <span>Información</span>
-                </CardTitle>
-              </CardHeader>
-              <CardContent>
-                <p className="text-sm text-gray-600">
-                  Las proformas son presupuestos sin validez fiscal. Se numeran automáticamente siguiendo el formato PRO-XXX/YYYY.
-                  Puedes cambiar entre IGIC (9.5%) para Canarias o IVA (21%) para península.
-                </p>
-              </CardContent>
-            </Card>
+                  
+                  {/* Info integrada */}
+                  <div className="bg-purple-50 p-4 rounded-lg border border-purple-100">
+                    <div className="flex items-start space-x-2">
+                      <Info className="w-5 h-5 text-purple-600 mt-0.5" />
+                      <p className="text-sm text-gray-600">
+                        Las proformas son presupuestos sin validez fiscal. Se numeran automáticamente siguiendo el formato PRO-XXX/YYYY.
+                        Puedes cambiar entre IGIC (9.5%) para Canarias o IVA (21%) para península.
+                      </p>
+                    </div>
+                  </div>
+                </CardContent>
+              </Card>
+            </div>
           </div>
         </div>
       </div>

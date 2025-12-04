@@ -34,3 +34,4 @@ console.log(`📦 Nueva versión: ${newVersion}`);
 // Exportar la nueva versión para uso en scripts
 process.stdout.write(newVersion);
 
+

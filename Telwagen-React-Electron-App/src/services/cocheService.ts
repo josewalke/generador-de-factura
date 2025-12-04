@@ -14,6 +14,8 @@ export interface Coche {
   fecha_venta?: string;
   fecha_creacion: string;
   activo: number;
+  numero_proforma?: string;
+  tiene_proforma?: number;
 }
 
 export interface CocheCreateData {

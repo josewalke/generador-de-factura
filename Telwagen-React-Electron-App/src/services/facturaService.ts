@@ -340,6 +340,11 @@ class FacturaService {
       throw error;
     }
   }
+
+  async dividirEnIndividuales(id: string): Promise<{ success: boolean; message: string; data: { factura_original_id: string; facturas_creadas: Array<{ id: string; numero_factura: string; coche_matricula?: string }> } }> {
+    const response = await apiClient.post(`${this.baseUrl}/${id}/dividir`);
+    return handleApiResponse(response);
+  }
 }
 
 export const facturaService = new FacturaService();

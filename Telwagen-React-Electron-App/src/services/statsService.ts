@@ -5,6 +5,7 @@ export interface MetricsResumen {
   totalCoches: number;
   totalFacturas: number;
   totalEmpresas: number;
+  totalProformas: number;
   ingresosMes: number;
 }
 

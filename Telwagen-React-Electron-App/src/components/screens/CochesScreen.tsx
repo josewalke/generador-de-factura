@@ -3,7 +3,7 @@ import { Card, CardContent, CardHeader, CardTitle } from '../ui/card';
 import { Button } from '../ui/button';
 import { Input } from '../ui/input';
 import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from '../ui/table';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '../ui/dialog';
+import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogDescription } from '../ui/dialog';
 import {
   AlertDialog,
   AlertDialogAction,
@@ -22,11 +22,13 @@ import { useCoches } from '../../hooks';
 import { useDebounce } from '../../hooks/useDebounce';
 import { Coche, CocheCreateData } from '../../services';
 import { excelService } from '../../services/excelService';
+import { proformaService, Proforma } from '../../services/proformaService';
 import { CocheFormSimple } from '../forms/CocheFormSimple';
 import { CochesErrorBoundary } from '../ErrorBoundary';
 import { logger } from '../../utils/logger';
 import { toast } from 'sonner';
-import { ArrowLeft, Plus, Search, Edit, AlertCircle, RefreshCw, Car, Download, X, BarChart3, Upload, Trash2, FileText } from 'lucide-react';
+import { ArrowLeft, Plus, Search, Edit, AlertCircle, RefreshCw, Car, Download, X, BarChart3, Upload, Trash2, FileText, Building2, User, ClipboardList, StickyNote } from 'lucide-react';
+import '../../styles/proforma-modal.css';
 
 interface CochesScreenProps {
   onNavigate: (screen: Screen) => void;
@@ -43,6 +45,9 @@ export function CochesScreen({ onNavigate }: CochesScreenProps) {
   const [resultadoImportacion, setResultadoImportacion] = useState<{ importados: number; errores: number; erroresDetalle?: any[] } | null>(null);
   const [mostrarDialogEliminar, setMostrarDialogEliminar] = useState(false);
   const [cocheAEliminar, setCocheAEliminar] = useState<{ id: string; matricula: string } | null>(null);
+  const [mostrarDialogProforma, setMostrarDialogProforma] = useState(false);
+  const [proformaSeleccionada, setProformaSeleccionada] = useState<Proforma | null>(null);
+  const [cargandoProforma, setCargandoProforma] = useState(false);
 
   // Debounce para optimizar búsquedas
   const debouncedBusqueda = useDebounce(busqueda, 300);
@@ -96,6 +101,27 @@ export function CochesScreen({ onNavigate }: CochesScreenProps) {
     nuevos: coches.filter(c => c.kms === 0).length,
     usados: coches.filter(c => c.kms > 0).length
   }), [coches, cochesDisponibles, cochesVendidos]);
+
+  const handleVerProforma = async (cocheId: string) => {
+    try {
+      setCargandoProforma(true);
+      setMostrarDialogProforma(true);
+      
+      // Buscar la proforma asociada al coche
+      const response = await proformaService.getAll({ coche_id: cocheId, limit: 1 });
+      
+      if (response.data && response.data.length > 0) {
+        // Obtener detalles completos de la proforma
+        const proformaCompleta = await proformaService.getById(response.data[0].id);
+        setProformaSeleccionada(proformaCompleta);
+      }
+    } catch (error) {
+      console.error('Error al cargar proforma:', error);
+      toast.error('Error al cargar la proforma');
+    } finally {
+      setCargandoProforma(false);
+    }
+  };
 
   const handleCrearCoche = async (cocheData: CocheCreateData) => {
     try {
@@ -411,7 +437,6 @@ export function CochesScreen({ onNavigate }: CochesScreenProps) {
                             <TableHead>Color</TableHead>
                             <TableHead>Kilómetros</TableHead>
                             <TableHead>Estado</TableHead>
-                            <TableHead>Factura</TableHead>
                             <TableHead>Chasis</TableHead>
                             <TableHead className="text-right">Acciones</TableHead>
                           </TableRow>
@@ -437,20 +462,15 @@ export function CochesScreen({ onNavigate }: CochesScreenProps) {
                               <TableCell>
                                 {coche.vendido ? (
                                   <Badge className="bg-blue-100 text-blue-800">Vendido</Badge>
+                                ) : coche.numero_proforma ? (
+                                  <Badge 
+                                    className="bg-purple-100 text-purple-800 cursor-pointer hover:bg-purple-200 transition-colors"
+                                    onClick={() => handleVerProforma(coche.id)}
+                                  >
+                                    Proformado
+                                  </Badge>
                                 ) : (
                                   <Badge variant="default">Disponible</Badge>
-                                )}
-                              </TableCell>
-                              <TableCell>
-                                {coche.numero_factura ? (
-                                  <div className="flex flex-col text-sm">
-                                    <span className="font-semibold text-blue-600">{coche.numero_factura}</span>
-                                    {coche.fecha_venta && (
-                                      <span className="text-xs text-gray-500">{new Date(coche.fecha_venta).toLocaleDateString()}</span>
-                                    )}
-                                  </div>
-                                ) : (
-                                  <span className="text-gray-400 text-sm">—</span>
                                 )}
                               </TableCell>
                               <TableCell>
@@ -806,6 +826,174 @@ export function CochesScreen({ onNavigate }: CochesScreenProps) {
             </AlertDialogFooter>
           </AlertDialogContent>
         </AlertDialog>
+
+        {/* Diálogo para ver información de la proforma */}
+        <Dialog open={mostrarDialogProforma} onOpenChange={(open) => {
+          setMostrarDialogProforma(open);
+          if (!open) setProformaSeleccionada(null);
+        }}>
+          <DialogContent className="proforma-modal-content">
+            <div className="proforma-modal-header">
+              <DialogTitle className="proforma-modal-title">
+                <div className="proforma-modal-title-icon">
+                  <FileText />
+                </div>
+                Detalle de Proforma
+              </DialogTitle>
+              <DialogDescription className="proforma-modal-description">
+                Información completa de la proforma asociada al vehículo.
+              </DialogDescription>
+            </div>
+            
+            {cargandoProforma ? (
+              <div className="proforma-loading">
+                <RefreshCw />
+              </div>
+            ) : proformaSeleccionada ? (
+              <div className="proforma-modal-body">
+                {/* Banner compacto */}
+                <div className="proforma-banner">
+                  <div className="proforma-banner-left">
+                    <span className="proforma-banner-numero">{proformaSeleccionada.numero_proforma}</span>
+                  </div>
+                  <div className="proforma-banner-right">
+                    <div className="proforma-banner-fecha-group">
+                      <span className="proforma-banner-label">Emisión</span>
+                      <span className="proforma-banner-fecha">{new Date(proformaSeleccionada.fecha_emision).toLocaleDateString('es-ES')}</span>
+                    </div>
+                    <span className="proforma-banner-badge">
+                      {proformaSeleccionada.estado || 'Pendiente'}
+                    </span>
+                  </div>
+                </div>
+
+                {/* Info sin cards: Cliente y Empresa en línea */}
+                <div className="proforma-info-grid">
+                  <div className="proforma-info-item">
+                    <User />
+                    <div className="proforma-info-content">
+                      <span className="proforma-info-label">Cliente</span>
+                      <span className="proforma-info-name">{proformaSeleccionada.cliente_nombre || 'Sin cliente'}</span>
+                      {proformaSeleccionada.cliente_identificacion && (
+                        <span className="proforma-info-detail">CIF/NIF: {proformaSeleccionada.cliente_identificacion}</span>
+                      )}
+                    </div>
+                  </div>
+                  
+                  <div className="proforma-info-item">
+                    <Building2 />
+                    <div className="proforma-info-content">
+                      <span className="proforma-info-label">Empresa Emisora</span>
+                      <span className="proforma-info-name">{proformaSeleccionada.empresa_nombre || 'N/A'}</span>
+                      {proformaSeleccionada.empresa_cif && (
+                        <span className="proforma-info-detail">CIF: {proformaSeleccionada.empresa_cif}</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {proformaSeleccionada.notas && (
+                    <div className="proforma-notas-row">
+                      <StickyNote />
+                      <div className="proforma-notas-content">
+                        <span className="proforma-notas-label">Notas</span>
+                        <span className="proforma-notas-text">{proformaSeleccionada.notas}</span>
+                      </div>
+                    </div>
+                  )}
+                </div>
+
+                {/* Tabla de conceptos */}
+                <div className="proforma-conceptos-section">
+                  <div className="proforma-conceptos-header">
+                    <ClipboardList />
+                    Conceptos / Productos
+                  </div>
+                  {proformaSeleccionada.detalles && proformaSeleccionada.detalles.length > 0 ? (
+                    <div className="proforma-tabla-container">
+                      <table className="proforma-tabla">
+                        <thead>
+                          <tr>
+                            <th>Descripción</th>
+                            <th>Vehículo</th>
+                            <th>Cant.</th>
+                            <th>P. Unit.</th>
+                            <th>Total</th>
+                          </tr>
+                        </thead>
+                        <tbody>
+                          {proformaSeleccionada.detalles.map((detalle, index) => (
+                            <tr key={index}>
+                              <td>
+                                <span className="proforma-tabla-descripcion">{detalle.descripcion || 'Sin descripción'}</span>
+                              </td>
+                              <td>
+                                {detalle.matricula ? (
+                                  <>
+                                    <span className="proforma-tabla-vehiculo">{detalle.marca} {detalle.modelo}</span>
+                                    <br />
+                                    <span className="proforma-tabla-vehiculo-matricula">{detalle.matricula}</span>
+                                  </>
+                                ) : (
+                                  <span style={{ color: '#9ca3af' }}>—</span>
+                                )}
+                              </td>
+                              <td className="proforma-tabla-cantidad">{detalle.cantidad || 1}</td>
+                              <td className="proforma-tabla-precio">€{(detalle.precio_unitario || detalle.precio || 0).toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                              <td className="proforma-tabla-total">€{(detalle.total || (detalle.precio || 0) * (detalle.cantidad || 1)).toLocaleString('es-ES', { minimumFractionDigits: 2 })}</td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  ) : (
+                    <div className="proforma-tabla-empty">No hay productos en esta proforma</div>
+                  )}
+                </div>
+
+                {/* Totales inline compactos */}
+                <div className="proforma-totales-container">
+                  <div className="proforma-totales-box">
+                    <div className="proforma-totales-item">
+                      <span className="proforma-totales-label">Subtotal:</span>
+                      <span className="proforma-totales-value">€{(proformaSeleccionada.subtotal || 0).toLocaleString('es-ES', { minimumFractionDigits: 2 })}</span>
+                    </div>
+                    <div className="proforma-totales-divider"></div>
+                    <div className="proforma-totales-item">
+                      <span className="proforma-totales-label">IGIC:</span>
+                      <span className="proforma-totales-value">€{(proformaSeleccionada.igic || 0).toLocaleString('es-ES', { minimumFractionDigits: 2 })}</span>
+                    </div>
+                    <div className="proforma-totales-item proforma-totales-total">
+                      <span className="proforma-totales-label">Total:</span>
+                      <span className="proforma-totales-value">€{(proformaSeleccionada.total || 0).toLocaleString('es-ES', { minimumFractionDigits: 2 })}</span>
+                    </div>
+                  </div>
+                </div>
+
+                {/* Botones */}
+                <div className="proforma-modal-footer">
+                  <button 
+                    className="proforma-btn proforma-btn-outline"
+                    onClick={() => setMostrarDialogProforma(false)}
+                  >
+                    Cerrar
+                  </button>
+                  <button 
+                    className="proforma-btn proforma-btn-primary"
+                    onClick={() => {
+                      onNavigate('proformas');
+                      setMostrarDialogProforma(false);
+                    }}
+                  >
+                    <FileText />
+                    Ir a Proformas
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <div className="proforma-not-found">No se encontró información de la proforma.</div>
+            )}
+          </DialogContent>
+        </Dialog>
       </div>
     </CochesErrorBoundary>
   );

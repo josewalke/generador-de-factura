@@ -10,10 +10,11 @@ import { clienteService } from '../services/clienteService';
 import { cocheService } from '../services/cocheService';
 import { empresaService } from '../services/empresaService';
 import { statsService } from '../services/statsService';
+import { proformaService } from '../services/proformaService';
 import { SelectorCertificado } from './ui/SelectorCertificado';
 import { CertificadoDigital } from '../services/certificadoService';
 import { useElectronAPI } from '../hooks/useElectronAPI';
-import { RefreshCw, Trash2, Users, Car, Building2, BarChart3, Zap } from 'lucide-react';
+import { RefreshCw, Trash2, Users, Car, Building2, BarChart3, Zap, FileText } from 'lucide-react';
 
 interface DashboardProps {
   onNavigate: (screen: Screen) => void;
@@ -24,6 +25,7 @@ interface DashboardStats {
   totalCoches: number;
   totalFacturas: number;
   totalEmpresas: number;
+  totalProformas: number;
   ingresosMes: number;
 }
 
@@ -34,6 +36,7 @@ export function Dashboard({ onNavigate }: DashboardProps) {
     totalCoches: 0,
     totalFacturas: 0,
     totalEmpresas: 0,
+    totalProformas: 0,
     ingresosMes: 0
   });
   const [loading, setLoading] = React.useState(true);
@@ -65,11 +68,21 @@ export function Dashboard({ onNavigate }: DashboardProps) {
       try {
         setLoading(true);
         
-        const resumen = await statsService.getResumen();
+        // Cargar resumen general y proformas en paralelo
+        const [resumen, proformasResponse] = await Promise.all([
+          statsService.getResumen(),
+          proformaService.getAll({ page: 1, limit: 1 })
+        ]);
         
-        setStats(resumen);
+        // El backend devuelve totalCount, no total
+        const totalProformas = proformasResponse.pagination?.totalCount || proformasResponse.pagination?.total || 0;
         
-        console.log('📊 Estadísticas del dashboard cargadas:', resumen);
+        setStats({
+          ...resumen,
+          totalProformas
+        });
+        
+        console.log('📊 Estadísticas del dashboard cargadas:', resumen, 'Proformas:', totalProformas);
         
       } catch (error) {
         console.error('❌ Error cargando estadísticas del dashboard:', error);
@@ -119,10 +132,19 @@ export function Dashboard({ onNavigate }: DashboardProps) {
     try {
       setLoading(true);
       
-      const resumen = await statsService.getResumen();
-      setStats(resumen);
+      const [resumen, proformasResponse] = await Promise.all([
+        statsService.getResumen(),
+        proformaService.getAll({ page: 1, limit: 1 })
+      ]);
       
-      console.log('🔄 Estadísticas actualizadas:', resumen);
+      const totalProformas = proformasResponse.pagination?.totalCount || proformasResponse.pagination?.total || 0;
+      
+      setStats({
+        ...resumen,
+        totalProformas
+      });
+      
+      console.log('🔄 Estadísticas actualizadas:', resumen, 'Proformas:', totalProformas);
       
     } catch (error) {
       console.error('❌ Error actualizando estadísticas:', error);
@@ -279,10 +301,16 @@ export function Dashboard({ onNavigate }: DashboardProps) {
                   </CardTitle>
                 </CardHeader>
                 <CardContent>
-                  <p className="text-gray-600 text-sm">Facturas anteriores</p>
-                  <p className="mt-2 font-semibold text-blue-600">
-                    {loading ? 'Cargando...' : `${stats.totalFacturas} facturas`}
-                  </p>
+                  <p className="text-gray-600 text-sm">Facturas y proformas anteriores</p>
+                  <div className="mt-2 flex items-center gap-4">
+                    <p className="font-semibold text-blue-600">
+                      {loading ? '...' : `${stats.totalFacturas} facturas`}
+                    </p>
+                    <span className="text-gray-300">|</span>
+                    <p className="font-semibold text-purple-600">
+                      {loading ? '...' : `${stats.totalProformas} proformas`}
+                    </p>
+                  </div>
                 </CardContent>
               </Card>
             </div>
@@ -310,6 +338,10 @@ export function Dashboard({ onNavigate }: DashboardProps) {
                 <div className="flex justify-between items-center">
                   <span className="text-gray-600">Total Facturas</span>
                   <Badge variant="secondary">{loading ? '...' : stats.totalFacturas}</Badge>
+                </div>
+                <div className="flex justify-between items-center">
+                  <span className="text-gray-600">Total Proformas</span>
+                  <Badge variant="secondary" className="bg-purple-100 text-purple-800">{loading ? '...' : stats.totalProformas}</Badge>
                 </div>
                 <div className="flex justify-between items-center">
                   <span className="text-gray-600">Total Empresas</span>

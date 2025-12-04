@@ -186,6 +186,16 @@ class ProformaService {
     const response = await apiClient.get(`${this.baseUrl}/siguiente-numero/${empresaId}`);
     return handleApiResponse<SiguienteNumeroResponse>(response);
   }
+
+  async dividirEnIndividuales(id: string): Promise<{ success: boolean; message: string; data: { proforma_original_id: string; proformas_creadas: Array<{ id: string; numero_proforma: string; coche_matricula?: string }> } }> {
+    const response = await apiClient.post(`${this.baseUrl}/${id}/dividir`);
+    return handleApiResponse(response);
+  }
+
+  async eliminarTodas(): Promise<{ success: boolean; message: string; eliminadas: number }> {
+    const response = await apiClient.delete(`${this.baseUrl}/todas`);
+    return handleApiResponse(response);
+  }
 }
 
 export const proformaService = new ProformaService();

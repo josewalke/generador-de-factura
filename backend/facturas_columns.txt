@@ -1,0 +1,27 @@
+﻿     column_name      
+----------------------
+ id
+ numero_factura
+ empresa_id
+ cliente_id
+ fecha_emision
+ fecha_vencimiento
+ subtotal
+ igic
+ total
+ estado
+ notas
+ fecha_creacion
+ activo
+ numero_serie
+ fecha_operacion
+ tipo_documento
+ metodo_pago
+ referencia_operacion
+ hash_documento
+ sellado_temporal
+ estado_fiscal
+ codigo_verifactu
+ respuesta_aeat
+(23 rows)
+

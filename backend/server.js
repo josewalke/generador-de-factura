@@ -2325,11 +2325,14 @@ app.get('/api/coches', async (req, res) => {
                    f.numero_factura,
                    f.fecha_emision as fecha_venta,
                    f.total as precio_venta,
-                   cl.nombre as cliente_nombre
+                   cl.nombre as cliente_nombre,
+                   p.numero_proforma,
+                   CASE WHEN p.id IS NOT NULL THEN 1 ELSE 0 END as tiene_proforma
             FROM coches c
             LEFT JOIN detalles_factura df ON df.coche_id = c.id
             LEFT JOIN facturas f ON df.factura_id = f.id AND f.estado IN ('pagada', 'pendiente')
             LEFT JOIN clientes cl ON f.cliente_id = cl.id
+            LEFT JOIN proformas p ON p.coche_id = c.id AND (p.activo = ${activoValue} OR p.activo IS NULL)
             WHERE (c.activo = ${activoValue} OR c.activo = ${vendidoValue} OR c.activo IS NULL)
             ORDER BY c.fecha_creacion DESC
         `, (err, rows) => {
@@ -2352,11 +2355,14 @@ app.get('/api/coches', async (req, res) => {
                    f.numero_factura,
                    f.fecha_emision as fecha_venta,
                    f.total as precio_venta,
-                   cl.nombre as cliente_nombre
+                   cl.nombre as cliente_nombre,
+                   p.numero_proforma,
+                   CASE WHEN p.id IS NOT NULL THEN 1 ELSE 0 END as tiene_proforma
             FROM coches c
             LEFT JOIN detalles_factura df ON df.coche_id = c.id
             LEFT JOIN facturas f ON df.factura_id = f.id AND f.estado IN ('pagada', 'pendiente')
             LEFT JOIN clientes cl ON f.cliente_id = cl.id
+            LEFT JOIN proformas p ON p.coche_id = c.id AND (p.activo = ${activoValue} OR p.activo IS NULL)
             WHERE (c.activo = ${activoValue} OR c.activo = ${vendidoValue} OR c.activo IS NULL)
             ORDER BY c.fecha_creacion DESC
         `, (err, rows) => {
@@ -2389,7 +2395,15 @@ app.get('/api/coches/disponibles', (req, res) => {
                NULL as numero_factura,
                NULL as fecha_venta,
                NULL as precio_venta,
-               NULL as cliente_nombre
+               NULL as cliente_nombre,
+               (SELECT p2.numero_proforma FROM proformas p2 
+                WHERE (p2.coche_id = c.id OR p2.id IN (SELECT dp2.proforma_id FROM detalles_proforma dp2 WHERE dp2.coche_id = c.id))
+                AND (p2.activo = ${activoValue} OR p2.activo IS NULL) LIMIT 1) as numero_proforma,
+               CASE WHEN EXISTS (
+                   SELECT 1 FROM proformas p3 
+                   WHERE (p3.coche_id = c.id OR p3.id IN (SELECT dp3.proforma_id FROM detalles_proforma dp3 WHERE dp3.coche_id = c.id))
+                   AND (p3.activo = ${activoValue} OR p3.activo IS NULL)
+               ) THEN 1 ELSE 0 END as tiene_proforma
         FROM coches c
         WHERE c.activo = ${activoValue}
         ORDER BY c.fecha_creacion DESC
@@ -3110,7 +3124,8 @@ app.get('/api/facturas', async (req, res) => {
             whereParams: whereParams,
             orderBy: 'f.fecha_creacion',
             orderDirection: 'DESC',
-            select: 'f.*, c.nombre as cliente_nombre, c.identificacion as cliente_identificacion, e.nombre as empresa_nombre, e.cif as empresa_cif, e.direccion as empresa_direccion'
+            select: `f.*, c.nombre as cliente_nombre, c.identificacion as cliente_identificacion, e.nombre as empresa_nombre, e.cif as empresa_cif, e.direccion as empresa_direccion,
+                     (SELECT COUNT(*) FROM detalles_factura df WHERE df.factura_id = f.id AND df.coche_id IS NOT NULL) as coches_count`
         });
         
         let facturas = result.data || [];
@@ -3913,7 +3928,8 @@ app.get('/api/proformas', async (req, res) => {
             whereParams: whereParams,
             orderBy: 'p.fecha_creacion',
             orderDirection: 'DESC',
-            select: 'p.*, c.nombre as cliente_nombre, c.identificacion as cliente_identificacion, e.nombre as empresa_nombre, e.cif as empresa_cif, co.matricula as coche_matricula, co.modelo as coche_modelo, co.marca as coche_marca'
+            select: `p.*, c.nombre as cliente_nombre, c.identificacion as cliente_identificacion, e.nombre as empresa_nombre, e.cif as empresa_cif, co.matricula as coche_matricula, co.modelo as coche_modelo, co.marca as coche_marca,
+                     (SELECT COUNT(*) FROM detalles_proforma dp WHERE dp.proforma_id = p.id AND dp.coche_id IS NOT NULL) as coches_count`
         });
         
         res.json({ success: true, data: result.data || [], pagination: result.pagination });
@@ -4389,6 +4405,482 @@ app.delete('/api/proformas/:id', async (req, res) => {
         
     } catch (error) {
         console.error('❌ Error al eliminar proforma:', error);
+        res.status(500).json({ 
+            success: false,
+            error: 'Error interno del servidor',
+            details: error.message
+        });
+    }
+});
+
+// DELETE - Eliminar todas las proformas (para limpieza)
+app.delete('/api/proformas/todas', async (req, res) => {
+    try {
+        // Eliminar todos los detalles de proforma primero
+        await new Promise((resolve, reject) => {
+            db.run('DELETE FROM detalles_proforma', (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Eliminar todas las proformas
+        const changes = await new Promise((resolve, reject) => {
+            db.run('DELETE FROM proformas', function(err) {
+                if (err) reject(err);
+                else resolve(this.changes);
+            });
+        });
+
+        logger.info('Todas las proformas eliminadas', {
+            proformasEliminadas: changes
+        });
+
+        res.json({ 
+            success: true, 
+            message: `Se eliminaron ${changes} proformas`,
+            eliminadas: changes
+        });
+        
+    } catch (error) {
+        console.error('❌ Error al eliminar todas las proformas:', error);
+        res.status(500).json({ 
+            success: false,
+            error: 'Error interno del servidor',
+            details: error.message
+        });
+    }
+});
+
+// POST - Dividir proforma en proformas individuales (una por cada coche)
+app.post('/api/proformas/:id/dividir', async (req, res) => {
+    const startTime = Date.now();
+    
+    try {
+        const { id } = req.params;
+        const proformaId = parseInt(id, 10);
+        
+        if (isNaN(proformaId)) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'ID de proforma inválido' 
+            });
+        }
+
+        const dbType = config.get('database.type') || 'postgresql';
+        const activoValue = dbType === 'postgresql' ? 'true' : '1';
+
+        // Obtener la proforma original con sus detalles
+        const proformaOriginal = await new Promise((resolve, reject) => {
+            db.get(`
+                SELECT p.*, e.nombre as empresa_nombre, e.direccion as empresa_direccion
+                FROM proformas p
+                LEFT JOIN empresas e ON p.empresa_id = e.id
+                WHERE p.id = ?
+            `, [proformaId], (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (!proformaOriginal) {
+            return res.status(404).json({ 
+                success: false,
+                error: 'Proforma no encontrada' 
+            });
+        }
+
+        // Obtener detalles de la proforma que tengan coche_id
+        const detalles = await new Promise((resolve, reject) => {
+            db.all(`
+                SELECT dp.*, c.marca, c.modelo, c.matricula, c.color
+                FROM detalles_proforma dp
+                LEFT JOIN coches c ON dp.coche_id = c.id
+                WHERE dp.proforma_id = ? AND dp.coche_id IS NOT NULL
+            `, [proformaId], (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows);
+            });
+        });
+
+        if (!detalles || detalles.length === 0) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'La proforma no tiene coches asociados para dividir' 
+            });
+        }
+
+        if (detalles.length === 1) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'La proforma ya tiene un solo coche. No es necesario dividirla' 
+            });
+        }
+
+        const proformasCreadas = [];
+        const tipoImpuesto = detalles[0].tipo_impuesto || 'igic';
+        const porcentajeImpuesto = tipoImpuesto === 'igic' ? 9.5 : 21;
+
+        // Extraer el prefijo de la proforma original
+        // Formato esperado: PRO-PREFIJO001/2025
+        const numeroOriginal = proformaOriginal.numero_proforma || '';
+        const año = new Date().getFullYear();
+        
+        // Extraer el prefijo hasta el número (ej: "PRO-TEC" de "PRO-TEC001/2025")
+        // Buscar el patrón: PRO- seguido de letras/números, luego 3 dígitos, luego /año
+        let prefijoProforma = '';
+        const partes = numeroOriginal.split('/');
+        if (partes.length === 2) {
+            const parteNumero = partes[0]; // Ej: "PRO-TEC001"
+            // Buscar los últimos 3 dígitos y extraer todo lo anterior
+            const matchNumero = parteNumero.match(/(\d{3})$/);
+            if (matchNumero) {
+                // Extraer todo excepto los últimos 3 dígitos
+                prefijoProforma = parteNumero.substring(0, parteNumero.length - 3);
+            } else {
+                // Si no hay 3 dígitos al final, usar todo como prefijo
+                prefijoProforma = parteNumero;
+            }
+        } else {
+            // Si no tiene el formato esperado, intentar extraer PRO- seguido de letras
+            const matchPrefijo = numeroOriginal.match(/^(PRO-[A-Z0-9]+)/);
+            if (matchPrefijo) {
+                prefijoProforma = matchPrefijo[1];
+            } else {
+                // Fallback: usar el número original completo
+                prefijoProforma = numeroOriginal;
+            }
+        }
+
+        // Obtener el último número UNA SOLA VEZ antes del loop usando el mismo prefijo
+        const ultimoNumeroResult = await new Promise((resolve, reject) => {
+            db.get(`
+                SELECT MAX(CAST(SUBSTR(numero_proforma, ${prefijoProforma.length + 1}, 3) AS INTEGER)) as ultimo_numero
+                FROM proformas 
+                WHERE empresa_id = ? AND numero_proforma LIKE ? || '%' AND numero_proforma LIKE '%/' || ?
+            `, [proformaOriginal.empresa_id, prefijoProforma, año], (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        // Empezar desde el siguiente número disponible
+        let numeroActual = (ultimoNumeroResult?.ultimo_numero || 0) + 1;
+
+        // Marcar la proforma original como "anulado" antes de crear las nuevas
+        await new Promise((resolve, reject) => {
+            db.run('UPDATE proformas SET estado = ? WHERE id = ?', ['anulado', proformaId], (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Crear una proforma individual por cada coche
+        for (const detalle of detalles) {
+            const precioUnitario = detalle.precio_unitario || 0;
+            const cantidad = detalle.cantidad || 1;
+            const subtotal = precioUnitario * cantidad;
+            const impuesto = subtotal * (porcentajeImpuesto / 100);
+            const total = subtotal + impuesto;
+
+            // Generar número secuencial
+            const nuevoNumero = `${prefijoProforma}${String(numeroActual).padStart(3, '0')}/${año}`;
+            
+            // Incrementar para la siguiente proforma
+            numeroActual++;
+
+            // Crear nueva proforma
+            const nuevaProformaId = await new Promise((resolve, reject) => {
+                db.run(`
+                    INSERT INTO proformas (
+                        numero_proforma, empresa_id, cliente_id, coche_id,
+                        fecha_emision, fecha_validez, subtotal, igic, total,
+                        estado, notas, activo
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `, [
+                    nuevoNumero,
+                    proformaOriginal.empresa_id,
+                    proformaOriginal.cliente_id,
+                    detalle.coche_id,
+                    proformaOriginal.fecha_emision,
+                    proformaOriginal.fecha_validez,
+                    subtotal,
+                    impuesto,
+                    total,
+                    proformaOriginal.estado || 'pendiente',
+                    `Dividida de ${proformaOriginal.numero_proforma}. ${proformaOriginal.notas || ''}`.trim(),
+                    activoValue
+                ], function(err) {
+                    if (err) reject(err);
+                    else resolve(this.lastID);
+                });
+            });
+
+            // Crear detalle de la nueva proforma
+            await new Promise((resolve, reject) => {
+                db.run(`
+                    INSERT INTO detalles_proforma (
+                        proforma_id, producto_id, coche_id, cantidad,
+                        precio_unitario, subtotal, igic, total, descripcion, tipo_impuesto
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `, [
+                    nuevaProformaId,
+                    detalle.producto_id,
+                    detalle.coche_id,
+                    cantidad,
+                    precioUnitario,
+                    subtotal,
+                    impuesto,
+                    total,
+                    detalle.descripcion || `${detalle.marca || ''} ${detalle.modelo || ''} - Matrícula: ${detalle.matricula || ''} - ${detalle.color || ''}`.trim(),
+                    tipoImpuesto
+                ], (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                });
+            });
+
+            proformasCreadas.push({
+                id: nuevaProformaId,
+                numero_proforma: nuevoNumero,
+                coche_matricula: detalle.matricula
+            });
+        }
+
+        const totalDuration = Date.now() - startTime;
+        logger.info('Proforma dividida exitosamente', {
+            proformaOriginalId: proformaId,
+            numeroOriginal: proformaOriginal.numero_proforma,
+            proformasCreadas: proformasCreadas.length,
+            duration: totalDuration
+        });
+
+        res.json({ 
+            success: true, 
+            message: `Proforma dividida en ${proformasCreadas.length} proformas individuales`,
+            data: {
+                proforma_original_id: proformaId,
+                proformas_creadas: proformasCreadas
+            }
+        });
+        
+    } catch (error) {
+        console.error('❌ Error al dividir proforma:', error);
+        res.status(500).json({ 
+            success: false,
+            error: 'Error interno del servidor',
+            details: error.message
+        });
+    }
+});
+
+// POST - Dividir factura en facturas individuales (una por cada coche)
+app.post('/api/facturas/:id/dividir', async (req, res) => {
+    const startTime = Date.now();
+    
+    try {
+        const { id } = req.params;
+        const facturaId = parseInt(id, 10);
+        
+        if (isNaN(facturaId) || facturaId <= 0) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'ID de factura inválido' 
+            });
+        }
+
+        const dbType = config.get('database.type') || 'postgresql';
+        const activoValue = dbType === 'postgresql' ? 'true' : '1';
+
+        // Obtener la factura original con sus detalles
+        const facturaOriginal = await new Promise((resolve, reject) => {
+            db.get(`
+                SELECT f.*, e.nombre as empresa_nombre, e.direccion as empresa_direccion
+                FROM facturas f
+                LEFT JOIN empresas e ON f.empresa_id = e.id
+                WHERE f.id = ?
+            `, [facturaId], (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        if (!facturaOriginal) {
+            return res.status(404).json({ 
+                success: false,
+                error: 'Factura no encontrada' 
+            });
+        }
+
+        // Obtener detalles de la factura que tengan coche_id
+        const detalles = await new Promise((resolve, reject) => {
+            db.all(`
+                SELECT df.*, c.marca, c.modelo, c.matricula, c.color
+                FROM detalles_factura df
+                LEFT JOIN coches c ON df.coche_id = c.id
+                WHERE df.factura_id = ? AND df.coche_id IS NOT NULL
+            `, [facturaId], (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows);
+            });
+        });
+
+        if (!detalles || detalles.length === 0) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'La factura no tiene coches asociados para dividir' 
+            });
+        }
+
+        if (detalles.length === 1) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'La factura ya tiene un solo coche. No es necesario dividirla' 
+            });
+        }
+
+        const facturasCreadas = [];
+        const tipoImpuesto = detalles[0].tipo_impuesto || 'igic';
+        const porcentajeImpuesto = tipoImpuesto === 'igic' ? 9.5 : 21;
+
+        // Extraer el prefijo de la factura original
+        const numeroOriginal = facturaOriginal.numero_factura || '';
+        const año = new Date().getFullYear();
+        
+        // Extraer el prefijo hasta el número (ej: "TEC" de "TEC001/2025")
+        let prefijoFactura = '';
+        const partes = numeroOriginal.split('/');
+        if (partes.length === 2) {
+            const parteNumero = partes[0]; // Ej: "TEC001"
+            // Buscar los últimos 3 dígitos y extraer todo lo anterior
+            const matchNumero = parteNumero.match(/(\d{3})$/);
+            if (matchNumero) {
+                prefijoFactura = parteNumero.substring(0, parteNumero.length - 3);
+            } else {
+                prefijoFactura = parteNumero;
+            }
+        } else {
+            const matchPrefijo = numeroOriginal.match(/^([A-Z0-9]+)/);
+            if (matchPrefijo) {
+                prefijoFactura = matchPrefijo[1];
+            } else {
+                prefijoFactura = numeroOriginal;
+            }
+        }
+
+        // Obtener el último número UNA SOLA VEZ antes del loop usando el mismo prefijo
+        const ultimoNumeroResult = await new Promise((resolve, reject) => {
+            db.get(`
+                SELECT MAX(CAST(SUBSTR(numero_factura, ${prefijoFactura.length + 1}, 3) AS INTEGER)) as ultimo_numero
+                FROM facturas 
+                WHERE empresa_id = ? AND numero_factura LIKE ? || '%' AND numero_factura LIKE '%/' || ?
+            `, [facturaOriginal.empresa_id, prefijoFactura, año], (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+
+        // Empezar desde el siguiente número disponible
+        let numeroActual = (ultimoNumeroResult?.ultimo_numero || 0) + 1;
+
+        // Marcar la factura original como "anulado" antes de crear las nuevas
+        await new Promise((resolve, reject) => {
+            db.run('UPDATE facturas SET estado = ? WHERE id = ?', ['anulado', facturaId], (err) => {
+                if (err) reject(err);
+                else resolve();
+            });
+        });
+
+        // Crear una factura individual por cada coche
+        for (const detalle of detalles) {
+            const precioUnitario = detalle.precio_unitario || 0;
+            const cantidad = detalle.cantidad || 1;
+            const subtotal = precioUnitario * cantidad;
+            const impuesto = subtotal * (porcentajeImpuesto / 100);
+            const total = subtotal + impuesto;
+
+            // Generar número secuencial
+            const nuevoNumero = `${prefijoFactura}${String(numeroActual).padStart(3, '0')}/${año}`;
+            
+            // Incrementar para la siguiente factura
+            numeroActual++;
+
+            // Crear nueva factura
+            const nuevaFacturaId = await new Promise((resolve, reject) => {
+                db.run(`
+                    INSERT INTO facturas (
+                        numero_factura, empresa_id, cliente_id,
+                        fecha_emision, fecha_vencimiento, subtotal, igic, total,
+                        estado, notas, activo
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `, [
+                    nuevoNumero,
+                    facturaOriginal.empresa_id,
+                    facturaOriginal.cliente_id,
+                    facturaOriginal.fecha_emision,
+                    facturaOriginal.fecha_vencimiento,
+                    subtotal,
+                    impuesto,
+                    total,
+                    facturaOriginal.estado || 'pendiente',
+                    `Dividida de ${facturaOriginal.numero_factura}. ${facturaOriginal.notas || ''}`.trim(),
+                    activoValue
+                ], function(err) {
+                    if (err) reject(err);
+                    else resolve(this.lastID);
+                });
+            });
+
+            // Crear detalle de la nueva factura
+            await new Promise((resolve, reject) => {
+                db.run(`
+                    INSERT INTO detalles_factura (
+                        factura_id, producto_id, coche_id, cantidad,
+                        precio_unitario, subtotal, igic, total, descripcion, tipo_impuesto
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                `, [
+                    nuevaFacturaId,
+                    detalle.producto_id,
+                    detalle.coche_id,
+                    cantidad,
+                    precioUnitario,
+                    subtotal,
+                    impuesto,
+                    total,
+                    detalle.descripcion || `${detalle.marca || ''} ${detalle.modelo || ''} - Matrícula: ${detalle.matricula || ''} - ${detalle.color || ''}`.trim(),
+                    tipoImpuesto
+                ], (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                });
+            });
+
+            facturasCreadas.push({
+                id: nuevaFacturaId,
+                numero_factura: nuevoNumero,
+                coche_matricula: detalle.matricula
+            });
+        }
+
+        const totalDuration = Date.now() - startTime;
+        logger.info('Factura dividida exitosamente', {
+            facturaOriginalId: facturaId,
+            numeroOriginal: facturaOriginal.numero_factura,
+            facturasCreadas: facturasCreadas.length,
+            duration: totalDuration
+        });
+
+        res.json({ 
+            success: true, 
+            message: `Factura dividida en ${facturasCreadas.length} facturas individuales`,
+            data: {
+                factura_original_id: facturaId,
+                facturas_creadas: facturasCreadas
+            }
+        });
+        
+    } catch (error) {
+        console.error('❌ Error al dividir factura:', error);
         res.status(500).json({ 
             success: false,
             error: 'Error interno del servidor',
