@@ -331,21 +331,43 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
     }
 
     try {
+      // Obtener datos completos de la factura para incluir VeriFactu
+      let facturaCompleta: any = facturaGenerada;
+      if (facturaGenerada.id) {
+        try {
+          facturaCompleta = await facturaService.getById(facturaGenerada.id);
+        } catch (error) {
+          console.warn('No se pudieron obtener datos completos de VeriFactu, usando datos básicos');
+        }
+      }
+      
       // Preparar datos para el PDF
       const pdfData: FacturaPDFData = {
-        numero: facturaGenerada.numero,
-        fecha: facturaGenerada.fecha_emision,
-        cliente: facturaGenerada.cliente.nombre,
-        empresa: facturaGenerada.empresa.nombre,
-        subtotal: facturaGenerada.subtotal,
-        impuesto: facturaGenerada.impuestos,
-        total: facturaGenerada.total,
-        estado: facturaGenerada.estado,
-        productos: facturaGenerada.productos.map((producto: ProductoFactura) => ({
+        numero: facturaCompleta.numero_factura || facturaGenerada.numero,
+        fecha: facturaCompleta.fecha_emision || facturaGenerada.fecha_emision,
+        cliente: facturaCompleta.cliente_nombre || facturaGenerada.cliente?.nombre || clienteSeleccionado?.nombre || 'Cliente no especificado',
+        clienteDireccion: facturaCompleta.cliente_direccion || facturaGenerada.cliente?.direccion || clienteSeleccionado?.direccion,
+        clienteNif: facturaCompleta.cliente_nif || facturaGenerada.cliente?.identificacion || facturaGenerada.cliente?.nif || clienteSeleccionado?.identificacion,
+        clienteTelefono: facturaCompleta.cliente_telefono || facturaGenerada.cliente?.telefono || clienteSeleccionado?.telefono,
+        clienteEmail: facturaCompleta.cliente_email || facturaGenerada.cliente?.email || clienteSeleccionado?.email,
+        clienteCodigoPostal: facturaCompleta.cliente_codigo_postal || facturaGenerada.cliente?.codigo_postal || clienteSeleccionado?.codigo_postal,
+        clienteProvincia: facturaCompleta.cliente_provincia || facturaGenerada.cliente?.provincia || clienteSeleccionado?.provincia,
+        clientePais: facturaCompleta.cliente_pais || facturaGenerada.cliente?.pais || clienteSeleccionado?.pais,
+        clienteCodigoPais: facturaCompleta.cliente_codigo_pais || facturaGenerada.cliente?.codigo_pais || clienteSeleccionado?.codigo_pais,
+        clienteTipoIdentificacion: facturaCompleta.cliente_tipo_identificacion || facturaGenerada.cliente?.tipo_identificacion || clienteSeleccionado?.tipo_identificacion,
+        clienteRegimenFiscal: facturaCompleta.cliente_regimen_fiscal || facturaGenerada.cliente?.regimen_fiscal || clienteSeleccionado?.regimen_fiscal,
+        empresa: facturaCompleta.empresa_nombre || facturaGenerada.empresa?.nombre || 'Empresa no especificada',
+        codigoVeriFactu: facturaCompleta.codigo_verifactu || facturaCompleta.codigoVeriFactu,
+        hashDocumento: facturaCompleta.hash_documento || facturaCompleta.hashDocumento,
+        subtotal: facturaCompleta.subtotal || facturaGenerada.subtotal,
+        impuesto: facturaCompleta.igic || facturaGenerada.igic || facturaGenerada.impuestos,
+        total: facturaCompleta.total || facturaGenerada.total,
+        estado: facturaCompleta.estado || facturaGenerada.estado,
+        productos: facturaGenerada.productos?.map((producto: ProductoFactura) => ({
           descripcion: producto.descripcion,
           cantidad: 1, // Siempre 1 para vehículos
           precio: producto.precio
-        }))
+        })) || []
       };
 
       // Generar y descargar PDF

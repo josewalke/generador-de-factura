@@ -17,6 +17,13 @@ export interface Factura {
   // Datos relacionados
   cliente_nombre?: string;
   empresa_nombre?: string;
+  // Campos VeriFactu
+  codigo_verifactu?: string;
+  codigoVeriFactu?: string;
+  hash_documento?: string;
+  hashDocumento?: string;
+  numero_serie?: string;
+  sellado_temporal?: string;
   // Campos adicionales para compatibilidad
   numero?: string;
   fecha?: string;

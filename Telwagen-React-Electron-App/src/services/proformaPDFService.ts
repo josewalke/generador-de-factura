@@ -87,9 +87,9 @@ class ProformaPDFService {
 
   private generarHTMLProforma(proforma: ProformaPDFData): string {
     const fechaFormateada = new Date(proforma.fecha).toLocaleDateString('es-ES');
-    const subtotal = proforma.subtotal || proforma.productos.reduce((sum, p) => sum + (p.precio * p.cantidad), 0);
-    const impuesto = proforma.impuesto || subtotal * 0.095;
-    const total = proforma.total || subtotal + impuesto;
+    const subtotal = Number(proforma.subtotal || proforma.productos.reduce((sum, p) => sum + (Number(p.precio_unitario || p.precio || 0) * Number(p.cantidad || 1)), 0));
+    const impuesto = Number(proforma.impuesto || subtotal * 0.095);
+    const total = Number(proforma.total || subtotal + impuesto);
     
     return `
     <!DOCTYPE html>
@@ -294,9 +294,14 @@ class ProformaPDFService {
                     </tr>
                 </thead>
                 <tbody>
-                    ${proforma.productos.map(producto => `
+                    ${proforma.productos.map(producto => {
+                        const precio = Number(producto.precio_unitario || producto.precio || 0);
+                        const cantidad = Number(producto.cantidad || 1);
+                        const subtotal = precio * cantidad;
+                        const impuesto = subtotal * 0.095;
+                        return `
                         <tr>
-                            <td>${producto.cantidad}</td>
+                            <td>${cantidad}</td>
                             <td>
                                 ${producto.descripcion}
                                 ${producto.matricula ? `
@@ -307,11 +312,12 @@ class ProformaPDFService {
                                 </div>
                                 ` : ''}
                             </td>
-                            <td>${producto.precio.toFixed(2)} €</td>
-                            <td>${(producto.precio * 0.095).toFixed(2)} €</td>
-                            <td>${(producto.precio * producto.cantidad).toFixed(2)} €</td>
+                            <td>${precio.toFixed(2)} €</td>
+                            <td>${impuesto.toFixed(2)} €</td>
+                            <td>${subtotal.toFixed(2)} €</td>
                         </tr>
-                    `).join('')}
+                    `;
+                    }).join('')}
                 </tbody>
             </table>
             

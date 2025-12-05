@@ -3580,6 +3580,151 @@ app.post('/api/facturas', async (req, res) => {
                     }
                 }
                 
+                // ==================== ACTUALIZAR ESTADO DE PROFORMAS ====================
+                // Obtener todos los coche_id de la factura recién creada
+                const dbType = config.get('database.type') || 'postgresql';
+                let cochesFactura = [];
+                
+                if (dbType === 'postgresql') {
+                    // Usar método query directamente para PostgreSQL
+                    const result = await db.query(`
+                        SELECT DISTINCT coche_id 
+                        FROM detalles_factura 
+                        WHERE factura_id = $1 AND coche_id IS NOT NULL
+                    `, [facturaId]);
+                    cochesFactura = result.rows.map(row => row.coche_id).filter(id => id !== null);
+                } else {
+                    cochesFactura = await new Promise((resolve, reject) => {
+                        db.all(`
+                            SELECT DISTINCT coche_id 
+                            FROM detalles_factura 
+                            WHERE factura_id = ? AND coche_id IS NOT NULL
+                        `, [facturaId], (err, rows) => {
+                            if (err) {
+                                console.error('❌ Error obteniendo coches de la factura:', err.message);
+                                reject(err);
+                            } else {
+                                const cocheIds = rows.map(row => row.coche_id).filter(id => id !== null);
+                                resolve(cocheIds);
+                            }
+                        });
+                    });
+                }
+                
+                if (cochesFactura && cochesFactura.length > 0) {
+                    console.log(`📋 [Factura ${facturaId}] Coches en la factura:`, cochesFactura);
+                    
+                    // Buscar proformas relacionadas (mismo cliente, misma empresa y mismos coches)
+                    let proformasConCoches = [];
+                    
+                    if (dbType === 'postgresql') {
+                        // Construir query con placeholders de PostgreSQL ($1, $2, etc.)
+                        const cochesPlaceholders = cochesFactura.map((_, i) => `$${i + 1}`).join(',');
+                        const clientePlaceholder = `$${cochesFactura.length + 1}`;
+                        const empresaPlaceholder = `$${cochesFactura.length + 2}`;
+                        const params = [...cochesFactura, ...cochesFactura, cliente_id, empresaIdValido];
+                        
+                        const query = `
+                            SELECT DISTINCT p.id, p.numero_proforma, p.estado, p.cliente_id, p.empresa_id,
+                                   COUNT(DISTINCT dp.coche_id) as total_coches_proforma,
+                                   COUNT(DISTINCT CASE WHEN dp.coche_id IN (${cochesPlaceholders}) THEN dp.coche_id END) as coches_facturados
+                            FROM proformas p
+                            INNER JOIN detalles_proforma dp ON dp.proforma_id = p.id
+                            WHERE dp.coche_id IN (${cochesPlaceholders})
+                              AND p.estado NOT IN ('facturada', 'anulado', 'cancelada')
+                              AND p.cliente_id = ${clientePlaceholder}
+                              AND p.empresa_id = ${empresaPlaceholder}
+                            GROUP BY p.id, p.numero_proforma, p.estado, p.cliente_id, p.empresa_id
+                        `;
+                        
+                        const result = await db.query(query, params);
+                        proformasConCoches = result.rows || [];
+                    } else {
+                        proformasConCoches = await new Promise((resolve, reject) => {
+                            if (cochesFactura.length === 0) {
+                                resolve([]);
+                                return;
+                            }
+                            const placeholders = cochesFactura.map(() => '?').join(',');
+                            // Buscar proformas del mismo cliente y empresa que contengan estos coches
+                            db.all(`
+                                SELECT DISTINCT p.id, p.numero_proforma, p.estado, p.cliente_id, p.empresa_id,
+                                       COUNT(DISTINCT dp.coche_id) as total_coches_proforma,
+                                       COUNT(DISTINCT CASE WHEN dp.coche_id IN (${placeholders}) THEN dp.coche_id END) as coches_facturados
+                                FROM proformas p
+                                INNER JOIN detalles_proforma dp ON dp.proforma_id = p.id
+                                WHERE dp.coche_id IN (${placeholders})
+                                  AND p.estado NOT IN ('facturada', 'anulado', 'cancelada')
+                                  AND p.cliente_id = ?
+                                  AND p.empresa_id = ?
+                                GROUP BY p.id, p.numero_proforma, p.estado, p.cliente_id, p.empresa_id
+                            `, [...cochesFactura, ...cochesFactura, cliente_id, empresaIdValido], (err, rows) => {
+                                if (err) {
+                                    console.error('❌ Error buscando proformas relacionadas:', err.message);
+                                    reject(err);
+                                } else {
+                                    resolve(rows || []);
+                                }
+                            });
+                        });
+                    }
+                    
+                    console.log(`📋 [Factura ${facturaId}] Proformas relacionadas encontradas:`, proformasConCoches.length);
+                    
+                    // Actualizar estado de proformas donde todos los coches estén facturados
+                    for (const proforma of proformasConCoches) {
+                        if (proforma.coches_facturados === proforma.total_coches_proforma && proforma.total_coches_proforma > 0) {
+                            console.log(`✅ [Factura ${facturaId}] Actualizando proforma ${proforma.numero_proforma} (ID: ${proforma.id}) a estado 'facturada'`);
+                            console.log(`   - Coches en proforma: ${proforma.total_coches_proforma}`);
+                            console.log(`   - Coches facturados: ${proforma.coches_facturados}`);
+                            
+                            const notaFacturada = `Facturada en factura ${numero_factura}`;
+                            
+                            if (dbType === 'postgresql') {
+                                const updateResult = await db.query(`
+                                    UPDATE proformas 
+                                    SET estado = 'facturada',
+                                        notas = CASE 
+                                            WHEN notas IS NULL OR notas = '' THEN $1
+                                            ELSE notas || ' | ' || $1
+                                        END
+                                    WHERE id = $2
+                                    RETURNING id, numero_proforma, estado
+                                `, [notaFacturada, proforma.id]);
+                                
+                                if (updateResult.rows && updateResult.rows.length > 0) {
+                                    console.log(`✅ Proforma ${proforma.numero_proforma} actualizada a 'facturada'`);
+                                }
+                            } else {
+                                await new Promise((resolve, reject) => {
+                                    db.run(`
+                                        UPDATE proformas 
+                                        SET estado = 'facturada',
+                                            notas = CASE 
+                                                WHEN notas IS NULL OR notas = '' THEN ?
+                                                ELSE notas || ' | ' || ?
+                                            END
+                                        WHERE id = ?
+                                    `, [notaFacturada, notaFacturada, proforma.id], function(err) {
+                                        if (err) {
+                                            console.error(`❌ Error actualizando proforma ${proforma.id}:`, err.message);
+                                            reject(err);
+                                        } else {
+                                            console.log(`✅ Proforma ${proforma.numero_proforma} actualizada a 'facturada'`);
+                                            resolve();
+                                        }
+                                    });
+                                });
+                            }
+                        } else {
+                            console.log(`ℹ️ [Factura ${facturaId}] Proforma ${proforma.numero_proforma} tiene ${proforma.coches_facturados}/${proforma.total_coches_proforma} coches facturados, no se actualiza`);
+                        }
+                    }
+                } else {
+                    console.log(`ℹ️ [Factura ${facturaId}] No hay coches en la factura, no se actualizan proformas`);
+                }
+                // ==================== FIN ACTUALIZACIÓN DE PROFORMAS ====================
+                
                 // Registrar en auditoría
                 const datosCompletosFactura = {
                     id: facturaId,

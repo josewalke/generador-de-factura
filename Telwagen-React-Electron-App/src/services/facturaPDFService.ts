@@ -1,15 +1,36 @@
 import jsPDF from 'jspdf';
 import html2canvas from 'html2canvas';
+import QRCode from 'qrcode';
 
 export interface FacturaPDFData {
   numero: string;
   fecha: string;
   cliente: string;
+  clienteDireccion?: string;
+  clienteNif?: string;
+  clienteTelefono?: string;
+  clienteEmail?: string;
+  clienteCodigoPostal?: string;
+  clienteProvincia?: string;
+  clientePais?: string;
+  clienteCodigoPais?: string;
+  clienteTipoIdentificacion?: string;
+  clienteRegimenFiscal?: string;
   empresa: string;
   subtotal: number;
   impuesto: number;
   total: number;
   estado: string;
+  codigoVeriFactu?: string;
+  hashDocumento?: string;
+  numeroSerie?: string;
+  selladoTemporal?: string;
+  // Datos del emisor para VeriFactu
+  empresaCif?: string;
+  empresaNombre?: string;
+  // Datos adicionales
+  fechaOperacion?: string;
+  tipoDocumento?: string;
   productos: Array<{
     descripcion: string;
     cantidad: number;
@@ -25,13 +46,117 @@ export interface FacturaPDFData {
 }
 
 class FacturaPDFService {
+  // Generar datos para el código QR VeriFactu según normativa española
+  private generarDatosQR(factura: FacturaPDFData): string {
+    // Formatear fecha y hora para VeriFactu (formato ISO 8601)
+    const fechaEmision = factura.fecha ? new Date(factura.fecha).toISOString().replace('Z', '') : new Date().toISOString().replace('Z', '');
+    const fechaFormateada = fechaEmision.split('T')[0]; // YYYY-MM-DD
+    const horaFormateada = fechaEmision.split('T')[1] || '00:00:00'; // HH:MM:SS
+    
+    // Extraer serie del número de factura (si existe formato SERIE-NUMERO)
+    const numeroCompleto = factura.numero || '';
+    const serie = factura.numeroSerie || numeroCompleto.split('/')[0] || 'F24';
+    const numeroFactura = numeroCompleto.includes('/') ? numeroCompleto.split('/')[1] : numeroCompleto;
+    
+    // NIF/CIF del emisor
+    const nifEmisor = factura.empresaCif || 'B-93.289.585'; // CIF por defecto de Telwagen
+    const nombreEmisor = factura.empresaNombre || factura.empresa || 'Telwagen Car Ibérica, S.L.';
+    
+    // Tipo de documento (F1 = Factura completa, F2 = Factura simplificada)
+    const tipoDocumento = factura.tipoDocumento || 'F1';
+    
+    // Convertir valores numéricos para asegurar que sean números
+    const total = Number(factura.total || 0);
+    const subtotal = Number(factura.subtotal || 0);
+    
+    // Construir URL de verificación VeriFactu
+    const fechaURL = fechaFormateada.replace(/-/g, ''); // YYYYMMDD
+    const urlVerificacion = `https://verifactu.aeat.es/v1/qr?NIF=${encodeURIComponent(nifEmisor)}&NUM=${encodeURIComponent(numeroFactura)}&SER=${encodeURIComponent(serie)}&IMP=${total.toFixed(2)}&FEC=${fechaURL}`;
+    
+    // Generar string QR según formato estándar VeriFactu
+    let qrString = `NIF=${nifEmisor}\n`;
+    qrString += `NUM=${numeroFactura}\n`;
+    qrString += `SER=${serie}\n`;
+    qrString += `FEC=${fechaFormateada}T${horaFormateada}\n`;
+    qrString += `IMP=${total.toFixed(2)}\n`;
+    qrString += `BIM=${subtotal.toFixed(2)}\n`;
+    qrString += `TIP=${tipoDocumento}\n`;
+    qrString += `SOFT=Telwagen Factura v2.0\n`;
+    
+    if (factura.codigoVeriFactu) {
+      qrString += `ID=${factura.codigoVeriFactu}\n`;
+    }
+    
+    if (factura.hashDocumento) {
+      qrString += `HASH=${factura.hashDocumento}\n`;
+    }
+    
+    if (factura.selladoTemporal) {
+      qrString += `SELLADO=${factura.selladoTemporal}\n`;
+    }
+    
+    qrString += `URL=${urlVerificacion}\n`;
+    qrString += `EMISOR=${nombreEmisor}`;
+    
+    console.log('📱 [FacturaPDFService] Datos QR VeriFactu generados según normativa');
+    console.log('📱 [FacturaPDFService] String QR:', qrString);
+    console.log('📱 [FacturaPDFService] Tamaño:', qrString.length, 'caracteres');
+    
+    return qrString;
+  }
+
+  // Generar código QR como imagen base64
+  private async generarQRCode(datosQR: string): Promise<string> {
+    try {
+      console.log('📱 [FacturaPDFService] Generando código QR...');
+      console.log('📱 [FacturaPDFService] Datos QR (longitud):', datosQR.length);
+      
+      if (!datosQR || datosQR.trim() === '') {
+        console.warn('⚠️ [FacturaPDFService] Datos QR vacíos, no se generará QR');
+        return '';
+      }
+      
+      const qrDataURL = await QRCode.toDataURL(datosQR, {
+        width: 200,
+        margin: 2,
+        color: {
+          dark: '#000000',
+          light: '#FFFFFF'
+        }
+      });
+      
+      console.log('✅ [FacturaPDFService] QR generado exitosamente, longitud:', qrDataURL.length);
+      console.log('📱 [FacturaPDFService] QR preview (primeros 100 chars):', qrDataURL.substring(0, 100));
+      return qrDataURL;
+    } catch (error) {
+      console.error('❌ [FacturaPDFService] Error al generar código QR:', error);
+      console.error('❌ [FacturaPDFService] Stack:', error instanceof Error ? error.stack : 'N/A');
+      // Retornar un placeholder si falla
+      return '';
+    }
+  }
+
   // Generar PDF de factura usando HTML del diseño de facturas.html
   async generarPDFFactura(factura: FacturaPDFData): Promise<void> {
     try {
       console.log('📄 [FacturaPDFService] Generando PDF para factura:', factura.numero);
+      console.log('📄 [FacturaPDFService] Datos de factura recibidos:', {
+        numero: factura.numero,
+        codigoVeriFactu: factura.codigoVeriFactu,
+        hashDocumento: factura.hashDocumento ? `${factura.hashDocumento.substring(0, 20)}...` : 'no disponible',
+        total: factura.total
+      });
+      
+      // Generar código QR
+      const datosQR = this.generarDatosQR(factura);
+      const qrCodeDataURL = await this.generarQRCode(datosQR);
+      
+      console.log('📱 [FacturaPDFService] QR generado:', qrCodeDataURL ? `Sí (${qrCodeDataURL.length} chars)` : 'No');
       
       // Generar HTML con el diseño exacto de facturas.html
-      const htmlContent = this.generarHTMLFactura(factura);
+      const htmlContent = await this.generarHTMLFactura(factura, qrCodeDataURL);
+      
+      console.log('📄 [FacturaPDFService] HTML generado (QR se agregará directamente al PDF con jsPDF)');
       
       // Crear elemento temporal para renderizar el HTML
       const tempDiv = document.createElement('div');
@@ -45,16 +170,14 @@ class FacturaPDFService {
       tempDiv.style.padding = '30px';
       document.body.appendChild(tempDiv);
       
-      // Esperar un momento para que se renderice
-      await new Promise(resolve => setTimeout(resolve, 100));
-      
       // Usar html2canvas para convertir HTML a imagen
       const canvas = await html2canvas(tempDiv, {
         scale: 2,
         useCORS: true,
         backgroundColor: '#ffffff',
         width: 860, // 800px + 60px de padding (30px cada lado)
-        height: tempDiv.scrollHeight
+        height: tempDiv.scrollHeight,
+        logging: false
       });
       
       // Crear PDF con jsPDF
@@ -80,6 +203,40 @@ class FacturaPDFService {
         heightLeft -= pageHeight;
       }
       
+      // Agregar QR directamente al PDF si está disponible
+      if (qrCodeDataURL && qrCodeDataURL.length > 0) {
+        console.log('📱 [FacturaPDFService] Agregando QR directamente al PDF...');
+        try {
+          // Ir a la última página (o primera si solo hay una)
+          const totalPages = pdf.getNumberOfPages();
+          pdf.setPage(totalPages);
+          
+          // Calcular posición para el QR en la esquina inferior izquierda
+          // Colocamos el QR abajo a la izquierda, con un poco de espacio del borde
+          const pageHeight = 295; // A4 height in mm
+          const marginBottom = 10; // Margen inferior pequeño
+          const marginLeft = 10; // Margen izquierdo pequeño
+          const qrSize = 30; // 30mm x 30mm
+          const qrX = marginLeft; // Posición horizontal a la izquierda
+          const qrY = pageHeight - marginBottom - qrSize; // Posición vertical abajo (lo más bajo posible)
+          
+          // Agregar la imagen QR (sin texto arriba)
+          pdf.addImage(qrCodeDataURL, 'PNG', qrX, qrY, qrSize, qrSize);
+          
+          console.log('✅ [FacturaPDFService] QR agregado al PDF exitosamente en la esquina inferior izquierda de la página', totalPages);
+        } catch (error) {
+          console.error('❌ [FacturaPDFService] Error al agregar QR al PDF:', error);
+          console.error('❌ [FacturaPDFService] Error details:', error instanceof Error ? error.stack : String(error));
+        }
+      } else {
+        console.warn('⚠️ [FacturaPDFService] No se agregó QR al PDF porque qrCodeDataURL está vacío');
+        console.warn('⚠️ [FacturaPDFService] Datos disponibles:', {
+          tieneCodigo: !!factura.codigoVeriFactu,
+          tieneHash: !!factura.hashDocumento,
+          qrCodeDataURL: qrCodeDataURL ? 'existe pero vacío' : 'no existe'
+        });
+      }
+      
       // Limpiar el elemento temporal
       document.body.removeChild(tempDiv);
       
@@ -96,9 +253,13 @@ class FacturaPDFService {
   }
 
   // Generar HTML con el diseño exacto de facturas.html
-  private generarHTMLFactura(factura: FacturaPDFData): string {
+  private async generarHTMLFactura(factura: FacturaPDFData, qrCodeDataURL: string): Promise<string> {
     const fechaFormateada = new Date(factura.fecha).toLocaleDateString('es-ES');
-    const subtotal = factura.productos.reduce((sum, p) => sum + (p.precio * p.cantidad), 0);
+    const subtotal = factura.productos.reduce((sum, p) => {
+      const precio = Number(p.precio_unitario || p.precio || 0);
+      const cantidad = Number(p.cantidad || 1);
+      return sum + (precio * cantidad);
+    }, 0);
     const impuesto = subtotal * 0.095;
     const total = subtotal + impuesto;
     
@@ -215,17 +376,22 @@ class FacturaPDFService {
                 color: #333;
                 border-top: 1px solid #333;
                 padding-top: 20px;
+                margin: 0;
+                display: flex;
+                justify-content: space-between;
+                align-items: center;
+                width: 100%;
             }
             
-            .banco-section h3 {
-                font-size: 14px;
-                margin-bottom: 10px;
-                color: #333;
+            .total-final strong {
+                margin-right: 10px;
+                flex-shrink: 0;
             }
             
-            .banco-section p {
-                margin: 3px 0;
-                color: #666;
+            .total-final span {
+                font-weight: bold;
+                text-align: right;
+                flex-shrink: 0;
             }
         </style>
     </head>
@@ -249,8 +415,12 @@ class FacturaPDFService {
             <div class="cliente-section">
                 <h3>DATOS DEL CLIENTE:</h3>
                 <p><strong>Nombre:</strong> ${factura.cliente}</p>
-                <p><strong>Dirección:</strong> ${factura.empresa}</p>
-                <p><strong>Identificación:</strong> 123456789</p>
+                ${factura.clienteNif ? `<p><strong>${factura.clienteTipoIdentificacion || 'NIF'}:</strong> ${factura.clienteNif}</p>` : ''}
+                ${factura.clienteDireccion ? `<p><strong>Dirección:</strong> ${factura.clienteDireccion}` : ''}
+                ${factura.clienteCodigoPostal || factura.clienteProvincia || factura.clientePais ? `${factura.clienteCodigoPostal ? ` ${factura.clienteCodigoPostal}` : ''}${factura.clienteProvincia ? `, ${factura.clienteProvincia}` : ''}${factura.clientePais ? `, ${factura.clientePais}` : ''}${factura.clienteCodigoPais ? ` (${factura.clienteCodigoPais})` : ''}</p>` : (factura.clienteDireccion ? '</p>' : '')}
+                ${factura.clienteTelefono ? `<p><strong>Teléfono:</strong> ${factura.clienteTelefono}</p>` : ''}
+                ${factura.clienteEmail ? `<p><strong>Email:</strong> ${factura.clienteEmail}</p>` : ''}
+                ${factura.clienteRegimenFiscal ? `<p><strong>Régimen Fiscal:</strong> ${factura.clienteRegimenFiscal}</p>` : ''}
             </div>
             
             <!-- Tabla de productos -->
@@ -265,15 +435,21 @@ class FacturaPDFService {
                     </tr>
                 </thead>
                 <tbody>
-                    ${factura.productos.map(producto => `
+                    ${factura.productos.map(producto => {
+                        const precio = Number(producto.precio_unitario || producto.precio || 0);
+                        const cantidad = Number(producto.cantidad || 1);
+                        const subtotal = precio * cantidad;
+                        const impuesto = subtotal * 0.095;
+                        return `
                         <tr>
-                            <td>${producto.cantidad}</td>
-                            <td>${producto.descripcion}</td>
-                            <td>${producto.precio.toFixed(2)} €</td>
-                            <td>${(producto.precio * 0.095).toFixed(2)} €</td>
-                            <td>${(producto.precio * producto.cantidad).toFixed(2)} €</td>
+                            <td>${cantidad}</td>
+                            <td>${producto.descripcion || 'Producto sin descripción'}</td>
+                            <td>${precio.toFixed(2)} €</td>
+                            <td>${impuesto.toFixed(2)} €</td>
+                            <td>${subtotal.toFixed(2)} €</td>
                         </tr>
-                    `).join('')}
+                    `;
+                    }).join('')}
                 </tbody>
             </table>
             
@@ -281,16 +457,11 @@ class FacturaPDFService {
             <div class="totales-section">
                 <p><strong>Base Imponible:</strong> ${subtotal.toFixed(2)} €</p>
                 <p><strong>IGIC (9.5%):</strong> ${impuesto.toFixed(2)} €</p>
-                <p class="total-final"><strong>TOTAL:</strong> ${total.toFixed(2)} €</p>
+                <p class="total-final"><strong>TOTAL:</strong><span>${total.toFixed(2)} €</span></p>
             </div>
             
             <!-- Información bancaria -->
-            <div class="banco-section">
-                <h3>DATOS BANCARIOS:</h3>
-                <p><strong>Banco:</strong> Banco Santander</p>
-                <p><strong>IBAN:</strong> ES83 0049 7246 7024 1000 2644</p>
-                <p><strong>SWIFT:</strong> BSCHESMM</p>
-            </div>
+            <!-- El código QR VeriFactu se agregará directamente al PDF con jsPDF, no en el HTML -->
         </div>
     </body>
     </html>
@@ -363,6 +534,10 @@ class FacturaPDFService {
 
   // PDF detallado con más información
   private async generarPDFDetallado(factura: FacturaPDFData): Promise<void> {
+    // Generar código QR
+    const datosQR = this.generarDatosQR(factura);
+    const qrCodeDataURL = await this.generarQRCode(datosQR);
+    
     const doc = new jsPDF();
     
     // Configuración básica
@@ -472,10 +647,33 @@ class FacturaPDFService {
     doc.text('En caso de impago, se aplicarán intereses de demora según la Ley 3/2004.', 20, yPosition + 10);
     doc.text('Esta factura ha sido generada electrónicamente y tiene validez legal.', 20, yPosition + 20);
     
+    // Agregar código QR VeriFactu si está disponible
+    if (qrCodeDataURL) {
+      yPosition += 35;
+      // Agregar imagen QR (40x40mm) sin texto arriba
+      doc.addImage(qrCodeDataURL, 'PNG', 85, yPosition, 40, 40);
+      
+      yPosition += 50;
+      doc.setFontSize(8);
+      doc.setFont('helvetica', 'normal');
+      if (factura.codigoVeriFactu) {
+        doc.text(`Código: ${factura.codigoVeriFactu}`, 105, yPosition, { align: 'center' });
+        yPosition += 5;
+      }
+      if (factura.hashDocumento) {
+        doc.setFontSize(7);
+        doc.setTextColor(100, 100, 100);
+        doc.text(`Hash: ${factura.hashDocumento.substring(0, 40)}...`, 105, yPosition, { align: 'center' });
+        yPosition += 5;
+      }
+    }
+    
     // Pie de página
+    yPosition = Math.max(yPosition + 10, 280);
     doc.setFontSize(8);
-    doc.text('Telwagen Car Ibérica, S.L. - CIF: B-93.289.585', 105, 285, { align: 'center' });
-    doc.text('C. / Tomás Miller N° 48 Local, 35007 Las Palmas de Gran Canaria', 105, 290, { align: 'center' });
+    doc.setTextColor(0, 0, 0);
+    doc.text('Telwagen Car Ibérica, S.L. - CIF: B-93.289.585', 105, yPosition, { align: 'center' });
+    doc.text('C. / Tomás Miller N° 48 Local, 35007 Las Palmas de Gran Canaria', 105, yPosition + 5, { align: 'center' });
     
     // Descargar
     const timestamp = new Date().toISOString().slice(0, 10);

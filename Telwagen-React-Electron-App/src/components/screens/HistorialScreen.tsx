@@ -50,7 +50,7 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
     promedio: 0
   });
   const [selectedYear, setSelectedYear] = useState<string>(new Date().getFullYear().toString());
-  const [selectedMonth, setSelectedMonth] = useState<string>(new Date().getMonth().toString());
+  const [selectedMonth, setSelectedMonth] = useState<string>('todos'); // Cambiar a 'todos' por defecto para ver todas las facturas
   const [añosDisponibles, setAñosDisponibles] = useState<string[]>([new Date().getFullYear().toString()]);
   const [empresasDisponibles, setEmpresasDisponibles] = useState<Empresa[]>([]);
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
@@ -157,7 +157,9 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
       }
       setError(null);
       
+      console.log('🔍 [HistorialScreen] Cargando facturas con filtros:', filtrosActuales);
       const response = await facturaService.getAllWithProducts(paginaActual, itemsPorPagina, filtrosActuales);
+      console.log('📊 [HistorialScreen] Facturas recibidas:', response.data?.length || 0, response.data);
       setFacturas(response.data || []);
       setPagination({
         page: response.pagination?.page || paginaActual,
@@ -316,16 +318,48 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
     try {
       console.log('📄 [HistorialScreen] Descargando PDF para factura:', factura.numero);
       
+      // Obtener datos completos de la factura para incluir VeriFactu
+      let facturaCompleta: any = factura;
+      if (factura.id && (!factura.codigoVeriFactu || !factura.hashDocumento)) {
+        try {
+          facturaCompleta = await facturaService.getById(factura.id);
+        } catch (error) {
+          console.warn('No se pudieron obtener datos completos de VeriFactu, usando datos básicos');
+        }
+      }
+      
       const facturaData = {
-        numero: factura.numero,
-        fecha: factura.fecha,
-        cliente: factura.cliente,
-        empresa: factura.empresa,
-        subtotal: factura.subtotal,
-        impuesto: factura.impuesto,
-        total: factura.total,
-        estado: factura.estado,
-        productos: factura.productos
+        numero: facturaCompleta.numero_factura || factura.numero,
+        fecha: facturaCompleta.fecha_emision || factura.fecha,
+        cliente: facturaCompleta.cliente_nombre || factura.cliente,
+        clienteDireccion: facturaCompleta.cliente_direccion || factura.cliente_direccion,
+        clienteNif: facturaCompleta.cliente_nif || factura.cliente_nif || facturaCompleta.cliente_identificacion,
+        clienteTelefono: facturaCompleta.cliente_telefono || factura.cliente_telefono,
+        clienteEmail: facturaCompleta.cliente_email || factura.cliente_email,
+        clienteCodigoPostal: facturaCompleta.cliente_codigo_postal || factura.cliente_codigo_postal,
+        clienteProvincia: facturaCompleta.cliente_provincia || factura.cliente_provincia,
+        clientePais: facturaCompleta.cliente_pais || factura.cliente_pais,
+        clienteCodigoPais: facturaCompleta.cliente_codigo_pais || factura.cliente_codigo_pais,
+        clienteTipoIdentificacion: facturaCompleta.cliente_tipo_identificacion || factura.cliente_tipo_identificacion,
+        clienteRegimenFiscal: facturaCompleta.cliente_regimen_fiscal || factura.cliente_regimen_fiscal,
+        empresa: facturaCompleta.empresa_nombre || factura.empresa,
+        subtotal: facturaCompleta.subtotal || factura.subtotal,
+        impuesto: facturaCompleta.igic || factura.impuesto,
+        total: facturaCompleta.total || factura.total,
+        estado: facturaCompleta.estado || factura.estado,
+        codigoVeriFactu: facturaCompleta.codigo_verifactu || facturaCompleta.codigoVeriFactu,
+        hashDocumento: facturaCompleta.hash_documento || facturaCompleta.hashDocumento,
+        productos: factura.productos || (facturaCompleta.detalles || []).map((detalle: any) => ({
+          descripcion: detalle.descripcion || 'Producto sin descripción',
+          cantidad: detalle.cantidad || 1,
+          precio: detalle.precio_unitario || detalle.precio || 0,
+          marca: detalle.coche_marca || detalle.marca,
+          modelo: detalle.coche_modelo || detalle.modelo,
+          matricula: detalle.coche_matricula || detalle.matricula,
+          color: detalle.coche_color || detalle.color,
+          kilometros: detalle.coche_kms || detalle.kilometros,
+          chasis: detalle.coche_chasis || detalle.chasis
+        }))
       };
       
       await facturaPDFService.generarPDFFactura(facturaData);
@@ -770,24 +804,24 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
                           {facturasPaginadas.map(factura => (
                             <TableRow key={factura.id} className="align-top">
                               <TableCell className="px-2 py-2 whitespace-nowrap">
-                                <p className="font-semibold text-sm">{factura.numero}</p>
+                                <p className="font-semibold text-sm">{factura.numero_factura || factura.numero}</p>
                               </TableCell>
                               <TableCell className="px-2 py-2 whitespace-nowrap">
-                                <p className="text-sm">{new Date(factura.fecha).toLocaleDateString()}</p>
+                                <p className="text-sm">{new Date(factura.fecha_emision || factura.fecha).toLocaleDateString()}</p>
                               </TableCell>
                               <TableCell className="px-2 py-2 break-words">
                                 <div className="font-medium leading-tight text-sm">
-                                  {factura.cliente}
+                                  {factura.cliente_nombre || factura.cliente}
                                 </div>
                                 <div className="text-muted-foreground text-xs leading-tight">
-                                  {factura.empresa}
+                                  {factura.empresa_nombre || factura.empresa}
                                 </div>
                               </TableCell>
                               <TableCell className="px-2 py-2 text-right whitespace-nowrap">
                                 <p className="text-sm">€{(factura.subtotal || 0).toLocaleString()}</p>
                               </TableCell>
                               <TableCell className="px-2 py-2 text-right whitespace-nowrap">
-                                <p className="text-sm">€{(factura.impuesto || 0).toLocaleString()}</p>
+                                <p className="text-sm">€{(factura.igic || factura.impuesto || 0).toLocaleString()}</p>
                               </TableCell>
                               <TableCell className="px-2 py-2 text-right font-semibold text-blue-600 whitespace-nowrap">
                                 <p className="text-sm">€{(factura.total || 0).toLocaleString()}</p>
@@ -810,7 +844,7 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
                                     </DialogTrigger>
                                     <DialogContent className="max-w-4xl w-full max-h-[90vh] overflow-y-auto">
                                       <DialogHeader>
-                                        <DialogTitle>Detalle de Factura {factura.numero}</DialogTitle>
+                                        <DialogTitle>Detalle de Factura {factura.numero_factura || factura.numero}</DialogTitle>
                                         <DialogDescription>
                                           Ver la información completa y detalle de productos de la factura seleccionada.
                                         </DialogDescription>
@@ -909,15 +943,15 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
                           <CardHeader className="pb-3">
                             <div className="flex justify-between items-start">
                               <div>
-                                <h3 className="font-semibold">{factura.numero}</h3>
-                                <p className="text-sm text-gray-500">{new Date(factura.fecha).toLocaleDateString()}</p>
+                                <h3 className="font-semibold">{factura.numero_factura || factura.numero}</h3>
+                                <p className="text-sm text-gray-500">{new Date(factura.fecha_emision || factura.fecha).toLocaleDateString()}</p>
                               </div>
                             </div>
                           </CardHeader>
                           <CardContent className="space-y-3">
                             <div>
-                              <p className="font-medium">{factura.cliente}</p>
-                              <p className="text-sm text-gray-500">{factura.empresa}</p>
+                              <p className="font-medium">{factura.cliente_nombre || factura.cliente}</p>
+                              <p className="text-sm text-gray-500">{factura.empresa_nombre || factura.empresa}</p>
                             </div>
                             
                             <div className="grid grid-cols-3 gap-2 text-sm">
@@ -950,7 +984,7 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
                                 </DialogTrigger>
                                 <DialogContent className="max-w-4xl w-full max-h-[90vh] overflow-y-auto">
                                   <DialogHeader>
-                                    <DialogTitle>Detalle de Factura {factura.numero}</DialogTitle>
+                                    <DialogTitle>Detalle de Factura {factura.numero_factura || factura.numero}</DialogTitle>
                                     <DialogDescription>
                                       Ver la información completa y detalle de productos de la factura seleccionada.
                                     </DialogDescription>
@@ -1498,8 +1532,8 @@ function DetalleFactura({ factura, onDescargarPDF }: DetalleFacturaProps) {
         <div>
           <h3 className="font-semibold mb-2">Información de la Factura</h3>
           <div className="space-y-1 text-sm">
-            <p><span className="font-medium">Número:</span> {factura.numero}</p>
-            <p><span className="font-medium">Fecha:</span> {new Date(factura.fecha).toLocaleDateString()}</p>
+            <p><span className="font-medium">Número:</span> {factura.numero_factura || factura.numero}</p>
+            <p><span className="font-medium">Fecha:</span> {new Date(factura.fecha_emision || factura.fecha).toLocaleDateString()}</p>
             <p><span className="font-medium">Estado:</span> {factura.estado}</p>
           </div>
         </div>
@@ -1507,8 +1541,8 @@ function DetalleFactura({ factura, onDescargarPDF }: DetalleFacturaProps) {
         <div>
           <h3 className="font-semibold mb-2">Cliente</h3>
           <div className="space-y-1 text-sm">
-            <p><span className="font-medium">Nombre:</span> {factura.cliente}</p>
-            <p><span className="font-medium">Empresa:</span> {factura.empresa}</p>
+            <p><span className="font-medium">Nombre:</span> {factura.cliente_nombre || factura.cliente}</p>
+            <p><span className="font-medium">Empresa:</span> {factura.empresa_nombre || factura.empresa}</p>
           </div>
         </div>
       </div>
@@ -1527,7 +1561,7 @@ function DetalleFactura({ factura, onDescargarPDF }: DetalleFacturaProps) {
               </TableRow>
             </TableHeader>
         <TableBody>
-          {factura.productos.map((producto, index) => {
+          {(factura.productos || factura.detalles || []).map((producto: any, index: number) => {
             const datosCoche = obtenerDatosCoche(producto);
             return (
               <TableRow key={index}>
@@ -1540,8 +1574,8 @@ function DetalleFactura({ factura, onDescargarPDF }: DetalleFacturaProps) {
                 <TableCell className="whitespace-nowrap text-sm">
                   {datosCoche.matricula || 'N/A'}
                 </TableCell>
-                <TableCell className="text-center text-sm">{producto.cantidad}</TableCell>
-                <TableCell className="text-right text-sm">€{(producto.precio || 0).toLocaleString()}</TableCell>
+                <TableCell className="text-center text-sm">{producto.cantidad || 1}</TableCell>
+                <TableCell className="text-right text-sm">€{(producto.precio_unitario || producto.precio || 0).toLocaleString()}</TableCell>
               </TableRow>
             );
           })}
@@ -1558,7 +1592,7 @@ function DetalleFactura({ factura, onDescargarPDF }: DetalleFacturaProps) {
           </div>
           <div className="flex justify-between">
             <span>IGIC (9.5%):</span>
-            <span>€{(factura.impuesto || 0).toLocaleString()}</span>
+            <span>€{(factura.igic || factura.impuesto || 0).toLocaleString()}</span>
           </div>
           <div className="flex justify-between font-bold text-lg border-t pt-2">
             <span>Total:</span>
