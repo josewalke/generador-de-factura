@@ -10,7 +10,7 @@ import { Badge } from '../ui/badge';
 import { Alert, AlertDescription } from '../ui/alert';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '../ui/tabs';
 import { Pagination, PaginationContent, PaginationItem, PaginationLink, PaginationNext, PaginationPrevious } from '../ui/pagination';
-import { Eye, BarChart3, FileText, DollarSign, Search, Download, Plus, AlertCircle, Mail, Home, Zap, CalendarDays, RefreshCw, Split } from 'lucide-react';
+import { Eye, BarChart3, FileText, DollarSign, Search, Download, Plus, AlertCircle, Mail, Home, Zap, CalendarDays, RefreshCw, Split, XCircle } from 'lucide-react';
 import { toast } from 'sonner';
 import { Screen } from '../../App';
 import '../../styles/historial-proforma-modal.css';
@@ -20,6 +20,8 @@ import { reporteService } from '../../services/reporteService';
 import { facturaService, Factura } from '../../services/facturaService';
 import { proformaService, Proforma } from '../../services/proformaService';
 import { empresaService, Empresa } from '../../services/empresaService';
+import { abonoService, Abono } from '../../services/abonoService';
+import { apiClient } from '../../services/apiClient';
 
 interface HistorialScreenProps {
   onNavigate: (screen: Screen) => void;
@@ -56,6 +58,9 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
   const [initialLoadComplete, setInitialLoadComplete] = useState(false);
   const filtrosRef = useRef<string>('');
   const paginaRef = useRef<number>(1);
+  const pollingIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  const lastUpdateRef = useRef<number>(Date.now());
+  const isVisibleRef = useRef<boolean>(true);
 
   const [proformas, setProformas] = useState<Proforma[]>([]);
   const [proformaDetalle, setProformaDetalle] = useState<Proforma | null>(null);
@@ -83,6 +88,21 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
   const [selectedMonthProformas, setSelectedMonthProformas] = useState<string>(new Date().getMonth().toString());
   const [vistaActualProformas, setVistaActualProformas] = useState<'tabla' | 'tarjetas'>('tabla');
 
+  // Estado para abonos
+  const [abonos, setAbonos] = useState<Abono[]>([]);
+  const [abonoDetalle, setAbonoDetalle] = useState<Abono | null>(null);
+  const [loadingAbonos, setLoadingAbonos] = useState(true);
+  const [loadingTablaAbonos, setLoadingTablaAbonos] = useState(false);
+  const [errorAbonos, setErrorAbonos] = useState<string | null>(null);
+  const [paginationAbonos, setPaginationAbonos] = useState<{ page: number; totalPages: number; totalCount: number }>({ page: 1, totalPages: 1, totalCount: 0 });
+  const [paginaAbonos, setPaginaAbonos] = useState(1);
+  const [busquedaAbonos, setBusquedaAbonos] = useState('');
+  const [filtroEmpresaAbonos, setFiltroEmpresaAbonos] = useState('todos');
+  const [filtroClienteAbonos, setFiltroClienteAbonos] = useState('todos');
+  const [selectedYearAbonos, setSelectedYearAbonos] = useState<string>(new Date().getFullYear().toString());
+  const [selectedMonthAbonos, setSelectedMonthAbonos] = useState<string>('todos');
+  const [vistaActualAbonos, setVistaActualAbonos] = useState<'tabla' | 'tarjetas'>('tabla');
+
   const itemsPorPagina = 10;
 
   const monthOptions = [
@@ -102,17 +122,13 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
   ];
 
   const getDateRange = useCallback((year: string, month: string) => {
+    // Si el mes es 'todos', no aplicar filtro de fecha para mostrar todas las facturas
+    if (month === 'todos') {
+      return null;
+    }
+    
     const parsedYear = parseInt(year, 10);
     if (isNaN(parsedYear)) return null;
-    
-    if (month === 'todos') {
-      const inicio = new Date(parsedYear, 0, 1);
-      const fin = new Date(parsedYear, 11, 31);
-      return {
-        desde: inicio.toISOString().split('T')[0],
-        hasta: fin.toISOString().split('T')[0]
-      };
-    }
     
     const parsedMonth = parseInt(month, 10);
     if (isNaN(parsedMonth)) return null;
@@ -148,7 +164,7 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
     };
   }, [busquedaProformas, filtroEmpresaProformas, filtroClienteProformas, filtroEstadoProformas, selectedYearProformas, selectedMonthProformas, getDateRange]);
   
-  const cargarFacturas = useCallback(async ({ soloTabla = false }: { soloTabla?: boolean } = {}) => {
+  const cargarFacturas = useCallback(async ({ soloTabla = false, forzarRecarga = false }: { soloTabla?: boolean; forzarRecarga?: boolean } = {}) => {
     try {
       if (soloTabla) {
         setLoadingTabla(true);
@@ -157,12 +173,19 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
       }
       setError(null);
       
-      console.log('🔍 [HistorialScreen] Cargando facturas con filtros:', filtrosActuales);
-      const response = await facturaService.getAllWithProducts(paginaActual, itemsPorPagina, filtrosActuales);
+      // Si se fuerza la recarga, resetear la página a 1 y limpiar referencias de caché
+      if (forzarRecarga) {
+        setPaginaActual(1);
+        filtrosRef.current = '';
+        paginaRef.current = 1;
+      }
+      
+      console.log('🔍 [HistorialScreen] Cargando facturas con filtros:', filtrosActuales, { forzarRecarga });
+      const response = await facturaService.getAllWithProducts(forzarRecarga ? 1 : paginaActual, itemsPorPagina, filtrosActuales, forzarRecarga);
       console.log('📊 [HistorialScreen] Facturas recibidas:', response.data?.length || 0, response.data);
       setFacturas(response.data || []);
       setPagination({
-        page: response.pagination?.page || paginaActual,
+        page: response.pagination?.page || (forzarRecarga ? 1 : paginaActual),
         totalPages: response.pagination?.totalPages || 1,
         totalCount: response.pagination?.totalCount ? Number(response.pagination.totalCount) : (response.data?.length || 0)
       });
@@ -198,7 +221,7 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
     }
   }, [filtrosActuales, paginaActual, itemsPorPagina, initialLoadComplete]);
 
-  const cargarProformas = useCallback(async ({ soloTabla = false }: { soloTabla?: boolean } = {}) => {
+  const cargarProformas = useCallback(async ({ soloTabla = false, forzarRecarga = false }: { soloTabla?: boolean; forzarRecarga?: boolean } = {}) => {
     try {
       if (soloTabla) {
         setLoadingTablaProformas(true);
@@ -207,16 +230,23 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
       }
       setErrorProformas(null);
 
+      // Si se fuerza la recarga, resetear la página a 1
+      if (forzarRecarga) {
+        setPaginaProformas(1);
+        filtrosProformasRef.current = '';
+        paginaProformasRef.current = 1;
+      }
+
       const response = await proformaService.getAll({
         ...filtrosProformasActuales,
-        page: paginaProformas,
+        page: forzarRecarga ? 1 : paginaProformas,
         limit: itemsPorPagina
       });
 
       const data = response.data || [];
       setProformas(data);
       setPaginationProformas({
-        page: response.pagination?.page || paginaProformas,
+        page: response.pagination?.page || (forzarRecarga ? 1 : paginaProformas),
         totalPages: response.pagination?.totalPages || 1,
         totalCount: response.pagination?.totalCount || response.pagination?.total || data.length
       });
@@ -264,6 +294,10 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
   useEffect(() => {
     setPaginaProformas(1);
   }, [busquedaProformas, filtroEmpresaProformas, filtroClienteProformas, filtroEstadoProformas, selectedMonthProformas, selectedYearProformas]);
+
+  useEffect(() => {
+    setPaginaAbonos(1);
+  }, [busquedaAbonos, filtroEmpresaAbonos, filtroClienteAbonos, selectedMonthAbonos, selectedYearAbonos]);
   
   useEffect(() => {
     const loadInitialData = async () => {
@@ -289,7 +323,171 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
     };
     
     loadInitialData();
+    // Cargar facturas y proformas inmediatamente al montar
+    cargarFacturas({ forzarRecarga: true });
+    cargarProformas({ forzarRecarga: true });
   }, []);
+  
+  // Sistema de actualización automática con polling
+  useEffect(() => {
+    // Función para actualizar facturas de forma silenciosa (sin mostrar loading)
+    const actualizarFacturasSilenciosamente = async () => {
+      if (!isVisibleRef.current) return; // No actualizar si la página no está visible
+      
+      try {
+        const response = await facturaService.getAllWithProducts(paginaActual, itemsPorPagina, filtrosActuales);
+        const nuevasFacturas = response.data || [];
+        
+        // Solo actualizar si hay cambios (comparar por ID y totalCount)
+        const totalCountActual = response.pagination?.totalCount ? Number(response.pagination.totalCount) : nuevasFacturas.length;
+        const totalCountAnterior = pagination.totalCount;
+        
+        if (totalCountActual !== totalCountAnterior || 
+            nuevasFacturas.length !== facturas.length ||
+            nuevasFacturas.some((f, i) => f.id !== facturas[i]?.id)) {
+          console.log('🔄 [HistorialScreen] Actualización automática de facturas: cambios detectados');
+          setFacturas(nuevasFacturas);
+          setPagination({
+            page: response.pagination?.page || paginaActual,
+            totalPages: response.pagination?.totalPages || 1,
+            totalCount: totalCountActual
+          });
+          
+          if (response.resumen) {
+            const resumen = response.resumen;
+            const ingresosTotales = resumen.ingresosTotales ?? resumen.ingresos ?? 0;
+            setStats({
+              totalFacturas: resumen.totalFacturas || 0,
+              ingresos: resumen.ingresos || 0,
+              ingresosTotales,
+              promedio: resumen.promedio || 0
+            });
+            setResumenSeleccionado({
+              facturas: resumen.totalFacturas || 0,
+              ingresos: ingresosTotales,
+              promedio: resumen.promedio || 0
+            });
+          }
+          
+          lastUpdateRef.current = Date.now();
+        }
+      } catch (error) {
+        // Silenciar errores en actualizaciones automáticas para no molestar al usuario
+        // Solo loguear si es un error de red o servidor (no errores de validación)
+        if (error instanceof Error && (
+          error.message.includes('Network') || 
+          error.message.includes('500') || 
+          error.message.includes('502') ||
+          error.message.includes('no está disponible')
+        )) {
+          // Estos errores son esperados cuando el servidor no está disponible
+          // No hacer nada, solo esperar al siguiente intento
+        } else {
+          console.debug('Error en actualización automática de facturas:', error);
+        }
+      }
+    };
+    
+    // Función para actualizar proformas de forma silenciosa
+    const actualizarProformasSilenciosamente = async () => {
+      if (!isVisibleRef.current) return;
+      
+      try {
+        const response = await proformaService.getAll({
+          ...filtrosProformasActuales,
+          page: paginaProformas,
+          limit: itemsPorPagina
+        });
+        
+        const nuevasProformas = response.data || [];
+        const totalCountActual = response.pagination?.totalCount || response.pagination?.total || nuevasProformas.length;
+        const totalCountAnterior = paginationProformas.totalCount;
+        
+        if (totalCountActual !== totalCountAnterior || 
+            nuevasProformas.length !== proformas.length ||
+            nuevasProformas.some((p, i) => p.id !== proformas[i]?.id)) {
+          console.log('🔄 [HistorialScreen] Actualización automática de proformas: cambios detectados');
+          setProformas(nuevasProformas);
+          setPaginationProformas({
+            page: response.pagination?.page || paginaProformas,
+            totalPages: response.pagination?.totalPages || 1,
+            totalCount: totalCountActual
+          });
+          
+          const totalImporte = nuevasProformas.reduce((sum, proforma) => sum + Number(proforma.total || 0), 0);
+          setStatsProformas({
+            total: totalCountActual,
+            totalImporte,
+            promedio: totalCountActual > 0 ? totalImporte / totalCountActual : 0
+          });
+        }
+      } catch (error) {
+        // Silenciar errores de red/servidor en actualizaciones automáticas
+        if (error instanceof Error && (
+          error.message.includes('Network') || 
+          error.message.includes('500') || 
+          error.message.includes('502') ||
+          error.message.includes('no está disponible')
+        )) {
+          // Errores esperados cuando el servidor no está disponible
+        } else {
+          console.debug('Error en actualización automática de proformas:', error);
+        }
+      }
+    };
+    
+    // Función combinada para actualizar ambos
+    const actualizarTodoSilenciosamente = async () => {
+      await Promise.all([
+        actualizarFacturasSilenciosamente(),
+        actualizarProformasSilenciosamente()
+      ]);
+    };
+    
+    // Configurar polling cada 15 segundos cuando la pantalla está visible
+    const iniciarPolling = () => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+      }
+      
+      pollingIntervalRef.current = setInterval(() => {
+        actualizarTodoSilenciosamente();
+      }, 10000); // Actualizar cada 10 segundos para información más fluida
+    };
+    
+    // Detectar cuando la página se vuelve visible
+    const handleVisibilityChange = () => {
+      const isVisible = !document.hidden;
+      isVisibleRef.current = isVisible;
+      
+      if (isVisible) {
+        console.log('👁️ [HistorialScreen] Pantalla visible - actualizando datos');
+        // Actualizar inmediatamente cuando se vuelve visible (de forma silenciosa)
+        actualizarTodoSilenciosamente();
+        iniciarPolling();
+      } else {
+        // Pausar polling cuando la página no está visible
+        if (pollingIntervalRef.current) {
+          clearInterval(pollingIntervalRef.current);
+          pollingIntervalRef.current = null;
+        }
+      }
+    };
+    
+    // Iniciar polling al montar
+    iniciarPolling();
+    
+    // Escuchar cambios de visibilidad
+    document.addEventListener('visibilitychange', handleVisibilityChange);
+    
+    // Limpiar al desmontar
+    return () => {
+      if (pollingIntervalRef.current) {
+        clearInterval(pollingIntervalRef.current);
+      }
+      document.removeEventListener('visibilitychange', handleVisibilityChange);
+    };
+  }, [paginaActual, itemsPorPagina, filtrosActuales, facturas, pagination.totalCount, paginaProformas, filtrosProformasActuales, proformas, paginationProformas.totalCount, cargarFacturas, cargarProformas]);
   
   const totalPaginas = pagination.totalPages || 1;
   const facturasParaMostrar = facturas || [];
@@ -311,6 +509,27 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
         return <Badge className="bg-red-100 text-red-800">Vencida</Badge>;
       default:
         return <Badge variant="outline">{estado}</Badge>;
+    }
+  };
+
+  const getEstadoBadgeProforma = (estado: string) => {
+    const estadoLower = estado?.toLowerCase() || 'pendiente';
+    switch (estadoLower) {
+      case 'pendiente':
+        return <Badge variant="secondary" className="text-xs">Pendiente</Badge>;
+      case 'semifacturado':
+      case 'semi_facturada':
+      case 'semi facturada':
+        return <Badge variant="default" className="text-xs bg-orange-500">Semifacturado</Badge>;
+      case 'facturada':
+        return <Badge variant="default" className="text-xs bg-green-600">Facturada</Badge>;
+      case 'anulado':
+      case 'anulada':
+        return <Badge variant="destructive" className="text-xs">Anulada</Badge>;
+      case 'cancelada':
+        return <Badge variant="destructive" className="text-xs">Cancelada</Badge>;
+      default:
+        return <Badge variant="outline" className="text-xs">{estado}</Badge>;
     }
   };
 
@@ -452,10 +671,166 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
     }
   };
 
+  // Estado para rastrear qué factura se está anulando
+  const [anulandoFactura, setAnulandoFactura] = useState<string | null>(null);
+
+  // Función para anular factura y crear abono
+  const handleAnularFactura = async (facturaId: string) => {
+    // Verificar si la factura ya está anulada antes de mostrar el confirm
+    const factura = facturas.find(f => f.id === facturaId);
+    const estadoActual = factura?.estado?.toLowerCase() || '';
+    if (estadoActual === 'anulado' || estadoActual === 'anulada') {
+      toast.info('Esta factura ya está anulada');
+      return;
+    }
+
+    if (!confirm('¿Está seguro de que desea anular esta factura? Se creará automáticamente un abono (nota de crédito) con el mismo importe en negativo.')) {
+      return;
+    }
+
+    try {
+      setAnulandoFactura(facturaId);
+      
+      // Actualizar optimísticamente la factura en la lista solo si no está anulada
+      if (estadoActual !== 'anulado' && estadoActual !== 'anulada') {
+        setFacturas(prevFacturas => 
+          prevFacturas.map(factura => 
+            factura.id === facturaId 
+              ? { ...factura, estado: 'anulado', estado_fiscal: 'anulado' }
+              : factura
+          )
+        );
+      }
+
+      const response = await apiClient.put(`/api/facturas/${facturaId}/anular`);
+      
+      const result = response.data;
+      toast.success(result.message || 'Factura anulada y abono creado exitosamente');
+      
+      // Recargar facturas y abonos con forzar recarga para obtener datos actualizados
+      await Promise.all([
+        cargarFacturas({ forzarRecarga: true, soloTabla: true }),
+        cargarAbonos({ forzarRecarga: true })
+      ]);
+    } catch (error: any) {
+      // Obtener el mensaje de error del response o del error lanzado
+      const errorData = error.response?.data || {};
+      const errorMessage = errorData.error || errorData.message || error.message || error.toString() || '';
+      const statusCode = error.response?.status;
+      
+      // Debug: ver qué mensaje estamos recibiendo
+      console.log('Error capturado:', { statusCode, errorMessage, errorData, fullError: error });
+      
+      // Verificar si el error es que la factura ya está anulada
+      const errorLower = errorMessage.toLowerCase();
+      const isAlreadyAnnulled = 
+        statusCode === 400 && (
+          errorLower.includes('ya está anulada') || 
+          errorLower.includes('already annulled') ||
+          errorLower.includes('factura ya está anulada') ||
+          errorLower.includes('la factura ya está anulada')
+        );
+      
+      if (isAlreadyAnnulled) {
+        // La factura ya estaba anulada, mantener el estado optimista y solo recargar
+        // No mostrar error, solo actualizar los datos silenciosamente
+        console.log('La factura ya estaba anulada, actualizando datos...');
+        try {
+          await Promise.all([
+            cargarFacturas({ forzarRecarga: true, soloTabla: true }),
+            cargarAbonos({ forzarRecarga: true })
+          ]);
+        } catch (reloadError) {
+          console.error('Error al recargar datos:', reloadError);
+        }
+        // No mostrar toast de error, la factura ya está en el estado correcto
+        return; // Salir temprano para no ejecutar el código de error
+      } else {
+        // Solo mostrar el error en consola si no es el caso de "ya está anulada"
+        console.error('Error al anular factura:', error);
+        // Revertir el cambio optimista en caso de otro error
+        setFacturas(prevFacturas => 
+          prevFacturas.map(factura => 
+            factura.id === facturaId 
+              ? { ...factura, estado: factura.estado || 'pendiente' }
+              : factura
+          )
+        );
+        toast.error(errorMessage || 'Error al anular la factura');
+      }
+    } finally {
+      setAnulandoFactura(null);
+    }
+  };
+
+  // Función para ver detalle de abono
+  const handleVerAbono = async (abonoId: string) => {
+    try {
+      const detalle = await abonoService.getById(abonoId);
+      setAbonoDetalle(detalle);
+    } catch (error) {
+      console.error('📄 [HistorialScreen] Error al cargar abono:', error);
+      toast.error('Error al cargar el detalle del abono');
+    }
+  };
+
+  // Función para cargar abonos
+  const cargarAbonos = useCallback(async (options: { forzarRecarga?: boolean } = {}) => {
+    if (loadingTablaAbonos && !options.forzarRecarga) return;
+    
+    try {
+      setLoadingTablaAbonos(true);
+      setLoadingAbonos(true);
+      setErrorAbonos(null);
+      
+      const filters: any = {
+        search: busquedaAbonos || undefined,
+        empresa_id: filtroEmpresaAbonos !== 'todos' ? filtroEmpresaAbonos : undefined,
+        cliente_id: filtroClienteAbonos !== 'todos' ? filtroClienteAbonos : undefined,
+      };
+      
+      // Aplicar filtros de fecha si están configurados
+      if (selectedYearAbonos && selectedMonthAbonos !== 'todos') {
+        const month = parseInt(selectedMonthAbonos);
+        const year = parseInt(selectedYearAbonos);
+        const fechaDesde = new Date(year, month, 1).toISOString().split('T')[0];
+        const fechaHasta = new Date(year, month + 1, 0).toISOString().split('T')[0];
+        filters.fecha_desde = fechaDesde;
+        filters.fecha_hasta = fechaHasta;
+      } else if (selectedYearAbonos) {
+        const year = parseInt(selectedYearAbonos);
+        filters.fecha_desde = `${year}-01-01`;
+        filters.fecha_hasta = `${year}-12-31`;
+      }
+      
+      const response = await abonoService.getAll(paginaAbonos, itemsPorPagina, filters);
+      
+      setAbonos(response.data || []);
+      setPaginationAbonos({
+        page: response.pagination.page,
+        totalPages: response.pagination.totalPages,
+        totalCount: response.pagination.total
+      });
+    } catch (error: any) {
+      console.error('Error al cargar abonos:', error);
+      setErrorAbonos(error.message || 'Error al cargar abonos');
+      toast.error('Error al cargar abonos');
+    } finally {
+      setLoadingTablaAbonos(false);
+      setLoadingAbonos(false);
+    }
+  }, [busquedaAbonos, filtroEmpresaAbonos, filtroClienteAbonos, selectedYearAbonos, selectedMonthAbonos, paginaAbonos, itemsPorPagina]);
+
+  // useEffect para cargar abonos cuando cambien los filtros
+  useEffect(() => {
+    cargarAbonos();
+  }, [cargarAbonos]);
+
   // Función para verificar si se puede dividir una factura
   const puedeDividirFactura = (factura: any): boolean => {
     // No mostrar si ya está anulada
-    if (factura.estado === 'anulado') {
+    const estado = factura.estado?.toLowerCase() || '';
+    if (estado === 'anulado' || estado === 'anulada') {
       return false;
     }
     
@@ -649,7 +1024,7 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
             </div>
             <Button 
               variant="outline" 
-              onClick={() => cargarFacturas()}
+              onClick={() => cargarFacturas({ forzarRecarga: true })}
               className="flex items-center space-x-2"
               disabled={loading}
             >
@@ -794,6 +1169,7 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
                             <TableHead className="px-2 py-2 text-sm">Número</TableHead>
                             <TableHead className="px-2 py-2 text-sm">Fecha</TableHead>
                             <TableHead className="px-2 py-2 text-sm">Cliente</TableHead>
+                            <TableHead className="px-2 py-2 text-sm text-center">Estado</TableHead>
                             <TableHead className="px-2 py-2 text-sm text-right">Subtotal</TableHead>
                             <TableHead className="px-2 py-2 text-sm text-right">Impuesto</TableHead>
                             <TableHead className="px-2 py-2 text-sm text-right">Total</TableHead>
@@ -801,8 +1177,23 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
                           </TableRow>
                         </TableHeader>
                         <TableBody>
-                          {facturasPaginadas.map(factura => (
-                            <TableRow key={factura.id} className="align-top">
+                          {facturasPaginadas.map(factura => {
+                            const estado = factura.estado || 'pendiente';
+                            const getEstadoBadge = (estado: string) => {
+                              const estadoLower = estado.toLowerCase();
+                              if (estadoLower === 'anulado' || estadoLower === 'anulada') {
+                                return <Badge variant="destructive" className="text-xs">Anulada</Badge>;
+                              } else if (estadoLower === 'pagada' || estadoLower === 'pagado') {
+                                return <Badge variant="default" className="text-xs bg-green-600">Pagada</Badge>;
+                              } else if (estadoLower === 'pendiente') {
+                                return <Badge variant="secondary" className="text-xs">Pendiente</Badge>;
+                              } else {
+                                return <Badge variant="outline" className="text-xs">{estado}</Badge>;
+                              }
+                            };
+                            
+                            return (
+                            <TableRow key={factura.id} className={`align-top ${estado.toLowerCase() === 'anulado' || estado.toLowerCase() === 'anulada' ? 'opacity-60' : ''}`}>
                               <TableCell className="px-2 py-2 whitespace-nowrap">
                                 <p className="font-semibold text-sm">{factura.numero_factura || factura.numero}</p>
                               </TableCell>
@@ -816,6 +1207,9 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
                                 <div className="text-muted-foreground text-xs leading-tight">
                                   {factura.empresa_nombre || factura.empresa}
                                 </div>
+                              </TableCell>
+                              <TableCell className="px-2 py-2 text-center">
+                                {getEstadoBadge(estado)}
                               </TableCell>
                               <TableCell className="px-2 py-2 text-right whitespace-nowrap">
                                 <p className="text-sm">€{(factura.subtotal || 0).toLocaleString()}</p>
@@ -881,10 +1275,27 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
                                       )}
                                     </Button>
                                   )}
+                                  {estado.toLowerCase() !== 'anulado' && estado.toLowerCase() !== 'anulada' && (
+                                    <Button 
+                                      variant="outline" 
+                                      size="sm"
+                                      className="w-8 h-8 p-0 border-red-300 text-red-700 hover:bg-red-50"
+                                      onClick={() => handleAnularFactura(factura.id)}
+                                      disabled={anulandoFactura === factura.id || anulandoFactura !== null}
+                                      title="Anular factura y crear abono"
+                                    >
+                                      {anulandoFactura === factura.id ? (
+                                        <RefreshCw className="w-4 h-4 animate-spin" />
+                                      ) : (
+                                        <XCircle className="w-4 h-4" />
+                                      )}
+                                    </Button>
+                                  )}
                                 </div>
                               </TableCell>
                             </TableRow>
-                          ))}
+                            );
+                          })}
                         </TableBody>
                       </Table>
                     </div>
@@ -1085,7 +1496,9 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
                     <SelectContent>
                       <SelectItem value="todos">Todos los Estados</SelectItem>
                       <SelectItem value="pendiente">Pendiente</SelectItem>
-                      <SelectItem value="proformado">Proformado</SelectItem>
+                      <SelectItem value="semifacturado">Semifacturado</SelectItem>
+                      <SelectItem value="facturada">Facturada</SelectItem>
+                      <SelectItem value="anulado">Anulada</SelectItem>
                     </SelectContent>
                   </Select>
 
@@ -1184,7 +1597,7 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
                                   <p className="text-sm">€{(proforma.total || 0).toLocaleString()}</p>
                                 </TableCell>
                                 <TableCell className="px-2 py-2 text-center whitespace-nowrap">
-                                  {getEstadoBadge(proforma.estado || 'pendiente')}
+                                  {getEstadoBadgeProforma(proforma.estado || 'pendiente')}
                                 </TableCell>
                                 <TableCell className="px-2 py-2 text-center">
                                   <div className="inline-flex gap-1">
@@ -1332,7 +1745,7 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
                                 <CardTitle className="text-lg font-semibold text-purple-600">
                                   {proforma.numero_proforma}
                                 </CardTitle>
-                                {getEstadoBadge(proforma.estado || 'pendiente')}
+                                {getEstadoBadgeProforma(proforma.estado || 'pendiente')}
                               </div>
                               <p className="text-sm text-gray-500 mt-1">
                                 {new Date(proforma.fecha_emision).toLocaleDateString()}
@@ -1426,6 +1839,326 @@ export function HistorialScreen({ onNavigate }: HistorialScreenProps) {
                     {loadingProformas && proformasParaMostrar.length === 0 && (
                       <div className="flex items-center justify-center py-10">
                         <RefreshCw className="w-6 h-6 text-purple-500 animate-spin" />
+                      </div>
+                    )}
+                  </TabsContent>
+                </Tabs>
+              </CardContent>
+            </Card>
+
+            {/* Historial de Abonos */}
+            <Card className="mt-6">
+              <CardHeader>
+                <div className="flex items-center justify-between">
+                  <CardTitle className="flex items-center space-x-2">
+                    <FileText className="w-5 h-5 text-orange-600" />
+                    <span>Historial de Abonos</span>
+                  </CardTitle>
+                  <Tabs value={vistaActualAbonos} onValueChange={(value) => setVistaActualAbonos(value as 'tabla' | 'tarjetas')}>
+                    <TabsList>
+                      <TabsTrigger value="tabla">
+                        <BarChart3 className="w-4 h-4 mr-2" />
+                        Tabla
+                      </TabsTrigger>
+                      <TabsTrigger value="tarjetas">Tarjetas</TabsTrigger>
+                    </TabsList>
+                  </Tabs>
+                </div>
+                
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-4 mt-4">
+                  <Input
+                    placeholder="Buscar por número o cliente..."
+                    value={busquedaAbonos}
+                    onChange={(e) => setBusquedaAbonos(e.target.value)}
+                  />
+
+                  <Select value={filtroEmpresaAbonos} onValueChange={setFiltroEmpresaAbonos}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Empresa" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      <SelectItem value="todos">Todas las Empresas</SelectItem>
+                      {empresasDisponibles.map(empresa => (
+                        <SelectItem key={empresa.id} value={empresa.id.toString()}>
+                          {empresa.nombre}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  <Select value={selectedMonthAbonos} onValueChange={(value) => { setSelectedMonthAbonos(value); setPaginaAbonos(1); }}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Mes" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {monthOptions.map(month => (
+                        <SelectItem key={month.value} value={month.value}>{month.label}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  <Select value={selectedYearAbonos} onValueChange={(value) => { setSelectedYearAbonos(value); setPaginaAbonos(1); }}>
+                    <SelectTrigger>
+                      <SelectValue placeholder="Año" />
+                    </SelectTrigger>
+                    <SelectContent>
+                      {añosDisponibles.map(año => (
+                        <SelectItem key={año} value={año}>{año}</SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+
+                  <Button 
+                    variant="outline" 
+                    onClick={() => cargarAbonos({ forzarRecarga: true })}
+                    className="flex items-center space-x-2"
+                    disabled={loadingAbonos}
+                  >
+                    <RefreshCw className={`w-4 h-4 ${loadingAbonos ? 'animate-spin' : ''}`} />
+                    <span>Actualizar</span>
+                  </Button>
+                </div>
+              </CardHeader>
+              
+              <CardContent>
+                <Tabs value={vistaActualAbonos}>
+                  <TabsContent value="tabla" className="space-y-4">
+                    <div className="relative">
+                      {loadingTablaAbonos && (
+                        <div className="absolute inset-0 bg-white/75 backdrop-blur-[1px] z-10 flex flex-col items-center justify-center">
+                          <RefreshCw className="w-6 h-6 text-orange-500 animate-spin mb-2" />
+                          <span className="text-sm text-orange-600">Actualizando página...</span>
+                        </div>
+                      )}
+                      <Table className={loadingTablaAbonos ? 'opacity-50 pointer-events-none' : ''}>
+                        <TableHeader>
+                          <TableRow>
+                            <TableHead className="px-2 py-2 text-sm">Número</TableHead>
+                            <TableHead className="px-2 py-2 text-sm">Fecha</TableHead>
+                            <TableHead className="px-2 py-2 text-sm">Factura</TableHead>
+                            <TableHead className="px-2 py-2 text-sm">Cliente</TableHead>
+                            <TableHead className="px-2 py-2 text-sm text-center">Estado</TableHead>
+                            <TableHead className="px-2 py-2 text-sm text-right">Total</TableHead>
+                            <TableHead className="px-2 py-2 text-sm text-center">Acciones</TableHead>
+                          </TableRow>
+                        </TableHeader>
+                        <TableBody>
+                          {abonos.length === 0 && !loadingAbonos && (
+                            <TableRow>
+                              <TableCell colSpan={7} className="text-center py-8 text-gray-500">
+                                No hay abonos registrados
+                              </TableCell>
+                            </TableRow>
+                          )}
+                          {abonos.map(abono => {
+                            const estado = abono.estado || 'pendiente';
+                            const getEstadoBadge = (estado: string) => {
+                              const estadoLower = estado.toLowerCase();
+                              if (estadoLower === 'pendiente') {
+                                return <Badge variant="secondary" className="text-xs">Pendiente</Badge>;
+                              } else if (estadoLower === 'aplicado') {
+                                return <Badge variant="default" className="text-xs bg-green-600">Aplicado</Badge>;
+                              } else {
+                                return <Badge variant="outline" className="text-xs">{estado}</Badge>;
+                              }
+                            };
+                            
+                            return (
+                            <TableRow key={abono.id}>
+                              <TableCell className="px-2 py-2 whitespace-nowrap">
+                                <p className="font-semibold text-sm text-orange-600">{abono.numero_abono || abono.numero}</p>
+                              </TableCell>
+                              <TableCell className="px-2 py-2 whitespace-nowrap">
+                                <p className="text-sm">{new Date(abono.fecha_emision || abono.fecha).toLocaleDateString()}</p>
+                              </TableCell>
+                              <TableCell className="px-2 py-2 whitespace-nowrap">
+                                <p className="text-sm">{abono.factura_numero || `Factura #${abono.factura_id}`}</p>
+                              </TableCell>
+                              <TableCell className="px-2 py-2 break-words">
+                                <div className="font-medium leading-tight text-sm">
+                                  {abono.cliente_nombre || abono.cliente || 'N/A'}
+                                </div>
+                              </TableCell>
+                              <TableCell className="px-2 py-2 text-center">
+                                {getEstadoBadge(estado)}
+                              </TableCell>
+                              <TableCell className="px-2 py-2 text-right font-semibold text-orange-600 whitespace-nowrap">
+                                <p className="text-sm">€{(abono.total || 0).toLocaleString()}</p>
+                              </TableCell>
+                              <TableCell className="px-2 py-2 text-center">
+                                <div className="inline-flex gap-1">
+                                  <Dialog>
+                                    <DialogTrigger asChild>
+                                      <Button 
+                                        variant="outline" 
+                                        size="sm"
+                                        className="w-8 h-8 p-0"
+                                        onClick={() => {
+                                          setAbonoDetalle(abono);
+                                          handleVerAbono(abono.id);
+                                        }}
+                                      >
+                                        <Eye className="size-4" />
+                                      </Button>
+                                    </DialogTrigger>
+                                    <DialogContent className="max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+                                      <DialogHeader>
+                                        <DialogTitle>Detalle de Abono {abono.numero_abono || abono.numero}</DialogTitle>
+                                        <DialogDescription>
+                                          Ver la información completa del abono (nota de crédito).
+                                        </DialogDescription>
+                                      </DialogHeader>
+                                      {abonoDetalle && (
+                                        <DetalleAbono 
+                                          abono={abonoDetalle} 
+                                        />
+                                      )}
+                                    </DialogContent>
+                                  </Dialog>
+                                </div>
+                              </TableCell>
+                            </TableRow>
+                            );
+                          })}
+                        </TableBody>
+                      </Table>
+                    </div>
+
+                    {/* Paginación */}
+                    {paginationAbonos.totalPages > 1 && (
+                      <div className="flex justify-center mt-6">
+                        <Pagination>
+                          <PaginationContent>
+                          <PaginationItem>
+                            <PaginationPrevious 
+                              onClick={() => !loadingTablaAbonos && setPaginaAbonos(Math.max(1, paginaAbonos - 1))}
+                              className={paginaAbonos === 1 || loadingTablaAbonos ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                            />
+                          </PaginationItem>
+                          
+                          {[...Array(paginationAbonos.totalPages)].map((_, i) => (
+                            <PaginationItem key={i + 1}>
+                              <PaginationLink
+                                onClick={() => !loadingTablaAbonos && setPaginaAbonos(i + 1)}
+                                isActive={paginaAbonos === i + 1}
+                                className={loadingTablaAbonos ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                              >
+                                {i + 1}
+                              </PaginationLink>
+                            </PaginationItem>
+                          ))}
+                          
+                          <PaginationItem>
+                            <PaginationNext 
+                              onClick={() => {
+                                if (!loadingTablaAbonos && paginaAbonos < paginationAbonos.totalPages) {
+                                  setPaginaAbonos(paginaAbonos + 1);
+                                }
+                              }}
+                              className={paginaAbonos >= paginationAbonos.totalPages || loadingTablaAbonos ? 'pointer-events-none opacity-50' : 'cursor-pointer'}
+                            />
+                          </PaginationItem>
+                        </PaginationContent>
+                        </Pagination>
+                      </div>
+                    )}
+                  </TabsContent>
+                  
+                  <TabsContent value="tarjetas" className="space-y-4">
+                    {errorAbonos && (
+                      <Alert variant="destructive" className="mb-4">
+                        <AlertCircle className="h-4 w-4" />
+                        <AlertDescription className="flex items-center justify-between">
+                          <span>{errorAbonos}</span>
+                          <Button 
+                            variant="ghost" 
+                            size="sm" 
+                            onClick={() => cargarAbonos()}
+                            className="ml-2"
+                          >
+                            <RefreshCw className="h-4 w-4" />
+                          </Button>
+                        </AlertDescription>
+                      </Alert>
+                    )}
+
+                    {!errorAbonos && abonos.length === 0 && !loadingAbonos && (
+                      <p className="text-center py-6 text-gray-500">
+                        No hay abonos para mostrar con los filtros seleccionados.
+                      </p>
+                    )}
+
+                    {abonos.length > 0 && (
+                      <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+                        {abonos.map((abono) => (
+                          <Card key={abono.id} className="hover:shadow-md transition-shadow">
+                            <CardHeader className="pb-3">
+                              <div className="flex items-center justify-between">
+                                <CardTitle className="text-lg font-semibold text-orange-600">
+                                  {abono.numero_abono || abono.numero}
+                                </CardTitle>
+                                {abono.estado && (
+                                  <Badge variant={abono.estado === 'aplicado' ? 'default' : 'secondary'}>
+                                    {abono.estado}
+                                  </Badge>
+                                )}
+                              </div>
+                              <p className="text-sm text-gray-500 mt-1">
+                                {new Date(abono.fecha_emision || abono.fecha).toLocaleDateString()}
+                              </p>
+                            </CardHeader>
+                            <CardContent className="space-y-3">
+                              <div>
+                                <p className="text-sm font-medium text-gray-900">
+                                  {abono.cliente_nombre || abono.cliente || 'Cliente no especificado'}
+                                </p>
+                                <p className="text-xs text-gray-500">
+                                  Factura: {abono.factura_numero || `#${abono.factura_id}`}
+                                </p>
+                              </div>
+                              <div className="flex justify-between items-center pt-2 border-t">
+                                <span className="text-sm text-gray-600">Total:</span>
+                                <span className="text-lg font-bold text-orange-600">
+                                  €{(abono.total || 0).toLocaleString()}
+                                </span>
+                              </div>
+                              <div className="flex gap-2 pt-2 flex-wrap">
+                                <Dialog>
+                                  <DialogTrigger asChild>
+                                    <Button 
+                                      variant="outline" 
+                                      size="sm"
+                                      className="flex-1 min-w-[100px]"
+                                      onClick={() => handleVerAbono(abono.id)}
+                                    >
+                                      <Eye className="w-4 h-4 mr-2" />
+                                      Ver
+                                    </Button>
+                                  </DialogTrigger>
+                                  <DialogContent className="max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+                                    <DialogHeader>
+                                      <DialogTitle>Detalle de Abono {abono.numero_abono || abono.numero}</DialogTitle>
+                                      <DialogDescription>
+                                        Información completa del abono (nota de crédito).
+                                      </DialogDescription>
+                                    </DialogHeader>
+                                    {abonoDetalle && abonoDetalle.id === abono.id && (
+                                      <DetalleAbono 
+                                        abono={abonoDetalle} 
+                                      />
+                                    )}
+                                  </DialogContent>
+                                </Dialog>
+                              </div>
+                            </CardContent>
+                          </Card>
+                        ))}
+                      </div>
+                    )}
+
+                    {loadingAbonos && abonos.length === 0 && (
+                      <div className="flex items-center justify-center py-10">
+                        <RefreshCw className="w-6 h-6 text-orange-500 animate-spin" />
                       </div>
                     )}
                   </TabsContent>
@@ -1617,6 +2350,96 @@ function DetalleFactura({ factura, onDescargarPDF }: DetalleFacturaProps) {
 interface DetalleProformaProps {
   proforma: Proforma;
   onDescargarPDF: (proforma: Proforma) => void;
+}
+
+interface DetalleAbonoProps {
+  abono: Abono;
+}
+
+function DetalleAbono({ abono }: DetalleAbonoProps) {
+  const productos = abono.detalles || [];
+
+  return (
+    <div className="space-y-6">
+      <div className="grid grid-cols-2 gap-6">
+        <div>
+          <h3 className="font-semibold mb-2">Información del Abono</h3>
+          <div className="space-y-1 text-sm">
+            <p><span className="font-medium">Número:</span> {abono.numero_abono || abono.numero}</p>
+            <p><span className="font-medium">Fecha:</span> {new Date(abono.fecha_emision || abono.fecha).toLocaleDateString()}</p>
+            <p><span className="font-medium">Estado:</span> {abono.estado || 'pendiente'}</p>
+            <p><span className="font-medium">Factura relacionada:</span> {abono.factura_numero || `#${abono.factura_id}`}</p>
+          </div>
+        </div>
+        
+        <div>
+          <h3 className="font-semibold mb-2">Cliente</h3>
+          <div className="space-y-1 text-sm">
+            <p><span className="font-medium">Nombre:</span> {abono.cliente_nombre || abono.cliente || 'N/A'}</p>
+            <p><span className="font-medium">Empresa:</span> {abono.empresa_nombre || abono.empresa || 'N/A'}</p>
+          </div>
+        </div>
+      </div>
+
+      {abono.notas && (
+        <div>
+          <h3 className="font-semibold mb-2">Notas</h3>
+          <p className="text-sm text-gray-600">{abono.notas}</p>
+        </div>
+      )}
+
+      {productos.length > 0 && (
+        <div>
+          <h3 className="font-semibold mb-3">Detalles del Abono</h3>
+          <div className="overflow-x-auto">
+            <Table className="w-full">
+              <TableHeader>
+                <TableRow>
+                  <TableHead className="whitespace-nowrap">Descripción</TableHead>
+                  <TableHead className="whitespace-nowrap text-center">Cant.</TableHead>
+                  <TableHead className="whitespace-nowrap text-right">Precio</TableHead>
+                  <TableHead className="whitespace-nowrap text-right">IGIC</TableHead>
+                  <TableHead className="whitespace-nowrap text-right">Total</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {productos.map((producto: any, index: number) => (
+                  <TableRow key={index}>
+                    <TableCell className="whitespace-nowrap text-sm">
+                      {producto.descripcion || 'Producto sin descripción'}
+                    </TableCell>
+                    <TableCell className="text-center text-sm">{producto.cantidad || 1}</TableCell>
+                    <TableCell className="text-right text-sm">€{(producto.precio_unitario || producto.precio || 0).toLocaleString()}</TableCell>
+                    <TableCell className="text-right text-sm">€{(producto.igic || producto.impuesto || 0).toLocaleString()}</TableCell>
+                    <TableCell className="text-right text-sm font-semibold text-orange-600">
+                      €{(producto.total || 0).toLocaleString()}
+                    </TableCell>
+                  </TableRow>
+                ))}
+              </TableBody>
+            </Table>
+          </div>
+        </div>
+      )}
+
+      <div className="bg-orange-50 p-4 rounded-lg border border-orange-200">
+        <div className="space-y-2">
+          <div className="flex justify-between">
+            <span>Subtotal:</span>
+            <span className="text-orange-600">€{(abono.subtotal || 0).toLocaleString()}</span>
+          </div>
+          <div className="flex justify-between">
+            <span>IGIC (9.5%):</span>
+            <span className="text-orange-600">€{(abono.igic || abono.impuesto || 0).toLocaleString()}</span>
+          </div>
+          <div className="flex justify-between font-bold text-lg border-t pt-2 border-orange-300">
+            <span>Total:</span>
+            <span className="text-orange-600">€{(abono.total || 0).toLocaleString()}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
 }
 
 function DetalleProforma({ proforma, onDescargarPDF }: DetalleProformaProps) {

@@ -165,7 +165,8 @@ class FacturaService {
   async getAllWithProducts(
     page: number = 1, 
     limit: number = 20, 
-    filters: FacturaFilters = {}
+    filters: FacturaFilters = {},
+    forceRefresh: boolean = false
   ): Promise<FacturaPaginatedResponse> {
     try {
       const params = new URLSearchParams({
@@ -177,7 +178,8 @@ class FacturaService {
         ...(filters.empresa_id && { empresa_id: filters.empresa_id }),
         ...(filters.cliente_id && { cliente_id: filters.cliente_id }),
         ...(filters.fecha_desde && { fecha_desde: filters.fecha_desde }),
-        ...(filters.fecha_hasta && { fecha_hasta: filters.fecha_hasta })
+        ...(filters.fecha_hasta && { fecha_hasta: filters.fecha_hasta }),
+        ...(forceRefresh && { force_refresh: 'true' })
       });
       
       const response = await apiClient.get(`/api/facturas?${params}`);
@@ -349,7 +351,7 @@ class FacturaService {
   }
 
   async dividirEnIndividuales(id: string): Promise<{ success: boolean; message: string; data: { factura_original_id: string; facturas_creadas: Array<{ id: string; numero_factura: string; coche_matricula?: string }> } }> {
-    const response = await apiClient.post(`${this.baseUrl}/${id}/dividir`);
+    const response = await apiClient.post(`/api/facturas/${id}/dividir`);
     return handleApiResponse(response);
   }
 }

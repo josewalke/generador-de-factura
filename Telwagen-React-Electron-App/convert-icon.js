@@ -11,7 +11,9 @@ async function convertPngToIco() {
     console.log('🔄 Convirtiendo PNG a ICO...');
     
     // Redimensionar el PNG a diferentes tamaños para el ICO
-    const sizes = [16, 32, 48, 64, 128];
+    // Incluimos tamaños más grandes para que el icono se vea mejor en Windows
+    // Windows usa hasta 256x256 como máximo estándar, pero incluimos todos los tamaños comunes
+    const sizes = [16, 32, 48, 64, 128, 256];
     const buffers = [];
     
     for (const size of sizes) {

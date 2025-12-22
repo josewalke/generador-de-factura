@@ -156,7 +156,7 @@ const httpsManager = new HTTPSManager();
 const roleManager = new RoleManager();
 const securityMonitor = new SecurityMonitor();
 
-function buildFacturaFilters(queryParams = {}) {
+function buildFacturaFilters(queryParams = {}, excludeAnuladas = true) {
     const dbType = config.get('database.type') || 'postgresql';
     const activoValue = dbType === 'postgresql' ? 'true' : '1';
     const likeOperator = dbType === 'postgresql' ? 'ILIKE' : 'LIKE';
@@ -169,6 +169,11 @@ function buildFacturaFilters(queryParams = {}) {
     
     const conditions = [`(f.activo = ${activoValue} OR f.activo IS NULL)`];
     const params = [];
+    
+    // Excluir facturas anuladas de los cálculos de ingresos
+    if (excludeAnuladas) {
+        conditions.push(`(f.estado IS NULL OR f.estado != 'anulado')`);
+    }
     
     if (search) {
         const likeValue = `%${search}%`;
@@ -209,11 +214,12 @@ function fetchFacturaResumen(queryParams = {}) {
             return;
         }
         
-        const { whereClause, params } = buildFacturaFilters(queryParams);
+        // Excluir facturas anuladas de los cálculos de ingresos
+        const { whereClause, params } = buildFacturaFilters(queryParams, true);
         const query = `
             SELECT 
                 COUNT(DISTINCT f.id) as total_facturas,
-                COALESCE(SUM(f.total), 0) as ingresos_totales,
+                COALESCE(SUM(CASE WHEN f.estado != 'anulado' THEN f.total ELSE 0 END), 0) as ingresos_totales,
                 COALESCE(SUM(CASE WHEN f.estado = 'pagada' THEN f.total ELSE 0 END), 0) as ingresos_pagados
             FROM facturas f
             LEFT JOIN clientes c ON f.cliente_id = c.id
@@ -252,6 +258,48 @@ function runGet(query, params = []) {
             else resolve(row || {});
         });
     });
+}
+
+async function ensureFacturaLeyAntifraudeColumns(isPostgreSQL) {
+    const columns = [
+        { name: 'numero_serie', type: 'TEXT' },
+        { name: 'fecha_operacion', type: 'DATE' },
+        { name: 'tipo_documento', type: 'TEXT DEFAULT \'factura\'' },
+        { name: 'metodo_pago', type: 'TEXT DEFAULT \'transferencia\'' },
+        { name: 'referencia_operacion', type: 'TEXT' },
+        { name: 'hash_documento', type: 'TEXT' },
+        { name: 'sellado_temporal', type: isPostgreSQL ? 'TIMESTAMP' : 'DATETIME' },
+        { name: 'estado_fiscal', type: 'TEXT DEFAULT \'pendiente\'' },
+        { name: 'codigo_verifactu', type: 'TEXT' },
+        { name: 'respuesta_aeat', type: 'TEXT' }
+    ];
+
+    for (const column of columns) {
+        try {
+            if (isPostgreSQL) {
+                // PostgreSQL: usar IF NOT EXISTS
+                await db.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS ${column.name} ${column.type}`);
+            } else {
+                // SQLite: intentar añadir y ignorar si ya existe
+                await new Promise((resolve, reject) => {
+                    db.run(`ALTER TABLE facturas ADD COLUMN ${column.name} ${column.type}`, (err) => {
+                        if (err && !err.message.toLowerCase().includes('duplicate column name')) {
+                            reject(err);
+                        } else {
+                            resolve();
+                        }
+                    });
+                });
+            }
+            logger.debug(`Columna ${column.name} verificada en facturas`);
+        } catch (error) {
+            // Ignorar errores de columna duplicada
+            if (!error.message.includes('duplicate') && !error.message.includes('already exists') && !error.message.includes('ya existe')) {
+                logger.error(`Error asegurando columna ${column.name} en facturas`, { error: error.message });
+            }
+        }
+    }
+    logger.systemEvent('Columnas de Ley Antifraude verificadas en facturas');
 }
 
 async function ensureDetalleFacturaCocheColumn(isPostgreSQL) {
@@ -1002,6 +1050,39 @@ async function initDatabase() {
             logger.debug('Columna activo ya existe en facturas o error al agregarla', { error: err.message });
         }
 
+        // Asegurar columnas de Ley Antifraude en facturas
+        await ensureFacturaLeyAntifraudeColumns(isPostgreSQL);
+        logger.systemEvent('Columnas de Ley Antifraude verificadas en facturas');
+        
+        // Agregar columna proforma_id si no existe (para relación con proformas)
+        try {
+            if (isPostgreSQL) {
+                try {
+                    await db.query('ALTER TABLE facturas ADD COLUMN proforma_id INTEGER');
+                    logger.debug('Columna proforma_id agregada a facturas');
+                } catch (alterErr) {
+                    if (!alterErr.message.includes('duplicate column') && 
+                        !alterErr.message.includes('ya existe') &&
+                        !alterErr.message.includes('already exists')) {
+                        throw alterErr;
+                    }
+                    logger.debug('Columna proforma_id ya existe en facturas');
+                }
+            } else {
+                await new Promise((resolve, reject) => {
+                    db.run('ALTER TABLE facturas ADD COLUMN proforma_id INTEGER', (err) => {
+                        if (err && !err.message.includes('duplicate column name')) {
+                            reject(err);
+                        } else {
+                            resolve();
+                        }
+                    });
+                });
+            }
+        } catch (err) {
+            logger.debug('Columna proforma_id ya existe en facturas o error al agregarla', { error: err.message });
+        }
+
         // Tabla de detalles de factura
         await createTable(`
             CREATE TABLE IF NOT EXISTS detalles_factura (
@@ -1106,6 +1187,59 @@ async function initDatabase() {
                 FOREIGN KEY (coche_id) REFERENCES coches (id)
             )
         `, 'detalles_proforma');
+
+        // Tabla de abonos (notas de crédito)
+        await createTable(`
+            CREATE TABLE IF NOT EXISTS abonos (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                numero_abono TEXT NOT NULL,
+                factura_id INTEGER NOT NULL,
+                empresa_id INTEGER NOT NULL,
+                cliente_id INTEGER,
+                fecha_emision DATE NOT NULL,
+                subtotal REAL NOT NULL,
+                igic REAL NOT NULL,
+                total REAL NOT NULL,
+                estado TEXT DEFAULT 'pendiente',
+                notas TEXT,
+                fecha_creacion DATETIME DEFAULT CURRENT_TIMESTAMP,
+                activo ${isPostgreSQL ? 'BOOLEAN DEFAULT true' : 'INTEGER DEFAULT 1'},
+                numero_serie TEXT,
+                fecha_operacion DATE,
+                tipo_documento TEXT DEFAULT 'abono',
+                metodo_pago TEXT,
+                referencia_operacion TEXT,
+                hash_documento TEXT,
+                sellado_temporal DATETIME,
+                estado_fiscal TEXT DEFAULT 'pendiente',
+                codigo_verifactu TEXT,
+                respuesta_aeat TEXT,
+                FOREIGN KEY (factura_id) REFERENCES facturas (id),
+                FOREIGN KEY (empresa_id) REFERENCES empresas (id),
+                FOREIGN KEY (cliente_id) REFERENCES clientes (id),
+                UNIQUE(numero_abono, empresa_id)
+            )
+        `, 'abonos');
+
+        // Tabla de detalles de abono
+        await createTable(`
+            CREATE TABLE IF NOT EXISTS detalles_abono (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                abono_id INTEGER NOT NULL,
+                producto_id INTEGER,
+                coche_id INTEGER,
+                cantidad INTEGER NOT NULL,
+                precio_unitario REAL NOT NULL,
+                subtotal REAL NOT NULL,
+                igic REAL NOT NULL,
+                total REAL NOT NULL,
+                descripcion TEXT,
+                tipo_impuesto TEXT DEFAULT 'igic',
+                FOREIGN KEY (abono_id) REFERENCES abonos (id) ON DELETE CASCADE,
+                FOREIGN KEY (producto_id) REFERENCES productos (id),
+                FOREIGN KEY (coche_id) REFERENCES coches (id)
+            )
+        `, 'detalles_abono');
 
         // Tabla de auditoría (para cumplir con Ley Antifraude)
         await createTable(`
@@ -2851,7 +2985,7 @@ app.delete('/api/coches/:id', (req, res) => {
             }
 
             const updateResult = await new Promise((resolve, reject) => {
-                db.run(`UPDATE coches SET activo = ${activoValue} WHERE id = ?`, [id], function(err) {
+                db.run(`UPDATE coches SET activo = ? WHERE id = ?`, [activoValue, id], function(err) {
                     if (err) {
                         reject(err);
                         return;
@@ -3063,18 +3197,64 @@ app.get('/api/facturas', async (req, res) => {
         const includeDetalles = include_detalles === 'true';
         const includeResumen = include_resumen === 'true';
         
-        // Usar caché si está disponible
-        const cacheKey = `facturas:page:${page}:limit:${limit}:search:${search}:empresa:${empresa_id}:cliente:${cliente_id}:fecha_desde:${fecha_desde}:fecha_hasta:${fecha_hasta}:det:${includeDetalles}:res:${includeResumen}`;
-        const cachedResult = cacheManager.get(cacheKey);
+        // Verificar si se debe forzar la recarga sin caché
+        const forceRefresh = req.query.force_refresh === 'true' || req.query.no_cache === 'true';
         
-        if (cachedResult) {
-            return res.json({ success: true, ...cachedResult, cached: true });
+        // Usar caché con TTL reducido para información más fluida (30 segundos en lugar de 3 minutos)
+        const cacheKey = `facturas:page:${page}:limit:${limit}:search:${search}:empresa:${empresa_id}:cliente:${cliente_id}:fecha_desde:${fecha_desde}:fecha_hasta:${fecha_hasta}:det:${includeDetalles}:res:${includeResumen}`;
+        const cachedResult = !forceRefresh ? cacheManager.get(cacheKey) : null;
+        
+        // Verificación inteligente: siempre verificar si hay cambios significativos antes de usar caché
+        if (cachedResult && !forceRefresh) {
+            try {
+                // Verificación rápida del total de facturas en BD (con manejo de errores robusto)
+                const quickCheck = await new Promise((resolve) => {
+                    try {
+                        const dbType = config.get('database.type') || 'postgresql';
+                        const activoValue = dbType === 'postgresql' ? 'true' : '1';
+                        db.get(`SELECT COUNT(*) as total FROM facturas WHERE (activo = ${activoValue} OR activo IS NULL)`, [], (err, row) => {
+                            if (err) {
+                                console.debug('Error en verificación rápida de caché:', err.message);
+                                resolve(null); // Si hay error, usar caché
+                            } else {
+                                resolve(row?.total || 0);
+                            }
+                        });
+                    } catch (error) {
+                        console.debug('Error en verificación de caché:', error.message);
+                        resolve(null); // Si hay error, usar caché
+                    }
+                });
+                
+                // Solo verificar si la consulta fue exitosa
+                if (quickCheck !== null) {
+                    const cachedTotal = cachedResult.pagination?.totalCount || cachedResult.data?.length || 0;
+                    
+                    // Si hay diferencia en el total, limpiar caché y recargar
+                    if (quickCheck !== cachedTotal) {
+                        console.log(`🔄 Cambio detectado: BD tiene ${quickCheck} facturas, caché tenía ${cachedTotal} - actualizando`);
+                        cacheManager.delPattern('facturas:*');
+                        // Continuar sin usar caché para obtener datos frescos
+                    } else {
+                        // Usar caché si los totales coinciden
+                        return res.json({ success: true, ...cachedResult, cached: true });
+                    }
+                } else {
+                    // Si hubo error en la verificación, usar caché para no fallar
+                    return res.json({ success: true, ...cachedResult, cached: true });
+                }
+            } catch (error) {
+                // Si hay cualquier error en la verificación, usar caché
+                console.debug('Error en verificación de caché, usando caché:', error.message);
+                return res.json({ success: true, ...cachedResult, cached: true });
+            }
         }
         
         // Construir consulta con filtros y límites de memoria
         const joins = [
             { type: 'LEFT', table: 'clientes c', condition: 'f.cliente_id = c.id' },
-            { type: 'LEFT', table: 'empresas e', condition: 'f.empresa_id = e.id' }
+            { type: 'LEFT', table: 'empresas e', condition: 'f.empresa_id = e.id' },
+            { type: 'LEFT', table: 'proformas p', condition: 'f.proforma_id = p.id' }
         ];
         
         let whereConditions = [];
@@ -3122,9 +3302,10 @@ app.get('/api/facturas', async (req, res) => {
             limit: maxLimit,
             where: whereClause,
             whereParams: whereParams,
-            orderBy: 'f.fecha_creacion',
+            orderBy: 'COALESCE(f.fecha_creacion, f.fecha_emision)',
             orderDirection: 'DESC',
             select: `f.*, c.nombre as cliente_nombre, c.identificacion as cliente_identificacion, e.nombre as empresa_nombre, e.cif as empresa_cif, e.direccion as empresa_direccion,
+                     p.id as proforma_id_relacionada, p.numero_proforma as proforma_numero, p.estado as proforma_estado,
                      (SELECT COUNT(*) FROM detalles_factura df WHERE df.factura_id = f.id AND df.coche_id IS NOT NULL) as coches_count`
         });
         
@@ -3187,7 +3368,8 @@ app.get('/api/facturas', async (req, res) => {
             resumen
         };
         
-        cacheManager.set(cacheKey, responsePayload, 180); // 3 minutos TTL
+        // TTL reducido a 30 segundos para información más fluida y actualizada
+        cacheManager.set(cacheKey, responsePayload, 30);
         
         res.json({ success: true, ...responsePayload, cached: false });
         
@@ -3249,12 +3431,13 @@ app.get('/api/metrics/resumen', async (req, res) => {
             runGet('SELECT COUNT(*) as count FROM clientes'),
             runGet('SELECT COUNT(*) as count FROM coches'),
             runGet('SELECT COUNT(*) as count FROM empresas'),
-            runGet(`SELECT COUNT(*) as count FROM facturas WHERE (activo = ${activoValue} OR activo IS NULL)`),
+            runGet(`SELECT COUNT(*) as count FROM facturas WHERE (activo = ${activoValue} OR activo IS NULL) AND (estado IS NULL OR estado != 'anulado')`),
             runGet(
                 `SELECT COALESCE(SUM(total), 0) as total
                  FROM facturas
                  WHERE estado = 'pagada'
                    AND (activo = ${activoValue} OR activo IS NULL)
+                   AND (estado IS NULL OR estado != 'anulado')
                    AND fecha_emision >= ? AND fecha_emision <= ?`,
                 [startOfMonth, endOfMonth]
             )
@@ -3292,6 +3475,7 @@ app.post('/api/facturas', async (req, res) => {
             total, 
             notas,
             productos,
+            proforma_id, // ID de la proforma relacionada
             // Campos adicionales de Ley Antifraude
             fecha_operacion,
             tipo_documento = 'factura',
@@ -3422,24 +3606,50 @@ app.post('/api/facturas', async (req, res) => {
         const selladoTemporal = sistemaIntegridad.generarSelladoTemporal(datosFactura);
         
         // Insertar factura con todos los campos de Ley Antifraude
+        // Declarar dbType al principio para que esté disponible en todo el scope
         const dbType = config.get('database.type') || 'postgresql';
         const activoValue = dbType === 'postgresql' ? true : 1;
+        
+        // Asegurar que las columnas de Ley Antifraude existan antes de insertar
+        await ensureFacturaLeyAntifraudeColumns(dbType === 'postgresql');
+        
+        // Validar proforma_id si se proporciona
+        if (proforma_id) {
+            const proformaExiste = await new Promise((resolve, reject) => {
+                db.get("SELECT id, numero_proforma FROM proformas WHERE id = ?", [proforma_id], (err, row) => {
+                    if (err) reject(err);
+                    else resolve(row);
+                });
+            });
+            
+            if (!proformaExiste) {
+                return res.status(400).json({ 
+                    success: false, 
+                    error: `La proforma con ID ${proforma_id} no existe en la base de datos` 
+                });
+            }
+            
+            logger.debug('Proforma relacionada validada', { proforma_id, numero_proforma: proformaExiste.numero_proforma }, 'operations');
+        }
         
         const query = `
             INSERT INTO facturas (
                 numero_factura, empresa_id, cliente_id, fecha_emision, fecha_vencimiento,
                 subtotal, igic, total, notas, numero_serie, fecha_operacion,
                 tipo_documento, metodo_pago, referencia_operacion, hash_documento,
-                sellado_temporal, estado_fiscal, activo
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                sellado_temporal, estado_fiscal, proforma_id, activo
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         `;
         
         const params = [
             numero_factura, empresaIdValido, cliente_id, fecha_emision, fecha_vencimiento,
             subtotal, igic, total, notas, numero_serie, fecha_operacion || fecha_emision,
             tipo_documento, metodo_pago, referencia_operacion || '', hash_documento,
-            selladoTemporal.timestamp, 'pendiente', activoValue
+            selladoTemporal.timestamp, 'pendiente', proforma_id || null, activoValue
         ];
+        
+        // Capturar dbType en una constante para usar dentro del callback
+        const dbTypeForCallback = dbType;
         
         db.run(query, params, async function(err) {
             if (err) {
@@ -3457,11 +3667,21 @@ app.post('/api/facturas', async (req, res) => {
             const facturaId = this.lastID;
             
             try {
+                // Asegurar que las columnas de detalles_factura existan antes de insertar
+                await ensureDetalleFacturaCocheColumn(dbTypeForCallback === 'postgresql');
+                
                 // Insertar detalles de la factura
                 if (productos && productos.length > 0) {
                     for (const producto of productos) {
                         const productoId = producto.id && producto.id > 0 ? producto.id : null;
                         const cocheId = producto.coche_id || producto.cocheId || producto.cocheID || null;
+                        
+                        // Log para depuración
+                        console.log(`🔍 [Factura ${facturaId}] Procesando producto:`, {
+                            descripcion: producto.descripcion,
+                            coche_id: cocheId,
+                            producto_id: productoId
+                        });
                         
                         await new Promise((resolve, reject) => {
                             // Aceptar tanto camelCase como snake_case para compatibilidad
@@ -3486,16 +3706,24 @@ app.post('/api/facturas', async (req, res) => {
                         });
                         
                         // Marcar coche como vendido si es un coche
-                        if (cocheId) {
-                            const dbType = config.get('database.type') || 'postgresql';
-                            const inactivoValue = dbType === 'postgresql' ? 'false' : '0';
+                        // Verificar que cocheId sea un número válido (no null, undefined, 0, o string vacío)
+                        const cocheIdNumero = cocheId ? parseInt(cocheId) : null;
+                        if (cocheIdNumero && cocheIdNumero > 0) {
+                            const inactivoValue = dbTypeForCallback === 'postgresql' ? false : 0;
+                            
+                            console.log(`🔍 [Factura ${facturaId}] Intentando marcar coche ${cocheIdNumero} como vendido...`);
                             
                             await new Promise((resolve, reject) => {
-                                db.run(`UPDATE coches SET activo = ${inactivoValue} WHERE id = ?`, [cocheId], function(err) {
+                                db.run(`UPDATE coches SET activo = ? WHERE id = ?`, [inactivoValue, cocheIdNumero], function(err) {
                                     if (err) {
-                                        console.error(`❌ Error marcando coche ${cocheId} como vendido:`, err.message);
+                                        console.error(`❌ Error marcando coche ${cocheIdNumero} como vendido:`, err.message);
                                         reject(err);
                                     } else {
+                                        if (this.changes > 0) {
+                                            console.log(`✅ [Factura ${facturaId}] Coche ${cocheIdNumero} marcado como vendido (${this.changes} fila(s) actualizada(s))`);
+                                        } else {
+                                            console.warn(`⚠️ [Factura ${facturaId}] Coche ${cocheIdNumero} no encontrado o ya estaba marcado como vendido`);
+                                        }
                                         resolve();
                                     }
                                 });
@@ -3507,9 +3735,9 @@ app.post('/api/facturas', async (req, res) => {
                                 await new Promise((resolve, reject) => {
                                     db.run(`
                                         UPDATE productos 
-                                        SET activo = ${inactivoValue} 
+                                        SET activo = ? 
                                         WHERE codigo = ?
-                                    `, [cocheInfo.matricula], function(err) {
+                                    `, [inactivoValue, cocheInfo.matricula], function(err) {
                                         if (err) {
                                             console.error(`❌ Error marcando producto ${cocheInfo.matricula} como vendido:`, err.message);
                                             reject(err);
@@ -3530,14 +3758,13 @@ app.post('/api/facturas', async (req, res) => {
                                     console.log(`🔍 Marcando coche como vendido: ${matricula}`);
                                     
                                     // Marcar coche como vendido
-                                    const dbType = config.get('database.type') || 'postgresql';
-                                    const activoValue = dbType === 'postgresql' ? 'false' : '0';
+                                    const activoValue = dbTypeForCallback === 'postgresql' ? false : 0;
                                     await new Promise((resolve, reject) => {
                                         db.run(`
                                             UPDATE coches 
-                                            SET activo = ${activoValue} 
+                                            SET activo = ? 
                                             WHERE matricula = ?
-                                        `, [matricula], function(err) {
+                                        `, [activoValue, matricula], function(err) {
                                             if (err) {
                                                 console.error(`❌ Error marcando coche ${matricula} como vendido:`, err.message);
                                                 reject(err);
@@ -3553,14 +3780,13 @@ app.post('/api/facturas', async (req, res) => {
                                     });
                                     
                                     // Marcar producto asociado como vendido
-                                    const dbTypeProducto = config.get('database.type') || 'postgresql';
-                                    const activoValueProducto = dbTypeProducto === 'postgresql' ? 'false' : '0';
+                                    const activoValueProducto = dbTypeForCallback === 'postgresql' ? false : 0;
                                     await new Promise((resolve, reject) => {
                                         db.run(`
                                             UPDATE productos 
-                                            SET activo = ${activoValueProducto} 
+                                            SET activo = ? 
                                             WHERE codigo = ?
-                                        `, [matricula], function(err) {
+                                        `, [activoValueProducto, matricula], function(err) {
                                             if (err) {
                                                 console.error(`❌ Error marcando producto ${matricula} como vendido:`, err.message);
                                                 reject(err);
@@ -3582,58 +3808,81 @@ app.post('/api/facturas', async (req, res) => {
                 
                 // ==================== ACTUALIZAR ESTADO DE PROFORMAS ====================
                 // Obtener todos los coche_id de la factura recién creada
-                const dbType = config.get('database.type') || 'postgresql';
                 let cochesFactura = [];
                 
-                if (dbType === 'postgresql') {
+                console.log(`🔍 [Factura ${facturaId}] Buscando coches en detalles_factura...`);
+                
+                if (dbTypeForCallback === 'postgresql') {
                     // Usar método query directamente para PostgreSQL
                     const result = await db.query(`
-                        SELECT DISTINCT coche_id 
+                        SELECT DISTINCT coche_id, factura_id, descripcion
                         FROM detalles_factura 
-                        WHERE factura_id = $1 AND coche_id IS NOT NULL
+                        WHERE factura_id = $1
                     `, [facturaId]);
-                    cochesFactura = result.rows.map(row => row.coche_id).filter(id => id !== null);
+                    console.log(`🔍 [Factura ${facturaId}] Todos los detalles de factura:`, result.rows);
+                    cochesFactura = result.rows
+                        .map(row => row.coche_id)
+                        .filter(id => id !== null && id !== undefined);
                 } else {
                     cochesFactura = await new Promise((resolve, reject) => {
                         db.all(`
-                            SELECT DISTINCT coche_id 
+                            SELECT DISTINCT coche_id, factura_id, descripcion
                             FROM detalles_factura 
-                            WHERE factura_id = ? AND coche_id IS NOT NULL
+                            WHERE factura_id = ?
                         `, [facturaId], (err, rows) => {
                             if (err) {
                                 console.error('❌ Error obteniendo coches de la factura:', err.message);
                                 reject(err);
                             } else {
-                                const cocheIds = rows.map(row => row.coche_id).filter(id => id !== null);
+                                console.log(`🔍 [Factura ${facturaId}] Todos los detalles de factura:`, rows);
+                                const cocheIds = rows
+                                    .map(row => row.coche_id)
+                                    .filter(id => id !== null && id !== undefined);
                                 resolve(cocheIds);
                             }
                         });
                     });
                 }
                 
+                console.log(`📋 [Factura ${facturaId}] Coches encontrados en la factura (filtrados):`, cochesFactura);
+                
                 if (cochesFactura && cochesFactura.length > 0) {
-                    console.log(`📋 [Factura ${facturaId}] Coches en la factura:`, cochesFactura);
+                    console.log(`📋 [Factura ${facturaId}] Buscando proformas con estos coches (sin filtrar por cliente/empresa)...`);
                     
                     // Buscar proformas relacionadas (mismo cliente, misma empresa y mismos coches)
                     let proformasConCoches = [];
                     
-                    if (dbType === 'postgresql') {
+                    if (dbTypeForCallback === 'postgresql') {
                         // Construir query con placeholders de PostgreSQL ($1, $2, etc.)
+                        // Buscar proformas que contengan estos coches, sin importar cliente o empresa
                         const cochesPlaceholders = cochesFactura.map((_, i) => `$${i + 1}`).join(',');
-                        const clientePlaceholder = `$${cochesFactura.length + 1}`;
-                        const empresaPlaceholder = `$${cochesFactura.length + 2}`;
-                        const params = [...cochesFactura, ...cochesFactura, cliente_id, empresaIdValido];
+                        const params = [...cochesFactura];
                         
                         const query = `
                             SELECT DISTINCT p.id, p.numero_proforma, p.estado, p.cliente_id, p.empresa_id,
-                                   COUNT(DISTINCT dp.coche_id) as total_coches_proforma,
-                                   COUNT(DISTINCT CASE WHEN dp.coche_id IN (${cochesPlaceholders}) THEN dp.coche_id END) as coches_facturados
+                                   -- Contar TODOS los coches de la proforma (no solo los de esta factura)
+                                   (SELECT COUNT(DISTINCT dp2.coche_id) 
+                                    FROM detalles_proforma dp2 
+                                    WHERE dp2.proforma_id = p.id 
+                                      AND dp2.coche_id IS NOT NULL) as total_coches_proforma,
+                                   -- Contar TODOS los coches facturados de la proforma (de cualquier factura)
+                                   (SELECT COUNT(DISTINCT dp3.coche_id)
+                                    FROM detalles_proforma dp3
+                                    WHERE dp3.proforma_id = p.id
+                                      AND dp3.coche_id IS NOT NULL
+                                      AND EXISTS (
+                                          SELECT 1 
+                                          FROM detalles_factura df
+                                          INNER JOIN facturas f ON df.factura_id = f.id
+                                          WHERE df.coche_id = dp3.coche_id
+                                            AND (f.estado IS NULL OR f.estado != 'anulado')
+                                            AND (f.activo = true OR f.activo IS NULL)
+                                      )) as coches_facturados
                             FROM proformas p
                             INNER JOIN detalles_proforma dp ON dp.proforma_id = p.id
                             WHERE dp.coche_id IN (${cochesPlaceholders})
-                              AND p.estado NOT IN ('facturada', 'anulado', 'cancelada')
-                              AND p.cliente_id = ${clientePlaceholder}
-                              AND p.empresa_id = ${empresaPlaceholder}
+                              AND dp.coche_id IS NOT NULL
+                              AND p.estado NOT IN ('anulado', 'cancelada')
                             GROUP BY p.id, p.numero_proforma, p.estado, p.cliente_id, p.empresa_id
                         `;
                         
@@ -3646,19 +3895,34 @@ app.post('/api/facturas', async (req, res) => {
                                 return;
                             }
                             const placeholders = cochesFactura.map(() => '?').join(',');
-                            // Buscar proformas del mismo cliente y empresa que contengan estos coches
+                            // Buscar proformas que contengan estos coches, sin importar cliente o empresa
                             db.all(`
                                 SELECT DISTINCT p.id, p.numero_proforma, p.estado, p.cliente_id, p.empresa_id,
-                                       COUNT(DISTINCT dp.coche_id) as total_coches_proforma,
-                                       COUNT(DISTINCT CASE WHEN dp.coche_id IN (${placeholders}) THEN dp.coche_id END) as coches_facturados
+                                       -- Contar TODOS los coches de la proforma (no solo los de esta factura)
+                                       (SELECT COUNT(DISTINCT dp2.coche_id) 
+                                        FROM detalles_proforma dp2 
+                                        WHERE dp2.proforma_id = p.id 
+                                          AND dp2.coche_id IS NOT NULL) as total_coches_proforma,
+                                       -- Contar TODOS los coches facturados de la proforma (de cualquier factura)
+                                       (SELECT COUNT(DISTINCT dp3.coche_id)
+                                        FROM detalles_proforma dp3
+                                        WHERE dp3.proforma_id = p.id
+                                          AND dp3.coche_id IS NOT NULL
+                                          AND EXISTS (
+                                              SELECT 1 
+                                              FROM detalles_factura df
+                                              INNER JOIN facturas f ON df.factura_id = f.id
+                                              WHERE df.coche_id = dp3.coche_id
+                                                AND (f.estado IS NULL OR f.estado != 'anulado')
+                                                AND (f.activo = 1 OR f.activo IS NULL)
+                                          )) as coches_facturados
                                 FROM proformas p
                                 INNER JOIN detalles_proforma dp ON dp.proforma_id = p.id
                                 WHERE dp.coche_id IN (${placeholders})
-                                  AND p.estado NOT IN ('facturada', 'anulado', 'cancelada')
-                                  AND p.cliente_id = ?
-                                  AND p.empresa_id = ?
+                                  AND dp.coche_id IS NOT NULL
+                                  AND p.estado NOT IN ('anulado', 'cancelada')
                                 GROUP BY p.id, p.numero_proforma, p.estado, p.cliente_id, p.empresa_id
-                            `, [...cochesFactura, ...cochesFactura, cliente_id, empresaIdValido], (err, rows) => {
+                            `, cochesFactura, (err, rows) => {
                                 if (err) {
                                     console.error('❌ Error buscando proformas relacionadas:', err.message);
                                     reject(err);
@@ -3670,60 +3934,104 @@ app.post('/api/facturas', async (req, res) => {
                     }
                     
                     console.log(`📋 [Factura ${facturaId}] Proformas relacionadas encontradas:`, proformasConCoches.length);
+                    if (proformasConCoches.length > 0) {
+                        console.log(`📋 [Factura ${facturaId}] Detalles de proformas encontradas:`, JSON.stringify(proformasConCoches, null, 2));
+                    }
                     
-                    // Actualizar estado de proformas donde todos los coches estén facturados
+                    // Actualizar estado de proformas según cuántos coches estén facturados
                     for (const proforma of proformasConCoches) {
-                        if (proforma.coches_facturados === proforma.total_coches_proforma && proforma.total_coches_proforma > 0) {
-                            console.log(`✅ [Factura ${facturaId}] Actualizando proforma ${proforma.numero_proforma} (ID: ${proforma.id}) a estado 'facturada'`);
-                            console.log(`   - Coches en proforma: ${proforma.total_coches_proforma}`);
-                            console.log(`   - Coches facturados: ${proforma.coches_facturados}`);
+                        console.log(`🔍 [Factura ${facturaId}] Evaluando proforma ${proforma.numero_proforma}:`);
+                        console.log(`   - Total coches en proforma: ${proforma.total_coches_proforma}`);
+                        console.log(`   - Coches facturados: ${proforma.coches_facturados}`);
+                        console.log(`   - ¿Todos facturados?: ${proforma.coches_facturados === proforma.total_coches_proforma}`);
+                        
+                        const totalCoches = parseInt(proforma.total_coches_proforma) || 0;
+                        const cochesFacturados = parseInt(proforma.coches_facturados) || 0;
+                        
+                        if (totalCoches > 0) {
+                            let nuevoEstado = null;
+                            let notaEstado = '';
                             
-                            const notaFacturada = `Facturada en factura ${numero_factura}`;
-                            
-                            if (dbType === 'postgresql') {
-                                const updateResult = await db.query(`
-                                    UPDATE proformas 
-                                    SET estado = 'facturada',
-                                        notas = CASE 
-                                            WHEN notas IS NULL OR notas = '' THEN $1
-                                            ELSE notas || ' | ' || $1
-                                        END
-                                    WHERE id = $2
-                                    RETURNING id, numero_proforma, estado
-                                `, [notaFacturada, proforma.id]);
-                                
-                                if (updateResult.rows && updateResult.rows.length > 0) {
-                                    console.log(`✅ Proforma ${proforma.numero_proforma} actualizada a 'facturada'`);
-                                }
+                            if (cochesFacturados === totalCoches) {
+                                // Todos los coches están facturados (puede ser en la misma factura o en facturas diferentes)
+                                nuevoEstado = 'facturada';
+                                notaEstado = `Facturada completamente: ${cochesFacturados}/${totalCoches} coches`;
+                                console.log(`✅ [Factura ${facturaId}] Actualizando proforma ${proforma.numero_proforma} (ID: ${proforma.id}) a estado 'facturada'`);
+                            } else if (cochesFacturados > 0 && cochesFacturados < totalCoches) {
+                                // Solo algunos coches están facturados
+                                nuevoEstado = 'semifacturado';
+                                notaEstado = `Parcialmente facturada: ${cochesFacturados}/${totalCoches} coches en factura ${numero_factura}`;
+                                console.log(`🟡 [Factura ${facturaId}] Actualizando proforma ${proforma.numero_proforma} (ID: ${proforma.id}) a estado 'semifacturado'`);
                             } else {
-                                await new Promise((resolve, reject) => {
-                                    db.run(`
-                                        UPDATE proformas 
-                                        SET estado = 'facturada',
-                                            notas = CASE 
-                                                WHEN notas IS NULL OR notas = '' THEN ?
-                                                ELSE notas || ' | ' || ?
-                                            END
-                                        WHERE id = ?
-                                    `, [notaFacturada, notaFacturada, proforma.id], function(err) {
-                                        if (err) {
-                                            console.error(`❌ Error actualizando proforma ${proforma.id}:`, err.message);
-                                            reject(err);
-                                        } else {
-                                            console.log(`✅ Proforma ${proforma.numero_proforma} actualizada a 'facturada'`);
-                                            resolve();
-                                        }
-                                    });
-                                });
+                                // Ningún coche está facturado (no debería pasar si se crea desde la proforma)
+                                console.log(`ℹ️ [Factura ${facturaId}] Proforma ${proforma.numero_proforma} tiene ${cochesFacturados}/${totalCoches} coches facturados, no se actualiza`);
+                                continue;
                             }
-                        } else {
-                            console.log(`ℹ️ [Factura ${facturaId}] Proforma ${proforma.numero_proforma} tiene ${proforma.coches_facturados}/${proforma.total_coches_proforma} coches facturados, no se actualiza`);
+                            
+                            if (nuevoEstado) {
+                                if (dbTypeForCallback === 'postgresql') {
+                                    const updateResult = await db.query(`
+                                        UPDATE proformas 
+                                        SET estado = $1,
+                                            notas = CASE 
+                                                WHEN notas IS NULL OR notas = '' THEN $2
+                                                ELSE notas || ' | ' || $2
+                                            END
+                                        WHERE id = $3
+                                        RETURNING id, numero_proforma, estado
+                                    `, [nuevoEstado, notaEstado, proforma.id]);
+                                    
+                                    if (updateResult.rows && updateResult.rows.length > 0) {
+                                        console.log(`✅ Proforma ${proforma.numero_proforma} actualizada a '${nuevoEstado}'`);
+                                        // Invalidar caché de proformas
+                                        if (cacheManager) {
+                                            cacheManager.invalidatePattern('proformas:*');
+                                            console.log(`🔄 Caché de proformas invalidado`);
+                                        }
+                                    }
+                                } else {
+                                    await new Promise((resolve, reject) => {
+                                        db.run(`
+                                            UPDATE proformas 
+                                            SET estado = ?,
+                                                notas = CASE 
+                                                    WHEN notas IS NULL OR notas = '' THEN ?
+                                                    ELSE notas || ' | ' || ?
+                                                END
+                                            WHERE id = ?
+                                        `, [nuevoEstado, notaEstado, notaEstado, proforma.id], function(err) {
+                                            if (err) {
+                                                console.error(`❌ Error actualizando proforma ${proforma.id}:`, err.message);
+                                                reject(err);
+                                            } else {
+                                                console.log(`✅ Proforma ${proforma.numero_proforma} actualizada a '${nuevoEstado}'`);
+                                                // Invalidar caché de proformas
+                                                if (cacheManager) {
+                                                    cacheManager.invalidatePattern('proformas:*');
+                                                    console.log(`🔄 Caché de proformas invalidado`);
+                                                }
+                                                resolve();
+                                            }
+                                        });
+                                    });
+                                }
+                            }
                         }
                     }
                 } else {
-                    console.log(`ℹ️ [Factura ${facturaId}] No hay coches en la factura, no se actualizan proformas`);
+                    console.log(`⚠️ [Factura ${facturaId}] No se encontraron coche_id en detalles_factura. Esto puede indicar que los coches no se están guardando correctamente.`);
+                    console.log(`   - Verificar que los productos incluyan coche_id al crear la factura`);
+                    console.log(`   - Cliente ID: ${cliente_id}, Empresa ID: ${empresaIdValido}`);
                 }
                 // ==================== FIN ACTUALIZACIÓN DE PROFORMAS ====================
+                
+                // Invalidar caché de facturas y proformas después de crear factura
+                if (cacheManager) {
+                    cacheManager.invalidatePattern('facturas:*');
+                    cacheManager.invalidatePattern('proformas:*');
+                    cacheManager.invalidateByTableChange('facturas', 'insert');
+                    console.log(`🔄 Caché invalidado después de crear factura ${facturaId}`);
+                }
                 
                 // Registrar en auditoría
                 const datosCompletosFactura = {
@@ -4060,6 +4368,53 @@ app.get('/api/proformas', async (req, res) => {
         
         const whereClause = whereConditions.join(' AND ');
         
+        // Verificar caché con validación inteligente (similar a facturas)
+        const cacheKey = `proformas:page:${page}:limit:${maxLimit}:search:${search}:empresa:${empresa_id}:cliente:${cliente_id}:coche:${coche_id}`;
+        const cachedResult = cacheManager.get(cacheKey);
+        
+        if (cachedResult) {
+            try {
+                // Verificación rápida del total de proformas en BD (con manejo de errores robusto)
+                const quickCheck = await new Promise((resolve) => {
+                    try {
+                        db.get(`SELECT COUNT(*) as total FROM proformas WHERE (activo = ${activoValue} OR activo IS NULL)`, [], (err, row) => {
+                            if (err) {
+                                console.debug('Error en verificación rápida de caché de proformas:', err.message);
+                                resolve(null); // Si hay error, usar caché
+                            } else {
+                                resolve(row?.total || 0);
+                            }
+                        });
+                    } catch (error) {
+                        console.debug('Error en verificación de caché de proformas:', error.message);
+                        resolve(null); // Si hay error, usar caché
+                    }
+                });
+                
+                // Solo verificar si la consulta fue exitosa
+                if (quickCheck !== null) {
+                    const cachedTotal = cachedResult.pagination?.totalCount || cachedResult.data?.length || 0;
+                    
+                    // Si hay diferencia en el total, limpiar caché y recargar
+                    if (quickCheck !== cachedTotal) {
+                        console.log(`🔄 Cambio detectado en proformas: BD tiene ${quickCheck}, caché tenía ${cachedTotal} - actualizando`);
+                        cacheManager.delPattern('proformas:*');
+                        // Continuar sin usar caché
+                    } else {
+                        // Usar caché solo si los totales coinciden
+                        return res.json({ success: true, ...cachedResult, cached: true });
+                    }
+                } else {
+                    // Si hubo error en la verificación, usar caché para no fallar
+                    return res.json({ success: true, ...cachedResult, cached: true });
+                }
+            } catch (error) {
+                // Si hay cualquier error en la verificación, usar caché
+                console.debug('Error en verificación de caché de proformas, usando caché:', error.message);
+                return res.json({ success: true, ...cachedResult, cached: true });
+            }
+        }
+        
         const joins = [
             { type: 'LEFT', table: 'clientes c', condition: 'p.cliente_id = c.id' },
             { type: 'LEFT', table: 'empresas e', condition: 'p.empresa_id = e.id' },
@@ -4071,13 +4426,20 @@ app.get('/api/proformas', async (req, res) => {
             limit: maxLimit,
             where: whereClause,
             whereParams: whereParams,
-            orderBy: 'p.fecha_creacion',
+            orderBy: 'COALESCE(p.fecha_creacion, p.fecha_emision)',
             orderDirection: 'DESC',
             select: `p.*, c.nombre as cliente_nombre, c.identificacion as cliente_identificacion, e.nombre as empresa_nombre, e.cif as empresa_cif, co.matricula as coche_matricula, co.modelo as coche_modelo, co.marca as coche_marca,
                      (SELECT COUNT(*) FROM detalles_proforma dp WHERE dp.proforma_id = p.id AND dp.coche_id IS NOT NULL) as coches_count`
         });
         
-        res.json({ success: true, data: result.data || [], pagination: result.pagination });
+        // Guardar en caché con TTL reducido (30 segundos)
+        const responsePayload = {
+            data: result.data || [],
+            pagination: result.pagination
+        };
+        cacheManager.set(cacheKey, responsePayload, 30);
+        
+        res.json({ success: true, ...responsePayload, cached: false });
     } catch (error) {
         console.error('❌ Error al obtener proformas:', error);
         res.status(500).json({ error: error.message });
@@ -4301,6 +4663,13 @@ app.post('/api/proformas', async (req, res) => {
                     productos_count: productos?.length || 0
                 }, 'operations');
                 
+                // Invalidar caché de proformas después de crear
+                if (cacheManager) {
+                    cacheManager.invalidatePattern('proformas:*');
+                    cacheManager.invalidateByTableChange('proformas', 'insert');
+                    console.log(`🔄 Caché invalidado después de crear proforma ${proformaId}`);
+                }
+                
                 res.json({ 
                     success: true, 
                     data: { 
@@ -4489,8 +4858,15 @@ app.put('/api/proformas/:id', async (req, res) => {
             });
         });
         
+        // Invalidar caché de proformas después de actualizar
+        if (cacheManager) {
+            cacheManager.invalidatePattern('proformas:*');
+            cacheManager.invalidateByTableChange('proformas', 'update');
+            console.log(`🔄 Caché invalidado después de actualizar proforma ${proformaId}`);
+        }
+        
         res.json({ 
-            success: true, 
+            success: true,
             message: 'Proforma actualizada correctamente',
             data: proformaActualizada
         });
@@ -4543,6 +4919,17 @@ app.delete('/api/proformas/:id', async (req, res) => {
             });
         }
         
+        // Invalidar caché de proformas
+        if (global.cacheManager) {
+            try {
+                const deletedCount = global.cacheManager.delPattern('proformas:*');
+                logger.debug('Caché de proformas limpiado después de eliminar proforma', { deletedCount, proformaId });
+                console.log(`🗑️ Caché de proformas limpiado: ${deletedCount} entradas eliminadas`);
+            } catch (cacheError) {
+                logger.warn('Error al limpiar caché de proformas', { error: cacheError.message });
+            }
+        }
+        
         res.json({ 
             success: true, 
             message: 'Proforma eliminada correctamente'
@@ -4577,11 +4964,21 @@ app.delete('/api/proformas/todas', async (req, res) => {
             });
         });
 
+        // Invalidar caché de proformas
+        if (global.cacheManager) {
+            try {
+                const deletedCount = global.cacheManager.delPattern('proformas:*');
+                console.log(`🗑️ Caché de proformas limpiado: ${deletedCount} entradas eliminadas`);
+            } catch (cacheError) {
+                console.error('❌ Error al limpiar caché de proformas:', cacheError.message);
+            }
+        }
+        
         logger.info('Todas las proformas eliminadas', {
             proformasEliminadas: changes
         });
-
-        res.json({ 
+        
+        res.json({
             success: true, 
             message: `Se eliminaron ${changes} proformas`,
             eliminadas: changes
@@ -4800,6 +5197,13 @@ app.post('/api/proformas/:id/dividir', async (req, res) => {
             duration: totalDuration
         });
 
+        // Invalidar caché de proformas después de dividir
+        if (cacheManager) {
+            cacheManager.invalidatePattern('proformas:*');
+            cacheManager.invalidateByTableChange('proformas', 'update');
+            console.log(`🔄 Caché invalidado después de dividir proforma ${proformaId}`);
+        }
+        
         res.json({ 
             success: true, 
             message: `Proforma dividida en ${proformasCreadas.length} proformas individuales`,
@@ -4929,12 +5333,22 @@ app.post('/api/facturas/:id/dividir', async (req, res) => {
         let numeroActual = (ultimoNumeroResult?.ultimo_numero || 0) + 1;
 
         // Marcar la factura original como "anulado" antes de crear las nuevas
+        console.log(`🔄 [Dividir Factura] Marcando factura ${facturaId} (${facturaOriginal.numero_factura}) como anulada...`);
         await new Promise((resolve, reject) => {
             db.run('UPDATE facturas SET estado = ? WHERE id = ?', ['anulado', facturaId], (err) => {
-                if (err) reject(err);
-                else resolve();
+                if (err) {
+                    console.error(`❌ [Dividir Factura] Error al anular factura ${facturaId}:`, err);
+                    reject(err);
+                } else {
+                    console.log(`✅ [Dividir Factura] Factura ${facturaId} marcada como anulada correctamente`);
+                    resolve();
+                }
             });
         });
+        
+        // Invalidar caché de facturas para reflejar el cambio de estado
+        cacheManager.delPattern('facturas:*');
+        cacheManager.delPattern('stats:*');
 
         // Crear una factura individual por cada coche
         for (const detalle of detalles) {
@@ -4950,14 +5364,14 @@ app.post('/api/facturas/:id/dividir', async (req, res) => {
             // Incrementar para la siguiente factura
             numeroActual++;
 
-            // Crear nueva factura
+            // Crear nueva factura (heredando proforma_id de la factura original)
             const nuevaFacturaId = await new Promise((resolve, reject) => {
                 db.run(`
                     INSERT INTO facturas (
                         numero_factura, empresa_id, cliente_id,
                         fecha_emision, fecha_vencimiento, subtotal, igic, total,
-                        estado, notas, activo
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                        estado, notas, proforma_id, activo
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 `, [
                     nuevoNumero,
                     facturaOriginal.empresa_id,
@@ -4969,6 +5383,7 @@ app.post('/api/facturas/:id/dividir', async (req, res) => {
                     total,
                     facturaOriginal.estado || 'pendiente',
                     `Dividida de ${facturaOriginal.numero_factura}. ${facturaOriginal.notas || ''}`.trim(),
+                    facturaOriginal.proforma_id || null, // Heredar proforma_id de la factura original
                     activoValue
                 ], function(err) {
                     if (err) reject(err);
@@ -5181,10 +5596,12 @@ app.get('/api/facturas/:id', (req, res) => {
     
     db.get(`
         SELECT f.*, c.nombre as cliente_nombre, c.direccion as cliente_direccion, c.identificacion as cliente_identificacion,
-               e.nombre as empresa_nombre, e.cif as empresa_cif, e.direccion as empresa_direccion
+               e.nombre as empresa_nombre, e.cif as empresa_cif, e.direccion as empresa_direccion,
+               p.id as proforma_id_relacionada, p.numero_proforma as proforma_numero, p.estado as proforma_estado, p.fecha_emision as proforma_fecha_emision
         FROM facturas f 
         LEFT JOIN clientes c ON f.cliente_id = c.id 
         LEFT JOIN empresas e ON f.empresa_id = e.id
+        LEFT JOIN proformas p ON f.proforma_id = p.id
         WHERE f.id = ?
     `, [facturaId], (err, factura) => {
         if (err) {
@@ -5561,6 +5978,508 @@ app.put('/api/facturas/:id/marcar-pendiente', async (req, res) => {
                 details: error.message
             });
         }
+    }
+});
+
+// PUT - Anular factura y crear abono automáticamente
+app.put('/api/facturas/:id/anular', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const facturaId = parseInt(id, 10);
+        
+        // Validar ID
+        if (isNaN(facturaId) || facturaId <= 0) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'ID de factura inválido',
+                received: id
+            });
+        }
+        
+        // Obtener factura actual con todos sus detalles
+        const factura = await new Promise((resolve, reject) => {
+            db.get('SELECT * FROM facturas WHERE id = ?', [facturaId], (err, row) => {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                resolve(row);
+            });
+        });
+        
+        if (!factura) {
+            return res.status(404).json({ 
+                success: false,
+                error: 'Factura no encontrada' 
+            });
+        }
+        
+        // Verificar si ya está anulada
+        if (factura.estado === 'anulado' || factura.estado === 'anulada') {
+            return res.status(400).json({ 
+                success: false,
+                error: 'La factura ya está anulada' 
+            });
+        }
+        
+        // Obtener detalles de la factura
+        const detallesFactura = await new Promise((resolve, reject) => {
+            db.all('SELECT * FROM detalles_factura WHERE factura_id = ?', [facturaId], (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows || []);
+            });
+        });
+        
+        // Obtener información de la empresa para generar número de abono
+        const empresa = await new Promise((resolve, reject) => {
+            db.get('SELECT * FROM empresas WHERE id = ?', [factura.empresa_id], (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+        
+        if (!empresa) {
+            return res.status(404).json({ 
+                success: false,
+                error: 'Empresa no encontrada' 
+            });
+        }
+        
+        // Generar número de abono (formato: ABO-XXX/YYYY)
+        const año = new Date().getFullYear();
+        const prefijo = 'ABO';
+        
+        // Obtener el último número de abono para esta empresa y año
+        const ultimoAbono = await new Promise((resolve, reject) => {
+            const dbType = config.get('database.type') || 'postgresql';
+            // Formato: ABO-001/2025, necesitamos extraer el número entre "ABO-" y "/"
+            // Usar método simple: extraer los 3 dígitos después del guion
+            const query = dbType === 'postgresql' 
+                ? `SELECT MAX(CAST(SUBSTRING(numero_abono FROM POSITION('-' IN numero_abono) + 1 FOR 3) AS INTEGER)) as ultimo_numero
+                   FROM abonos 
+                   WHERE empresa_id = $1 AND numero_abono LIKE $2 || '-%' AND numero_abono LIKE '%/' || $3`
+                : `SELECT MAX(CAST(SUBSTR(numero_abono, ${prefijo.length + 2}, 3) AS INTEGER)) as ultimo_numero
+                   FROM abonos 
+                   WHERE empresa_id = ? AND numero_abono LIKE ? || '-%' AND numero_abono LIKE '%/' || ?`;
+            
+            const params = [factura.empresa_id, prefijo, año.toString()];
+            
+            db.get(query, params, (err, row) => {
+                if (err) {
+                    console.error('❌ Error al obtener último número de abono:', err);
+                    // Si hay error, retornar 0 para empezar desde el principio
+                    resolve({ ultimo_numero: 0 });
+                } else {
+                    resolve(row || { ultimo_numero: 0 });
+                }
+            });
+        });
+        
+        const siguienteNumero = ((ultimoAbono?.ultimo_numero || 0) + 1).toString().padStart(3, '0');
+        const numeroAbono = `${prefijo}-${siguienteNumero}/${año}`;
+        
+        // Crear el abono (valores negativos)
+        const abonoData = {
+            numero_abono: numeroAbono,
+            factura_id: facturaId,
+            empresa_id: factura.empresa_id,
+            cliente_id: factura.cliente_id,
+            fecha_emision: new Date().toISOString().split('T')[0],
+            subtotal: -Math.abs(factura.subtotal), // Negativo
+            igic: -Math.abs(factura.igic), // Negativo
+            total: -Math.abs(factura.total), // Negativo
+            estado: 'pendiente',
+            notas: `Abono generado automáticamente por anulación de factura ${factura.numero_factura}`,
+            tipo_documento: 'abono',
+            estado_fiscal: 'pendiente'
+        };
+        
+        // Insertar abono
+        const abonoId = await new Promise((resolve, reject) => {
+            const dbType = config.get('database.type') || 'postgresql';
+            const activoValue = dbType === 'postgresql' ? 'true' : '1';
+            
+            const query = dbType === 'postgresql'
+                ? `INSERT INTO abonos (
+                    numero_abono, factura_id, empresa_id, cliente_id, fecha_emision,
+                    subtotal, igic, total, estado, notas, tipo_documento, estado_fiscal, activo
+                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`
+                : `INSERT INTO abonos (
+                    numero_abono, factura_id, empresa_id, cliente_id, fecha_emision,
+                    subtotal, igic, total, estado, notas, tipo_documento, estado_fiscal, activo
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${activoValue})`;
+            
+            const params = [
+                abonoData.numero_abono,
+                abonoData.factura_id,
+                abonoData.empresa_id,
+                abonoData.cliente_id,
+                abonoData.fecha_emision,
+                abonoData.subtotal,
+                abonoData.igic,
+                abonoData.total,
+                abonoData.estado,
+                abonoData.notas,
+                abonoData.tipo_documento,
+                abonoData.estado_fiscal
+            ];
+            
+            // Agregar activo como parámetro para PostgreSQL
+            if (dbType === 'postgresql') {
+                params.push(true); // activo = true
+                db.query(query, params)
+                    .then(result => {
+                        resolve(result.rows[0].id);
+                    })
+                    .catch(err => {
+                        reject(err);
+                    });
+            } else {
+                db.run(query, params, function(err) {
+                    if (err) reject(err);
+                    else resolve(this.lastID);
+                });
+            }
+        });
+        
+        // Crear detalles del abono (valores negativos)
+        for (const detalle of detallesFactura) {
+            await new Promise((resolve, reject) => {
+                const query = `INSERT INTO detalles_abono (
+                    abono_id, producto_id, coche_id, cantidad, precio_unitario,
+                    subtotal, igic, total, descripcion, tipo_impuesto
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
+                
+                const params = [
+                    abonoId,
+                    detalle.producto_id,
+                    detalle.coche_id,
+                    detalle.cantidad,
+                    -Math.abs(detalle.precio_unitario), // Negativo
+                    -Math.abs(detalle.subtotal), // Negativo
+                    -Math.abs(detalle.igic), // Negativo
+                    -Math.abs(detalle.total), // Negativo
+                    detalle.descripcion,
+                    detalle.tipo_impuesto || 'igic'
+                ];
+                
+                db.run(query, params, (err) => {
+                    if (err) reject(err);
+                    else resolve();
+                });
+            });
+        }
+        
+        // Marcar la factura como anulada
+        const changes = await new Promise((resolve, reject) => {
+            db.run(`
+                UPDATE facturas 
+                SET estado = 'anulado', 
+                    estado_fiscal = 'anulado'
+                WHERE id = ?
+            `, [facturaId], function(err) {
+                if (err) {
+                    reject(err);
+                    return;
+                }
+                if (this.changes === 0) {
+                    resolve(null);
+                    return;
+                }
+                resolve(this.changes);
+            });
+        });
+        
+        if (changes === null) {
+            return res.status(404).json({ 
+                success: false,
+                error: 'Factura no encontrada o no se pudo actualizar' 
+            });
+        }
+        
+        // Invalidar caché de facturas, abonos y proformas (porque el estado puede afectar proformas relacionadas)
+        if (cacheManager) {
+            cacheManager.invalidatePattern('facturas:*');
+            cacheManager.invalidatePattern('abonos:*');
+            cacheManager.invalidatePattern('proformas:*');
+            cacheManager.invalidateByTableChange('facturas', 'update');
+            cacheManager.invalidateByTableChange('abonos', 'insert');
+            console.log(`🔄 Caché invalidado después de anular factura ${facturaId}`);
+        }
+        
+        // Registrar en auditoría (no bloqueante)
+        try {
+            await sistemaAuditoria.registrarOperacion(
+                'facturas',
+                facturaId,
+                'UPDATE',
+                { estado: factura.estado },
+                { estado: 'anulado' },
+                'sistema'
+            );
+            
+            await sistemaAuditoria.registrarOperacion(
+                'abonos',
+                abonoId,
+                'INSERT',
+                null,
+                abonoData,
+                'sistema'
+            );
+        } catch (auditError) {
+            console.warn('⚠️ Error al registrar en auditoría (no crítico):', auditError.message);
+        }
+        
+        console.log(`✅ Factura ${facturaId} anulada y abono ${numeroAbono} creado automáticamente`);
+        res.json({ 
+            success: true, 
+            message: 'Factura anulada y abono creado exitosamente',
+            data: {
+                factura: {
+                    id: facturaId,
+                    estado: 'anulado'
+                },
+                abono: {
+                    id: abonoId,
+                    numero_abono: numeroAbono,
+                    total: abonoData.total
+                }
+            }
+        });
+        
+    } catch (error) {
+        console.error('❌ Error al anular factura y crear abono:', error);
+        if (!res.headersSent) {
+            res.status(500).json({ 
+                success: false,
+                error: 'Error interno del servidor',
+                details: error.message
+            });
+        }
+    }
+});
+
+// ==================== ENDPOINTS DE ABONOS ====================
+
+// GET - Obtener todos los abonos con paginación
+app.get('/api/abonos', async (req, res) => {
+    try {
+        const { page = 1, limit = 20, search = '', empresa_id = '', cliente_id = '', fecha_desde = '', fecha_hasta = '', include_detalles = 'false' } = req.query;
+        const includeDetalles = include_detalles === 'true';
+        const pageNum = parseInt(page, 10);
+        const limitNum = parseInt(limit, 10);
+        const offset = (pageNum - 1) * limitNum;
+        
+        const dbType = config.get('database.type') || 'postgresql';
+        const activoValue = dbType === 'postgresql' ? 'true' : '1';
+        const likeOperator = dbType === 'postgresql' ? 'ILIKE' : 'LIKE';
+        
+        // Construir condiciones WHERE
+        const conditions = [`(a.activo = ${activoValue} OR a.activo IS NULL)`];
+        const params = [];
+        let paramIndex = 1;
+        
+        if (search) {
+            const likeValue = `%${search}%`;
+            conditions.push(`(a.numero_abono ${likeOperator} ${dbType === 'postgresql' ? '$' + paramIndex : '?'} OR c.nombre ${likeOperator} ${dbType === 'postgresql' ? '$' + (paramIndex + 1) : '?'} OR e.nombre ${likeOperator} ${dbType === 'postgresql' ? '$' + (paramIndex + 2) : '?'})`);
+            params.push(likeValue, likeValue, likeValue);
+            paramIndex += 3;
+        }
+        
+        if (empresa_id) {
+            conditions.push(`a.empresa_id = ${dbType === 'postgresql' ? '$' + paramIndex : '?'}`);
+            params.push(empresa_id);
+            paramIndex++;
+        }
+        
+        if (cliente_id) {
+            conditions.push(`a.cliente_id = ${dbType === 'postgresql' ? '$' + paramIndex : '?'}`);
+            params.push(cliente_id);
+            paramIndex++;
+        }
+        
+        if (fecha_desde) {
+            conditions.push(`a.fecha_emision >= ${dbType === 'postgresql' ? '$' + paramIndex : '?'}`);
+            params.push(fecha_desde);
+            paramIndex++;
+        }
+        
+        if (fecha_hasta) {
+            conditions.push(`a.fecha_emision <= ${dbType === 'postgresql' ? '$' + paramIndex : '?'}`);
+            params.push(fecha_hasta);
+            paramIndex++;
+        }
+        
+        const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
+        
+        // Consulta principal con JOINs
+        let query = `
+            SELECT 
+                a.*,
+                c.nombre as cliente_nombre,
+                e.nombre as empresa_nombre,
+                f.numero_factura as factura_numero
+            FROM abonos a
+            LEFT JOIN clientes c ON a.cliente_id = c.id
+            LEFT JOIN empresas e ON a.empresa_id = e.id
+            LEFT JOIN facturas f ON a.factura_id = f.id
+            ${whereClause}
+            ORDER BY a.fecha_emision DESC, a.id DESC
+            LIMIT ${dbType === 'postgresql' ? '$' + paramIndex : '?'} OFFSET ${dbType === 'postgresql' ? '$' + (paramIndex + 1) : '?'}
+        `;
+        
+        params.push(limitNum, offset);
+        
+        // Obtener abonos
+        const abonos = await new Promise((resolve, reject) => {
+            db.all(query, params, (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows || []);
+            });
+        });
+        
+        // Obtener total de abonos
+        const countQuery = `
+            SELECT COUNT(*) as total
+            FROM abonos a
+            LEFT JOIN clientes c ON a.cliente_id = c.id
+            LEFT JOIN empresas e ON a.empresa_id = e.id
+            ${whereClause}
+        `;
+        
+        const totalResult = await new Promise((resolve, reject) => {
+            db.get(countQuery, params.slice(0, -2), (err, row) => {
+                if (err) reject(err);
+                else resolve(row?.total || 0);
+            });
+        });
+        
+        const total = Number(totalResult);
+        const totalPages = Math.ceil(total / limitNum);
+        
+        // Si se solicitan detalles, obtenerlos para cada abono
+        if (includeDetalles) {
+            for (const abono of abonos) {
+                const detalles = await new Promise((resolve, reject) => {
+                    db.all(`
+                        SELECT da.*, 
+                               p.descripcion as producto_descripcion,
+                               co.matricula as coche_matricula,
+                               co.modelo as coche_modelo,
+                               co.color as coche_color,
+                               co.kms as coche_kms,
+                               co.chasis as coche_chasis
+                        FROM detalles_abono da
+                        LEFT JOIN productos p ON da.producto_id = p.id
+                        LEFT JOIN coches co ON da.coche_id = co.id
+                        WHERE da.abono_id = ?
+                    `, [abono.id], (err, rows) => {
+                        if (err) reject(err);
+                        else resolve(rows || []);
+                    });
+                });
+                abono.detalles = detalles;
+            }
+        }
+        
+        res.json({
+            success: true,
+            data: abonos,
+            pagination: {
+                page: pageNum,
+                limit: limitNum,
+                total: total,
+                totalPages: totalPages
+            }
+        });
+        
+    } catch (error) {
+        console.error('❌ Error al obtener abonos:', error);
+        res.status(500).json({ 
+            success: false,
+            error: 'Error al obtener abonos',
+            details: error.message
+        });
+    }
+});
+
+// GET - Obtener abono por ID
+app.get('/api/abonos/:id', async (req, res) => {
+    try {
+        const { id } = req.params;
+        const abonoId = parseInt(id, 10);
+        
+        if (isNaN(abonoId) || abonoId <= 0) {
+            return res.status(400).json({ 
+                success: false,
+                error: 'ID de abono inválido' 
+            });
+        }
+        
+        // Obtener abono con información relacionada
+        const abono = await new Promise((resolve, reject) => {
+            db.get(`
+                SELECT 
+                    a.*,
+                    c.nombre as cliente_nombre,
+                    c.direccion as cliente_direccion,
+                    c.identificacion as cliente_identificacion,
+                    e.nombre as empresa_nombre,
+                    e.cif as empresa_cif,
+                    e.direccion as empresa_direccion,
+                    f.numero_factura as factura_numero
+                FROM abonos a
+                LEFT JOIN clientes c ON a.cliente_id = c.id
+                LEFT JOIN empresas e ON a.empresa_id = e.id
+                LEFT JOIN facturas f ON a.factura_id = f.id
+                WHERE a.id = ?
+            `, [abonoId], (err, row) => {
+                if (err) reject(err);
+                else resolve(row);
+            });
+        });
+        
+        if (!abono) {
+            return res.status(404).json({ 
+                success: false,
+                error: 'Abono no encontrado' 
+            });
+        }
+        
+        // Obtener detalles del abono
+        const detalles = await new Promise((resolve, reject) => {
+            db.all(`
+                SELECT da.*, 
+                       p.descripcion as producto_descripcion,
+                       co.matricula as coche_matricula,
+                       co.modelo as coche_modelo,
+                       co.color as coche_color,
+                       co.kms as coche_kms,
+                       co.chasis as coche_chasis
+                FROM detalles_abono da
+                LEFT JOIN productos p ON da.producto_id = p.id
+                LEFT JOIN coches co ON da.coche_id = co.id
+                WHERE da.abono_id = ?
+            `, [abonoId], (err, rows) => {
+                if (err) reject(err);
+                else resolve(rows || []);
+            });
+        });
+        
+        abono.detalles = detalles || [];
+        
+        res.json({
+            success: true,
+            data: abono
+        });
+        
+    } catch (error) {
+        console.error('❌ Error al obtener abono:', error);
+        res.status(500).json({ 
+            success: false,
+            error: 'Error al obtener abono',
+            details: error.message
+        });
     }
 });
 

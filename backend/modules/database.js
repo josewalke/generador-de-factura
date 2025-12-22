@@ -70,6 +70,17 @@ class Database {
         let paramIndex = 1;
         const convertedQuery = query.replace(/\?/g, () => `$${paramIndex++}`);
         
+        // Validar que el número de placeholders coincida con el número de parámetros
+        const placeholderCount = (query.match(/\?/g) || []).length;
+        if (placeholderCount !== params.length) {
+            console.error('❌ [convertParams] Mismatch de parámetros:');
+            console.error('   Query:', query.substring(0, 200));
+            console.error('   Placeholders encontrados:', placeholderCount);
+            console.error('   Parámetros recibidos:', params.length);
+            console.error('   Parámetros:', params);
+            throw new Error(`Mismatch de parámetros: la query tiene ${placeholderCount} placeholders pero se recibieron ${params.length} parámetros`);
+        }
+        
         return { query: convertedQuery, params };
     }
 
@@ -191,33 +202,55 @@ class Database {
         // Para INSERT, agregar RETURNING id si no está presente
         let finalQuery = convertedQuery;
         if (query.toUpperCase().trim().startsWith('INSERT') && !convertedQuery.includes('RETURNING') && !convertedQuery.includes('ON CONFLICT')) {
-            finalQuery = convertedQuery.replace(/;$/, '') + ' RETURNING id';
+            // Asegurar que la query termine correctamente antes de agregar RETURNING
+            finalQuery = convertedQuery.trim().replace(/;\s*$/, '') + ' RETURNING id';
         }
         
-        this.query(finalQuery, convertedParams)
+        // Usar query directamente sin volver a convertir (ya está convertido)
+        // Asegurar que estamos conectados
+        if (!this.isConnected) {
+            this.connect().then(() => {
+                this.executeRunWithCallback(finalQuery, convertedParams, query, callback);
+            }).catch(error => {
+                if (callback) {
+                    callback(error, null);
+                }
+            });
+        } else {
+            this.executeRunWithCallback(finalQuery, convertedParams, query, callback);
+        }
+    }
+
+    executeRunWithCallback(finalQuery, convertedParams, originalQuery, callback) {
+        this.pool.query(finalQuery, convertedParams)
             .then(result => {
                 // Para INSERT, obtener el ID
                 let lastID = null;
-                if (query.toUpperCase().trim().startsWith('INSERT')) {
+                if (originalQuery.toUpperCase().trim().startsWith('INSERT')) {
                     if (result.rows && result.rows.length > 0 && result.rows[0].id) {
                         lastID = result.rows[0].id;
                     } else {
                         // Intentar obtener con LASTVAL()
-                        this.query('SELECT LASTVAL() as id')
+                        this.pool.query('SELECT LASTVAL() as id')
                             .then(idResult => {
                                 lastID = idResult.rows[0]?.id || null;
                                 const runResult = {
                                     lastID: lastID,
                                     changes: result.rowCount || 0
                                 };
-                                if (callback) callback(null, runResult);
+                                if (callback) {
+                                    // Llamar callback con formato (err, result) para compatibilidad con wrapper
+                                    callback(null, runResult);
+                                }
                             })
                             .catch(() => {
                                 const runResult = {
                                     lastID: null,
                                     changes: result.rowCount || 0
                                 };
-                                if (callback) callback(null, runResult);
+                                if (callback) {
+                                    callback(null, runResult);
+                                }
                             });
                         return; // Salir temprano
                     }
@@ -229,6 +262,7 @@ class Database {
                 };
                 
                 if (callback) {
+                    // Llamar callback con formato (err, result) para compatibilidad con wrapper
                     callback(null, runResult);
                 }
             })

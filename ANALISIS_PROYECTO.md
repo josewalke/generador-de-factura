@@ -554,3 +554,16 @@ El proyecto está en un estado avanzado y funcional, con algunas mejoras pendien
 
 *Análisis generado el: $(date)*
 
+
+
+
+
+
+
+
+
+
+
+
+
+

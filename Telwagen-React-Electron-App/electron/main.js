@@ -27,7 +27,7 @@ function createWindow() {
       allowRunningInsecureContent: false, // Mantener seguridad
       preload: path.join(__dirname, 'preload.js')
     },
-    icon: path.join(__dirname, '../assets/icon.png'),
+    icon: path.join(__dirname, '../assets/icon.ico'),
     show: false, // No mostrar hasta que esté listo
     titleBarStyle: 'default',
     title: `Generador de Facturas Telwagen v${appVersion}`,

@@ -89,15 +89,30 @@ class CacheManager {
     }
 
     /**
-     * Elimina múltiples valores del caché
+     * Elimina múltiples valores del caché usando un patrón
+     * @param {string} pattern - Patrón a buscar (puede usar * como wildcard)
      */
-    delPattern(pattern) {
+    invalidatePattern(pattern) {
         const keys = this.cache.keys();
-        const regex = new RegExp(pattern);
+        // Convertir patrón con * a regex
+        const regexPattern = pattern
+            .replace(/\*/g, '.*')
+            .replace(/\?/g, '.');
+        const regex = new RegExp(`^${regexPattern}$`);
         const keysToDelete = keys.filter(key => regex.test(key));
         
         keysToDelete.forEach(key => this.del(key));
+        if (keysToDelete.length > 0) {
+            console.log(`🔄 Cache invalidated: ${pattern} (${keysToDelete.length} keys)`);
+        }
         return keysToDelete.length;
+    }
+
+    /**
+     * Elimina múltiples valores del caché (alias para compatibilidad)
+     */
+    delPattern(pattern) {
+        return this.invalidatePattern(pattern);
     }
 
     /**
@@ -140,20 +155,23 @@ class CacheManager {
      */
     invalidateByTableChange(table, operation) {
         const patterns = {
-            'coches': ['coches:*', 'coches:all', 'coches:disponibles', 'coches:vendidos'],
-            'clientes': ['clientes:*', 'clientes:all'],
-            'productos': ['productos:*', 'productos:all'],
-            'facturas': ['facturas:*', 'facturas:all'],
-            'empresas': ['empresas:*', 'empresas:all']
+            'coches': ['coches:*', 'coches:all', 'coches:disponibles', 'coches:vendidos', 'query:coches:*'],
+            'clientes': ['clientes:*', 'clientes:all', 'query:clientes:*'],
+            'productos': ['productos:*', 'productos:all', 'query:productos:*'],
+            'facturas': ['facturas:*', 'facturas:all', 'query:facturas:*', 'proformas:*', 'query:proformas:*'],
+            'proformas': ['proformas:*', 'proformas:all', 'query:proformas:*', 'facturas:*', 'query:facturas:*'],
+            'abonos': ['abonos:*', 'abonos:all', 'query:abonos:*', 'facturas:*', 'query:facturas:*'],
+            'empresas': ['empresas:*', 'empresas:all', 'query:empresas:*']
         };
 
         if (patterns[table]) {
+            let totalDeleted = 0;
             patterns[table].forEach(pattern => {
-                const deletedCount = this.delPattern(pattern);
-                if (deletedCount > 0) {
-                    console.log(`🗑️ Cache invalidated for ${operation} on ${table}: ${pattern} (${deletedCount} keys)`);
-                }
+                totalDeleted += this.invalidatePattern(pattern);
             });
+            if (totalDeleted > 0) {
+                console.log(`🗑️ Cache invalidated for ${operation} on ${table} (${totalDeleted} total keys)`);
+            }
         }
     }
 
