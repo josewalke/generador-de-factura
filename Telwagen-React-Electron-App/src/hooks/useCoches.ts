@@ -24,8 +24,9 @@ export interface UseCochesReturn {
   deleteCoche: (id: string) => Promise<void>;
   searchCoches: (searchTerm: string) => Promise<void>;
   refreshCoches: () => Promise<void>;
-  loadDisponibles: () => Promise<void>;
+  loadDisponibles: (excluirProformados?: boolean) => Promise<void>;
   loadVendidos: () => Promise<void>;
+  getDisponiblesParaFactura: () => Promise<Coche[]>;
   clearError: () => void;
 }
 
@@ -104,18 +105,43 @@ export function useCoches(): UseCochesReturn {
     }
   }, [setLoadingState]);
 
-  const loadDisponibles = useCallback(async () => {
+  const loadDisponibles = useCallback(async (excluirProformados: boolean = true) => {
     try {
       setError(null);
-      logger.useCoches.debug('Cargando coches disponibles');
+      logger.useCoches.debug('Cargando coches disponibles', { excluirProformados });
       
-      const data = await cocheService.getDisponibles();
+      const data = await cocheService.getDisponibles(excluirProformados);
       setCochesDisponibles(data);
       
       logger.useCoches.info(`Coches disponibles cargados: ${data.length} vehículos`);
     } catch (err) {
       logger.useCoches.error('Error al cargar coches disponibles', err);
       // No mostramos error para esta función ya que es secundaria
+    }
+  }, []);
+
+  // Función para obtener coches disponibles para crear proformas/facturas (incluye proformados)
+  const getDisponiblesParaFactura = useCallback(async (): Promise<Coche[]> => {
+    try {
+      console.log('🔍 [getDisponiblesParaFactura] Iniciando carga de coches (incluye proformados)');
+      logger.useCoches.debug('Cargando coches disponibles para factura/proforma (incluye proformados)');
+      const data = await cocheService.getDisponibles(false); // false = incluir proformados
+      console.log('✅ [getDisponiblesParaFactura] Coches cargados:', data.length);
+      if (data.length > 0) {
+        const ejemplo = data[0];
+        console.log('📝 [getDisponiblesParaFactura] Ejemplo de coche:', {
+          matricula: ejemplo.matricula,
+          tiene_proforma: ejemplo.tiene_proforma,
+          tipo_tiene_proforma: typeof ejemplo.tiene_proforma,
+          numero_proforma: ejemplo.numero_proforma
+        });
+      }
+      logger.useCoches.info(`Coches disponibles para factura/proforma cargados: ${data.length} vehículos`);
+      return data;
+    } catch (err) {
+      console.error('❌ [getDisponiblesParaFactura] Error:', err);
+      logger.useCoches.error('Error al cargar coches disponibles para factura/proforma', err);
+      throw err;
     }
   }, []);
 
@@ -268,6 +294,7 @@ export function useCoches(): UseCochesReturn {
     refreshCoches,
     loadDisponibles,
     loadVendidos,
+    getDisponiblesParaFactura,
     clearError
   };
 }

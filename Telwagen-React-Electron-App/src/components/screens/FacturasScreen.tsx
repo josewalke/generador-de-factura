@@ -58,8 +58,49 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
   
   // Hooks para obtener datos reales
   const { clientes } = useClientes();
-  const { coches, cochesDisponibles: cochesDisponiblesHook, loading, refreshCoches } = useCoches();
+  const { coches, cochesDisponibles: cochesDisponiblesHook, loading, refreshCoches, getDisponiblesParaFactura } = useCoches();
   const { empresas } = useEmpresas();
+  
+  // Estado para coches disponibles para facturas (incluye proformados)
+  const [cochesParaFactura, setCochesParaFactura] = useState<Coche[]>([]);
+  
+  // Cargar coches disponibles para facturas (incluye proformados) al montar
+  useEffect(() => {
+    getDisponiblesParaFactura().then((coches) => {
+      console.log('🚗 Coches para factura cargados:', coches.length);
+      const cochesConProforma = coches.filter(c => {
+        const tieneProforma = c.tiene_proforma === 1 || 
+                             c.tiene_proforma === true || 
+                             c.tiene_proforma === '1' || 
+                             c.numero_proforma;
+        return tieneProforma;
+      });
+      console.log('🚗 Coches con proforma:', cochesConProforma.length);
+      if (cochesConProforma.length > 0) {
+        console.log('📋 Detalles de coches proformados:');
+        cochesConProforma.forEach(c => {
+          console.log(`  - ${c.matricula}:`, {
+            tiene_proforma: c.tiene_proforma,
+            tipo_tiene_proforma: typeof c.tiene_proforma,
+            numero_proforma: c.numero_proforma,
+            coche_completo: c
+          });
+        });
+      } else {
+        console.log('⚠️ No se encontraron coches con proforma. Verificando todos los coches...');
+        coches.slice(0, 5).forEach(c => {
+          console.log(`  - ${c.matricula}:`, {
+            tiene_proforma: c.tiene_proforma,
+            tipo_tiene_proforma: typeof c.tiene_proforma,
+            numero_proforma: c.numero_proforma
+          });
+        });
+      }
+      setCochesParaFactura(coches);
+    }).catch((error) => {
+      console.error('❌ Error cargando coches para factura:', error);
+    });
+  }, [getDisponiblesParaFactura]);
 
   // Configuración de impuestos
   const configuracionImpuestos: Record<TipoImpuesto, ConfiguracionImpuesto> = useMemo(() => ({
@@ -85,7 +126,7 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
   );
 
   // Filtrar coches disponibles (excluir los ya agregados a la factura)
-  // Usamos cochesDisponiblesHook que ya filtra los vendidos, y luego excluimos los ya en la factura
+  // Usamos cochesParaFactura que incluye proformados (para poder crear facturas de proformas)
   const cochesDisponibles = useMemo(() => {
     // Obtener las matrículas de los coches ya agregados a la factura
     const matriculasAgregadas = productos.map(producto => {
@@ -95,11 +136,11 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
     }).filter(Boolean);
 
     // Filtrar coches que no estén ya en la factura
-    // cochesDisponiblesHook ya excluye los vendidos (activo = false/0)
-    return cochesDisponiblesHook.filter(coche => 
+    // cochesParaFactura incluye proformados (para poder facturar proformas)
+    return cochesParaFactura.filter(coche => 
       !matriculasAgregadas.includes(coche.matricula)
     );
-  }, [cochesDisponiblesHook, productos]);
+  }, [cochesParaFactura, productos]);
 
   // Filtrar coches por búsqueda
   const cochesFiltrados = useMemo(() => {
@@ -640,12 +681,25 @@ export function FacturasScreen({ onNavigate }: FacturasScreenProps) {
                                     <h4 className="font-semibold text-gray-900">
                                       {coche.marca || ''} {coche.modelo}
                                     </h4>
-                                    {(coche.tiene_proforma === 1 || coche.tiene_proforma === true || coche.tiene_proforma === '1') && (
-                                      <Badge className="bg-purple-100 text-purple-700 text-xs px-1.5 py-0.5">
-                                        <FileText className="w-3 h-3 mr-1" />
-                                        Proforma
-                                      </Badge>
-                                    )}
+                                    {(() => {
+                                      const tieneProforma = coche.tiene_proforma === 1 || 
+                                                           coche.tiene_proforma === true || 
+                                                           coche.tiene_proforma === '1' || 
+                                                           coche.numero_proforma;
+                                      if (tieneProforma) {
+                                        console.log('🏷️ Mostrando etiqueta proforma para:', coche.matricula, {
+                                          tiene_proforma: coche.tiene_proforma,
+                                          numero_proforma: coche.numero_proforma,
+                                          tipo_tiene_proforma: typeof coche.tiene_proforma
+                                        });
+                                      }
+                                      return tieneProforma ? (
+                                        <Badge className="bg-purple-100 text-purple-700 text-xs px-1.5 py-0.5">
+                                          <FileText className="w-3 h-3 mr-1" />
+                                          {coche.numero_proforma ? `Proforma ${coche.numero_proforma}` : 'Proforma'}
+                                        </Badge>
+                                      ) : null;
+                                    })()}
                                   </div>
                                   <p className="text-sm text-gray-500">Matrícula: {coche.matricula}</p>
                                   <p className="text-sm text-gray-500">Color: {coche.color}</p>

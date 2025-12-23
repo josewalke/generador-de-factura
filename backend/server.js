@@ -1,14 +1,16 @@
-const express = require('express');
+﻿const express = require('express');
 const cors = require('cors');
 const bodyParser = require('body-parser');
 const helmet = require('helmet');
 const morgan = require('morgan');
+const compression = require('compression');
 const path = require('path');
 const multer = require('multer');
 const fs = require('fs');
 const { exec } = require('child_process');
 const rateLimit = require('express-rate-limit');
 const config = require('./config/config');
+const { cacheHeaders, etagMiddleware, responseTimeMiddleware } = require('./middlewares/performance.middleware');
 const { DatabaseCacheManager } = require('./modules/sistemaCache');
 const PaginationManager = require('./modules/sistemaPaginacion');
 const { LoggerFactory } = require('./modules/sistemaLogging');
@@ -16,7 +18,7 @@ const ImportadorExcel = require('./modules/importadorExcel');
 const database = require('./modules/database');
 const SQLAdapter = require('./modules/sqlAdapter');
 
-// Exportar la instancia de la base de datos para uso en otros módulos
+// Exportar la instancia de la base de datos para uso en otros mÃ³dulos
 let db;
 let cacheManager;
 let paginationManager;
@@ -26,27 +28,37 @@ let importadorExcel;
 // Inicializar logger
 logger = LoggerFactory.create(config.getAll());
 
-// Inicializar sistemas de rendimiento
+/**
+ * Inicializa los sistemas de rendimiento del servidor
+ * - Sistema de caché
+ * - Sistema de paginación
+ * - Importador Excel
+ * - Precalentamiento de caché
+ * 
+ * @async
+ * @function initPerformanceSystems
+ * @returns {Promise<void>}
+ */
 async function initPerformanceSystems() {
     try {
-        // Inicializar sistema de caché
+        // Inicializar sistema de cachÃ©
         cacheManager = new DatabaseCacheManager(config.getAll());
-        logger.systemEvent('Sistema de caché inicializado');
+        logger.systemEvent('Sistema de cachÃ© inicializado');
         
-        // Inicializar sistema de paginación
+        // Inicializar sistema de paginaciÃ³n
         paginationManager = new PaginationManager(config.getAll());
         paginationManager.setDatabase(db);
         
-        logger.systemEvent('Sistema de paginación inicializado');
+        logger.systemEvent('Sistema de paginaciÃ³n inicializado');
         
         // Inicializar importador Excel
         importadorExcel = new ImportadorExcel(db);
         logger.systemEvent('Importador Excel inicializado');
         
-        // Precalentar caché con datos frecuentes de forma asíncrona
-        // Solo después de que db esté disponible
+        // Precalentar cachÃ© con datos frecuentes de forma asÃ­ncrona
+        // Solo despuÃ©s de que db estÃ© disponible
         setImmediate(async () => {
-            // Esperar a que db esté disponible
+            // Esperar a que db estÃ© disponible
             let attempts = 0;
             while (!db && attempts < 10) {
                 await new Promise(resolve => setTimeout(resolve, 100));
@@ -55,7 +67,7 @@ async function initPerformanceSystems() {
             if (db) {
                 await preheatCache();
             } else {
-                logger.warn('No se pudo precalentar caché: base de datos no disponible', {}, 'cache');
+                logger.warn('No se pudo precalentar cachÃ©: base de datos no disponible', {}, 'cache');
             }
         });
         
@@ -64,11 +76,18 @@ async function initPerformanceSystems() {
     }
 }
 
-// Precalentar caché con datos frecuentes
+/**
+ * Precalienta el caché con datos frecuentes
+ * Carga datos comunes en caché para mejorar rendimiento
+ * 
+ * @async
+ * @function preheatCache
+ * @returns {Promise<void>}
+ */
 async function preheatCache() {
-    // Verificar que db esté disponible antes de precalentar
+    // Verificar que db estÃ© disponible antes de precalentar
     if (!db) {
-        logger.warn('Base de datos no disponible para precalentar caché, omitiendo...', {}, 'cache');
+        logger.warn('Base de datos no disponible para precalentar cachÃ©, omitiendo...', {}, 'cache');
         return;
     }
     
@@ -119,13 +138,13 @@ async function preheatCache() {
         };
         
         await cacheManager.preheat(fetchFunctions);
-        logger.systemEvent('Caché precalentado con datos frecuentes');
+        logger.systemEvent('CachÃ© precalentado con datos frecuentes');
     } catch (error) {
-        logger.error('Error precalentando caché', { error: error.message }, 'cache');
+        logger.error('Error precalentando cachÃ©', { error: error.message }, 'cache');
     }
 }
 
-// Módulos para cumplir con la Ley Antifraude
+// MÃ³dulos para cumplir con la Ley Antifraude
 const SistemaIntegridad = require('./modules/sistemaIntegridad');
 const SistemaAuditoria = require('./modules/sistemaAuditoria');
 const GeneradorVeriFactu = require('./modules/generadorVeriFactu');
@@ -140,13 +159,38 @@ const HTTPSManager = require('./modules/httpsManager');
 const RoleManager = require('./modules/roleManager');
 const SecurityMonitor = require('./modules/securityMonitor');
 
+// Rutas modulares
+const createClientesRouter = require('./routes/clientesRoutes');
+const createCochesRouter = require('./routes/cochesRoutes');
+const createProductosRouter = require('./routes/productosRoutes');
+const createFacturasRouter = require('./routes/facturasRoutes');
+const createProformasRouter = require('./routes/proformasRoutes');
+const createEmpresasRouter = require('./routes/empresasRoutes');
+const createAbonosRouter = require('./routes/abonosRoutes');
+const createValidacionRouter = require('./routes/validacionRoutes');
+const createImportarExportarRouter = require('./routes/importarExportarRoutes');
+const createAuthRouter = require('./routes/authRoutes');
+const createCifradoRouter = require('./routes/cifradoRoutes');
+const createSecurityRouter = require('./routes/securityRoutes');
+const createLogsSeguridadRouter = require('./routes/logsSeguridadRoutes');
+const createUsuariosRouter = require('./routes/usuariosRoutes');
+const { createRolesRouter } = require('./routes/usuariosRoutes');
+const createBackupRouter = require('./routes/backupRoutes');
+const createAuditoriaRouter = require('./routes/auditoriaRoutes');
+const createPerformanceRouter = require('./routes/performanceRoutes');
+const createDebugRouter = require('./routes/debugRoutes');
+const createMetricsRouter = require('./routes/metricsRoutes');
+const createConfiguracionRouter = require('./routes/configuracionRoutes');
+const createResetDataRouter = require('./routes/resetDataRoutes');
+const createLogsRouter = require('./routes/logsRoutes');
+
 const app = express();
 const PORT = config.get('server.port');
 let HOST = config.get('server.host');
 
 // Asegurar que el servidor escuche en todas las interfaces
 if (HOST === 'localhost' || HOST === '127.0.0.1' || HOST === '::1') {
-    logger.warn('🛠️ HOST configurado como localhost. Cambiando automáticamente a 0.0.0.0 para permitir acceso externo.', {}, 'general');
+    logger.warn('ðŸ› ï¸ HOST configurado como localhost. Cambiando automÃ¡ticamente a 0.0.0.0 para permitir acceso externo.', {}, 'general');
     HOST = '0.0.0.0';
 }
 
@@ -170,7 +214,7 @@ function buildFacturaFilters(queryParams = {}, excludeAnuladas = true) {
     const conditions = [`(f.activo = ${activoValue} OR f.activo IS NULL)`];
     const params = [];
     
-    // Excluir facturas anuladas de los cálculos de ingresos
+    // Excluir facturas anuladas de los cÃ¡lculos de ingresos
     if (excludeAnuladas) {
         conditions.push(`(f.estado IS NULL OR f.estado != 'anulado')`);
     }
@@ -214,7 +258,7 @@ function fetchFacturaResumen(queryParams = {}) {
             return;
         }
         
-        // Excluir facturas anuladas de los cálculos de ingresos
+        // Excluir facturas anuladas de los cÃ¡lculos de ingresos
         const { whereClause, params } = buildFacturaFilters(queryParams, true);
         const query = `
             SELECT 
@@ -280,7 +324,7 @@ async function ensureFacturaLeyAntifraudeColumns(isPostgreSQL) {
                 // PostgreSQL: usar IF NOT EXISTS
                 await db.query(`ALTER TABLE facturas ADD COLUMN IF NOT EXISTS ${column.name} ${column.type}`);
             } else {
-                // SQLite: intentar añadir y ignorar si ya existe
+                // SQLite: intentar aÃ±adir y ignorar si ya existe
                 await new Promise((resolve, reject) => {
                     db.run(`ALTER TABLE facturas ADD COLUMN ${column.name} ${column.type}`, (err) => {
                         if (err && !err.message.toLowerCase().includes('duplicate column name')) {
@@ -358,7 +402,7 @@ async function migrateDetalleFacturaCocheId() {
                 });
             });
         }
-        logger.systemEvent('Migración coche_id en detalles_factura completada');
+        logger.systemEvent('MigraciÃ³n coche_id en detalles_factura completada');
     } catch (error) {
         logger.warn('No se pudo migrar coche_id en detalles_factura', { error: error.message });
     }
@@ -390,7 +434,7 @@ async function migrateCocheMarcaFromModelo() {
     const dbType = config.get('database.type') || 'postgresql';
     try {
         if (dbType === 'postgresql') {
-            // Actualizar marca desde modelo para registros con marca NULL, vacía o 'N/A'
+            // Actualizar marca desde modelo para registros con marca NULL, vacÃ­a o 'N/A'
             await db.query(`
                 UPDATE coches
                 SET marca = TRIM(SPLIT_PART(modelo, ' ', 1)),
@@ -424,13 +468,13 @@ async function migrateCocheMarcaFromModelo() {
                 });
             });
         }
-        logger.systemEvent('Migración marca desde modelo completada');
+        logger.systemEvent('MigraciÃ³n marca desde modelo completada');
     } catch (error) {
         logger.warn('No se pudo migrar marca desde modelo', { error: error.message });
     }
 }
 
-// Middleware de autenticación para endpoints protegidos
+// Middleware de autenticaciÃ³n para endpoints protegidos
 const requireAuth = (req, res, next) => {
     authService.authMiddleware(req, res, next);
 };
@@ -457,7 +501,7 @@ if (config.get('security.helmet')) {
         },
         crossOriginEmbedderPolicy: false,
         hsts: {
-            maxAge: 31536000, // 1 año
+            maxAge: 31536000, // 1 aÃ±o
             includeSubDomains: true,
             preload: true
         },
@@ -472,7 +516,7 @@ const limiter = rateLimit({
     windowMs: config.get('security.rateLimit.windowMs'),
     max: config.get('security.rateLimit.max'),
     message: {
-        error: 'Demasiadas solicitudes desde esta IP, inténtelo de nuevo más tarde.',
+        error: 'Demasiadas solicitudes desde esta IP, intÃ©ntelo de nuevo mÃ¡s tarde.',
         retryAfter: Math.ceil(config.get('security.rateLimit.windowMs') / 1000)
     },
     standardHeaders: true,
@@ -486,12 +530,12 @@ const limiter = rateLimit({
 
 app.use(limiter);
 
-// Rate limiting más estricto para login (protección contra fuerza bruta)
+// Rate limiting mÃ¡s estricto para login (protecciÃ³n contra fuerza bruta)
 const loginLimiter = rateLimit({
     windowMs: config.get('security.rateLimit.loginWindowMs'),
     max: config.get('security.rateLimit.loginMax'),
     message: {
-        error: 'Demasiados intentos de login. Inténtelo de nuevo más tarde.',
+        error: 'Demasiados intentos de login. IntÃ©ntelo de nuevo mÃ¡s tarde.',
         retryAfter: Math.ceil(config.get('security.rateLimit.loginWindowMs') / 1000)
     },
     standardHeaders: true,
@@ -499,7 +543,7 @@ const loginLimiter = rateLimit({
     skipSuccessfulRequests: true // No contar intentos exitosos
 });
 
-// Aplicar rate limiting estricto a endpoints de autenticación
+// Aplicar rate limiting estricto a endpoints de autenticaciÃ³n
 app.use('/api/auth/login', loginLimiter);
 app.use('/api/auth/register', loginLimiter);
 
@@ -507,7 +551,7 @@ app.use('/api/auth/register', loginLimiter);
 app.use((req, res, next) => {
     const start = Date.now();
     
-    // Log de inicio de petición
+    // Log de inicio de peticiÃ³n
     logger.debug(`Incoming request: ${req.method} ${req.url}`, {
         ip: req.ip,
         userAgent: req.get('User-Agent'),
@@ -518,13 +562,13 @@ app.use((req, res, next) => {
     res.on('finish', () => {
         const duration = Date.now() - start;
         
-        // Log detallado de la petición
+        // Log detallado de la peticiÃ³n
         logger.apiRequest(req.method, req.url, res.statusCode, duration, req);
         
         // Registrar en monitoreo de seguridad
         securityMonitor.logHTTPRequest(req, duration, res.statusCode);
         
-        // Detectar códigos de error
+        // Detectar cÃ³digos de error
         if (res.statusCode >= 400) {
             logger.error(`HTTP Error ${res.statusCode}: ${req.method} ${req.url}`, {
                 statusCode: res.statusCode,
@@ -550,9 +594,9 @@ app.use((req, res, next) => {
     next();
 });
 
-// Middleware de validación de entrada
+// Middleware de validaciÃ³n de entrada
 app.use((req, res, next) => {
-    // Sanitizar parámetros de consulta
+    // Sanitizar parÃ¡metros de consulta
     if (req.query) {
         Object.keys(req.query).forEach(key => {
             if (typeof req.query[key] === 'string') {
@@ -561,7 +605,7 @@ app.use((req, res, next) => {
         });
     }
     
-    // Validar tamaño del body
+    // Validar tamaÃ±o del body
     const contentLength = parseInt(req.get('content-length') || '0');
     if (contentLength > 10 * 1024 * 1024) { // 10MB
         return res.status(413).json({ error: 'Payload demasiado grande' });
@@ -573,6 +617,37 @@ app.use((req, res, next) => {
 app.use(cors(config.get('server.cors')));
 app.use(bodyParser.json({ limit: '10mb' }));
 app.use(bodyParser.urlencoded({ extended: true, limit: '10mb' }));
+
+// ========================================
+// MIDDLEWARES DE RENDIMIENTO
+// ========================================
+
+// Compresión de respuestas (GZIP) - Reduce tamaño de respuestas en ~70%
+app.use(compression({
+    level: 6, // Nivel de compresión balanceado (0-9)
+    threshold: 1024, // Solo comprimir respuestas > 1KB
+    filter: (req, res) => {
+        // No comprimir si el cliente no lo soporta
+        if (req.headers['x-no-compression']) {
+            return false;
+        }
+        // Usar el filtro por defecto de compression
+        return compression.filter(req, res);
+    }
+}));
+
+// Headers de caché HTTP para respuestas GET
+app.use(cacheHeaders(300)); // 5 minutos de caché por defecto
+
+// ETag para validación condicional (reduce ancho de banda)
+app.use(etagMiddleware());
+
+// Medición de tiempo de respuesta (para monitoreo)
+app.use(responseTimeMiddleware());
+
+// ========================================
+// FIN MIDDLEWARES DE RENDIMIENTO
+// ========================================
 
 // Configurar multer para subida de archivos
 const storage = multer.diskStorage({
@@ -598,7 +673,7 @@ const upload = multer({
             'application/vnd.ms-excel' // .xls
         ];
         
-        // Validar extensión
+        // Validar extensiÃ³n
         const allowedExtensions = ['.xlsx', '.xls'];
         const ext = path.extname(file.originalname).toLowerCase();
         
@@ -609,16 +684,16 @@ const upload = multer({
         }
     },
     limits: {
-        fileSize: 5 * 1024 * 1024, // 5MB límite (reducido por seguridad)
+        fileSize: 5 * 1024 * 1024, // 5MB lÃ­mite (reducido por seguridad)
         files: 1 // Solo un archivo por vez
     }
 });
 
-// Cargar configuración dinámica de empresa
+// Cargar configuraciÃ³n dinÃ¡mica de empresa
 let configuracionEmpresa = null;
 config.loadFromDatabase().then(() => {
     configuracionEmpresa = config.get('empresa');
-    logger.systemEvent('Configuración de empresa cargada', { empresa: configuracionEmpresa.nombre });
+    logger.systemEvent('ConfiguraciÃ³n de empresa cargada', { empresa: configuracionEmpresa.nombre });
 });
 
 // Inicializar base de datos
@@ -637,7 +712,7 @@ async function initDatabaseConnection() {
             
             // Crear wrapper compatible con SQLite
             db = {
-                // Métodos con callback para compatibilidad (usados por el código existente)
+                // MÃ©todos con callback para compatibilidad (usados por el cÃ³digo existente)
                 all: (query, params, callback) => {
                     if (typeof params === 'function') {
                         callback = params;
@@ -676,10 +751,10 @@ async function initDatabaseConnection() {
                     });
                 },
                 
-                // Métodos async (para nuevo código)
+                // MÃ©todos async (para nuevo cÃ³digo)
                 query: (text, params) => database.query(text, params),
                 
-                // Para compatibilidad con código existente
+                // Para compatibilidad con cÃ³digo existente
                 serialize: (callback) => {
                     // En PostgreSQL no necesitamos serialize, ejecutamos directamente
                     if (callback) callback();
@@ -717,13 +792,13 @@ async function initDatabaseConnection() {
     }
 }
 
-// Inicializar conexión
+// Inicializar conexiÃ³n
 initDatabaseConnection().catch(err => {
     logger.error('Error fatal al inicializar base de datos', { error: err.message });
     process.exit(1);
 });
 
-// Función utilitaria para ejecutar operaciones de base de datos con reintentos
+// FunciÃ³n utilitaria para ejecutar operaciones de base de datos con reintentos
 function ejecutarConReintentos(operacion, maxReintentos = 3, delay = 100) {
     return new Promise((resolve, reject) => {
         let intentos = 0;
@@ -746,29 +821,29 @@ function ejecutarConReintentos(operacion, maxReintentos = 3, delay = 100) {
     });
 }
 
-// Inicializar módulos de la Ley Antifraude
+// Inicializar mÃ³dulos de la Ley Antifraude
 let sistemaIntegridad, sistemaAuditoria, generadorVeriFactu, sistemaBackup;
 let sistemaCifrado, sistemaControlAcceso, sistemaLogsSeguridad, sistemaValidacionFiscal;
 let sistemaFirmaDigital;
 let modulosAntifraudeInicializados = false;
 
-// Función para inicializar módulos después de la base de datos
+// FunciÃ³n para inicializar mÃ³dulos despuÃ©s de la base de datos
 function initModulosAntifraude() {
-    // Evitar inicialización duplicada
+    // Evitar inicializaciÃ³n duplicada
     if (modulosAntifraudeInicializados) {
-        logger.debug('Módulos de Ley Antifraude ya inicializados, omitiendo...', {}, 'operations');
+        logger.debug('MÃ³dulos de Ley Antifraude ya inicializados, omitiendo...', {}, 'operations');
         return;
     }
     try {
-        // Verificar que db esté definido antes de continuar
+        // Verificar que db estÃ© definido antes de continuar
         if (!db) {
-            logger.warn('Base de datos no está lista aún, reintentando inicialización de módulos...', {}, 'operations');
-            // Reintentar después de un breve delay
+            logger.warn('Base de datos no estÃ¡ lista aÃºn, reintentando inicializaciÃ³n de mÃ³dulos...', {}, 'operations');
+            // Reintentar despuÃ©s de un breve delay
             setTimeout(() => {
                 if (db) {
                     initModulosAntifraude();
                 } else {
-                    logger.error('No se pudo inicializar módulos: base de datos no disponible', {}, 'operations');
+                    logger.error('No se pudo inicializar mÃ³dulos: base de datos no disponible', {}, 'operations');
                 }
             }, 500);
             return;
@@ -780,41 +855,44 @@ function initModulosAntifraude() {
         sistemaBackup = new SistemaBackup(db, {
             directorioBackup: './backups',
             frecuenciaBackup: 24 * 60 * 60 * 1000, // 24 horas
-            retencionDias: 1460 // 4 años
+            retencionDias: 1460 // 4 aÃ±os
         });
         
-        // Nuevos módulos de seguridad
+        // Nuevos mÃ³dulos de seguridad
         sistemaCifrado = new SistemaCifrado();
         sistemaControlAcceso = new SistemaControlAcceso(db);
         sistemaLogsSeguridad = new SistemaLogsSeguridad(db);
         sistemaValidacionFiscal = new SistemaValidacionFiscal();
         sistemaFirmaDigital = new SistemaFirmaDigital(db);
         
-        // Inicializar sistemas que requieren base de datos de forma asíncrona
+        // Inicializar sistemas que requieren base de datos de forma asÃ­ncrona
         // para no bloquear el arranque del servidor
         setImmediate(async () => {
             try {
                 await sistemaControlAcceso.inicializar();
                 await sistemaLogsSeguridad.inicializar();
                 
-                // Iniciar backup automático de forma asíncrona (no bloquea el arranque)
+                // Iniciar backup automÃ¡tico de forma asÃ­ncrona (no bloquea el arranque)
                 sistemaBackup.iniciarBackupAutomatico();
                 
-                logger.systemEvent('Módulos de Ley Antifraude inicializados correctamente');
+                logger.systemEvent('MÃ³dulos de Ley Antifraude inicializados correctamente');
                 logger.systemEvent('Sistema de cifrado activado');
                 logger.systemEvent('Sistema de control de acceso activado');
                 logger.systemEvent('Sistema de logs de seguridad activado');
-                logger.systemEvent('Sistema de validación fiscal activado');
+                logger.systemEvent('Sistema de validaciÃ³n fiscal activado');
                 logger.systemEvent('Sistema de firma digital activado');
-                logger.systemEvent('Sistema de backup automático activado');
+                logger.systemEvent('Sistema de backup automÃ¡tico activado');
                 
-                // Configurar endpoints de seguridad después de la inicialización
+                // Configurar endpoints de seguridad despuÃ©s de la inicializaciÃ³n
                 configurarEndpointsSeguridad();
+                
+                // Registrar rutas modulares despuÃ©s de que todo estÃ© inicializado
+                registrarRutasModulares();
                 
                 // Marcar como inicializado
                 modulosAntifraudeInicializados = true;
             } catch (initError) {
-                logger.error('Error al inicializar módulos de seguridad', { 
+                logger.error('Error al inicializar mÃ³dulos de seguridad', { 
                     error: initError.message, 
                     stack: initError.stack 
                 }, 'operations');
@@ -822,7 +900,86 @@ function initModulosAntifraude() {
         });
         
     } catch (error) {
-        logger.error('Error al crear módulos de Ley Antifraude', { error: error.message, stack: error.stack }, 'operations');
+        logger.error('Error al crear mÃ³dulos de Ley Antifraude', { error: error.message, stack: error.stack }, 'operations');
+    }
+}
+
+// FunciÃ³n para registrar rutas modulares
+function registrarRutasModulares() {
+    if (!db) {
+        logger.warn('Base de datos no disponible, reintentando registro de rutas...', {}, 'operations');
+        setTimeout(registrarRutasModulares, 500);
+        return;
+    }
+
+    if (!modulosAntifraudeInicializados) {
+        logger.warn('MÃ³dulos antifraude no inicializados, reintentando registro de rutas...', {}, 'operations');
+        setTimeout(registrarRutasModulares, 500);
+        return;
+    }
+
+    if (!cacheManager || !paginationManager) {
+        logger.warn('Sistemas de rendimiento no inicializados, reintentando registro de rutas...', {}, 'operations');
+        setTimeout(registrarRutasModulares, 500);
+        return;
+    }
+
+    try {
+        // Crear instancias de servicios para autenticaciÃ³n y seguridad
+        const AuthServiceWrapper = require('./services/authService');
+        const CifradoService = require('./services/cifradoService');
+        const SecurityService = require('./services/securityService');
+        const LogsSeguridadService = require('./services/logsSeguridadService');
+        const UsuarioService = require('./services/usuarioService');
+
+        const authServiceWrapper = new AuthServiceWrapper(db, sistemaLogsSeguridad, securityMonitor, sistemaControlAcceso);
+        const cifradoService = new CifradoService(sistemaCifrado, sistemaLogsSeguridad);
+        const securityService = new SecurityService(securityMonitor);
+        const logsSeguridadService = new LogsSeguridadService(sistemaLogsSeguridad);
+        const usuarioService = new UsuarioService(db, sistemaControlAcceso, sistemaLogsSeguridad);
+
+        // Registrar rutas modulares
+        // Compatibilidad: Mantener rutas sin versión para compatibilidad hacia atrás
+        // Versión v1 disponible en /api/v1/* (opcional, no afecta rutas existentes)
+        app.use('/api/clientes', createClientesRouter(db, logger, cacheManager));
+        app.use('/api/coches', createCochesRouter(db, logger, cacheManager));
+        app.use('/api/productos', createProductosRouter(db, logger, cacheManager));
+        app.use('/api/facturas', createFacturasRouter(
+            db, 
+            logger, 
+            cacheManager, 
+            paginationManager, 
+            sistemaIntegridad, 
+            sistemaAuditoria, 
+            sistemaFirmaDigital, 
+            generadorVeriFactu
+        ));
+        app.use('/api/proformas', createProformasRouter(db, logger, cacheManager, paginationManager));
+        app.use('/api/abonos', createAbonosRouter(db, logger, cacheManager, paginationManager));
+        app.use('/api/empresas', createEmpresasRouter(db, logger, cacheManager, paginationManager, sistemaFirmaDigital));
+        app.use('/api/validacion', createValidacionRouter(sistemaValidacionFiscal, logger));
+        app.use('/api/backup', createBackupRouter(sistemaBackup, logger));
+        app.use('/api/auditoria', createAuditoriaRouter(sistemaAuditoria, logger));
+        app.use('/api/performance', createPerformanceRouter(cacheManager, paginationManager, preheatCache, logger));
+        app.use('/api/debug', createDebugRouter(db, logger));
+        app.use('/api/metrics', createMetricsRouter(db, logger));
+        app.use('/api/configuracion', createConfiguracionRouter(configuracionEmpresa, logger));
+        app.use('/api/reset-data', createResetDataRouter(db, logger, insertSampleData));
+        app.use('/api/logs', createLogsRouter(logger));
+        app.use('/api', createImportarExportarRouter(db, logger, importadorExcel));
+        
+        // Registrar rutas de autenticaciÃ³n y seguridad
+        app.use('/api/auth', createAuthRouter(authServiceWrapper, config, sistemaControlAcceso));
+        app.use('/api/cifrado', createCifradoRouter(cifradoService, sistemaControlAcceso));
+        app.use('/api/security', createSecurityRouter(securityService));
+        app.use('/api/logs-seguridad', createLogsSeguridadRouter(logsSeguridadService, sistemaControlAcceso));
+        app.use('/api/usuarios', createUsuariosRouter(usuarioService, sistemaControlAcceso));
+        app.use('/api/roles', createRolesRouter(usuarioService));
+
+        logger.systemEvent('Rutas modulares registradas correctamente');
+        console.log('âœ… Rutas modulares registradas: clientes, coches, productos, facturas, proformas, abonos, validacion, importar/exportar, auth, cifrado, security, logs-seguridad, usuarios, roles');
+    } catch (error) {
+        logger.error('Error registrando rutas modulares', { error: error.message, stack: error.stack }, 'operations');
     }
 }
 
@@ -833,7 +990,7 @@ async function initDatabase() {
     const dbType = config.get('database.type') || 'postgresql';
     const isPostgreSQL = dbType === 'postgresql';
     
-    // Función helper para ejecutar queries
+    // FunciÃ³n helper para ejecutar queries
     const executeQuery = async (query, callback) => {
         try {
             if (isPostgreSQL) {
@@ -855,7 +1012,7 @@ async function initDatabase() {
             return isPostgreSQL ? SQLAdapter.adapt(query) : query;
         };
         
-        // Función helper para ejecutar CREATE TABLE
+        // FunciÃ³n helper para ejecutar CREATE TABLE
         const createTable = async (query, tableName) => {
             try {
                 const adaptedQuery = adaptQuery(query);
@@ -893,7 +1050,7 @@ async function initDatabase() {
             )
         `, 'clientes');
         
-        // Añadir columna codigo_postal si no existe (solo para SQLite, PostgreSQL ya la tiene)
+        // AÃ±adir columna codigo_postal si no existe (solo para SQLite, PostgreSQL ya la tiene)
         if (!isPostgreSQL) {
             try {
                 await new Promise((resolve, reject) => {
@@ -926,7 +1083,7 @@ async function initDatabase() {
             )
         `, 'empresas');
 
-        // Tabla de usuarios para autenticación
+        // Tabla de usuarios para autenticaciÃ³n
         await createTable(`
             CREATE TABLE IF NOT EXISTS usuarios (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -941,7 +1098,7 @@ async function initDatabase() {
             )
         `, 'usuarios');
         
-        // Crear usuario por defecto para aplicación de escritorio
+        // Crear usuario por defecto para aplicaciÃ³n de escritorio
         setImmediate(async () => {
             try {
                 await authService.createDefaultUser(db);
@@ -964,7 +1121,7 @@ async function initDatabase() {
             )
         `, 'coches');
 
-        // Tabla de productos/vehículos
+        // Tabla de productos/vehÃ­culos
         await createTable(`
             CREATE TABLE IF NOT EXISTS productos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1054,7 +1211,7 @@ async function initDatabase() {
         await ensureFacturaLeyAntifraudeColumns(isPostgreSQL);
         logger.systemEvent('Columnas de Ley Antifraude verificadas en facturas');
         
-        // Agregar columna proforma_id si no existe (para relación con proformas)
+        // Agregar columna proforma_id si no existe (para relaciÃ³n con proformas)
         try {
             if (isPostgreSQL) {
                 try {
@@ -1188,7 +1345,7 @@ async function initDatabase() {
             )
         `, 'detalles_proforma');
 
-        // Tabla de abonos (notas de crédito)
+        // Tabla de abonos (notas de crÃ©dito)
         await createTable(`
             CREATE TABLE IF NOT EXISTS abonos (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1241,7 +1398,7 @@ async function initDatabase() {
             )
         `, 'detalles_abono');
 
-        // Tabla de auditoría (para cumplir con Ley Antifraude)
+        // Tabla de auditorÃ­a (para cumplir con Ley Antifraude)
         await createTable(`
             CREATE TABLE IF NOT EXISTS audit_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -1257,21 +1414,24 @@ async function initDatabase() {
             )
         `, 'audit_log');
         
-        // Insertar datos de ejemplo después de crear todas las tablas
+        // Insertar datos de ejemplo despuÃ©s de crear todas las tablas
         insertSampleData(isPostgreSQL);
         
-        // Crear índices optimizados después de que todas las tablas estén listas
-        // Asegurarse de que paginationManager tenga db antes de crear índices
+        // Aplicar Ã­ndices adicionales de rendimiento
+        await applyPerformanceIndexes(isPostgreSQL);
+        
+        // Crear Ã­ndices optimizados despuÃ©s de que todas las tablas estÃ©n listas
+        // Asegurarse de que paginationManager tenga db antes de crear Ã­ndices
         if (paginationManager && db) {
             paginationManager.setDatabase(db);
             paginationManager.createPaginationIndexes().then(() => {
-                logger.systemEvent('Índices de paginación creados');
+                logger.systemEvent('Ãndices de paginaciÃ³n creados');
             }).catch((error) => {
-                logger.error('Error creando índices de paginación', { error: error.message }, 'database');
+                logger.error('Error creando Ã­ndices de paginaciÃ³n', { error: error.message }, 'database');
             });
         }
         
-        // Inicializar módulos de Ley Antifraude
+        // Inicializar mÃ³dulos de Ley Antifraude
         initModulosAntifraude();
         
         // Inicializar sistemas de rendimiento
@@ -1283,9 +1443,62 @@ async function initDatabase() {
     }
 }
 
+// Aplicar Ã­ndices adicionales de rendimiento
+async function applyPerformanceIndexes(isPostgreSQL) {
+    if (!db) {
+        logger.warn('Base de datos no disponible para crear Ã­ndices de rendimiento', {}, 'database');
+        return;
+    }
+    
+    try {
+        const migrationPath = path.join(__dirname, 'migrations', '006_indices_rendimiento.sql');
+        
+        if (!fs.existsSync(migrationPath)) {
+            logger.warn('Archivo de migraciÃ³n de Ã­ndices no encontrado', { path: migrationPath }, 'database');
+            return;
+        }
+        
+        const migrationSQL = fs.readFileSync(migrationPath, 'utf8');
+        const statements = migrationSQL.split(';').filter(stmt => stmt.trim().length > 0);
+        
+        for (const statement of statements) {
+            try {
+                const adaptedQuery = isPostgreSQL ? SQLAdapter.adapt(statement.trim()) : statement.trim();
+                
+                if (isPostgreSQL) {
+                    await db.query(adaptedQuery);
+                } else {
+                    await new Promise((resolve, reject) => {
+                        db.run(adaptedQuery, (err) => {
+                            if (err && !err.message.includes('already exists') && 
+                                !err.message.includes('duplicate column name') &&
+                                !err.message.includes('no such index')) {
+                                reject(err);
+                            } else {
+                                resolve();
+                            }
+                        });
+                    });
+                }
+            } catch (err) {
+                // Ignorar errores de Ã­ndices ya existentes
+                if (!err.message.includes('already exists') && 
+                    !err.message.includes('duplicate') &&
+                    !err.message.includes('no such index')) {
+                    logger.debug('Error aplicando Ã­ndice de rendimiento', { error: err.message }, 'database');
+                }
+            }
+        }
+        
+        logger.systemEvent('Ãndices de rendimiento aplicados correctamente');
+    } catch (error) {
+        logger.error('Error aplicando Ã­ndices de rendimiento', { error: error.message }, 'database');
+    }
+}
+
 // Insertar datos de ejemplo de forma silenciosa
 function insertSampleData(isPostgreSQL = false) {
-    // Verificar que db esté disponible
+    // Verificar que db estÃ© disponible
     if (!db) {
         logger.warn('Base de datos no disponible para insertar datos de ejemplo', {}, 'database');
         return;
@@ -1297,9 +1510,9 @@ function insertSampleData(isPostgreSQL = false) {
         : `INSERT OR IGNORE INTO empresas (nombre, cif, direccion, telefono, email) VALUES (?, ?, ?, ?, ?)`;
     
     db.run(empresaQuery, [
-        'Telwagen Car Ibérica, S.L.',
+        'Telwagen Car IbÃ©rica, S.L.',
         'B-93.289.585',
-        'C. / Tomás Miller N° 48 Local\n35007 Las Palmas de Gran Canaria',
+        'C. / TomÃ¡s Miller NÂ° 48 Local\n35007 Las Palmas de Gran Canaria',
         '+34 928 123 456',
         'info@telwagen.es'
     ], (err) => {
@@ -1315,7 +1528,7 @@ function insertSampleData(isPostgreSQL = false) {
     
     db.run(clienteQuery, [
         'GRUPO MIGUEL LEON S.L.',
-        'C/. ALFREDO MARTIN REYES N° 7\nLAS PALMAS DE G.C.',
+        'C/. ALFREDO MARTIN REYES NÂ° 7\nLAS PALMAS DE G.C.',
         'B76233865',
         'info@grupomiguelleon.es',
         '+34 928 123 456'
@@ -1360,5817 +1573,18 @@ function insertSampleData(isPostgreSQL = false) {
     });
 }
 
-// Endpoint para obtener configuración de empresa
-app.get('/api/configuracion/empresa', (req, res) => {
-    if (configuracionEmpresa) {
-        res.json({
-            success: true,
-            data: configuracionEmpresa
-        });
-    } else {
-        res.json({
-            success: false,
-            error: 'Configuración de empresa no disponible'
-        });
-    }
-});
+// Todas las rutas han sido migradas a mÃ³dulos en backend/routes/
 
-// ==================== ENDPOINTS DE IMPORTACIÓN EXCEL ====================
-
-// POST - Importar coches desde Excel
-app.post('/api/importar/coches', upload.single('archivo'), async (req, res) => {
-    const startTime = Date.now();
-    
-    try {
-        console.log('\n📥 ========== INICIO IMPORTACIÓN DE COCHES ==========');
-        console.log('📁 Archivo recibido:', {
-            originalname: req.file?.originalname,
-            filename: req.file?.filename,
-            path: req.file?.path,
-            size: req.file?.size,
-            mimetype: req.file?.mimetype
-        });
-        
-        if (!req.file) {
-            console.log('❌ No se proporcionó ningún archivo');
-            return res.status(400).json({
-                success: false,
-                error: 'No se ha proporcionado ningún archivo'
-            });
-        }
-
-        // Mostrar coches actuales en la BD antes de importar
-        try {
-            const dbType = config.get('database.type') || 'postgresql';
-            const activoValue = dbType === 'postgresql' ? 'true' : '1';
-            const cochesActuales = await new Promise((resolve, reject) => {
-                db.all(`SELECT COUNT(*) as total FROM coches WHERE activo = ${activoValue}`, (err, rows) => {
-                    if (err) reject(err);
-                    else resolve(rows[0]?.total || 0);
-                });
-            });
-            console.log(`📊 Coches actuales en la base de datos: ${cochesActuales}`);
-            
-            // Mostrar algunos coches de ejemplo
-            const cochesEjemplo = await new Promise((resolve, reject) => {
-                db.all(`SELECT id, matricula, modelo, color, kms FROM coches WHERE activo = ${activoValue} ORDER BY id LIMIT 5`, (err, rows) => {
-                    if (err) reject(err);
-                    else resolve(rows || []);
-                });
-            });
-            if (cochesEjemplo.length > 0) {
-                console.log('📋 Ejemplos de coches en BD:');
-                cochesEjemplo.forEach(c => {
-                    console.log(`   - ID: ${c.id}, Matrícula: ${c.matricula}, Modelo: ${c.modelo}, Color: ${c.color}, Kms: ${c.kms}`);
-                });
-            }
-        } catch (dbError) {
-            console.log('⚠️ Error al consultar coches actuales:', dbError.message);
-        }
-
-        console.log('🔄 Iniciando importación desde:', req.file.path);
-        const resultado = await importadorExcel.importarCoches(req.file.path);
-        const duration = Date.now() - startTime;
-        
-        console.log('✅ Importación completada:', {
-            success: resultado.success,
-            total: resultado.total,
-            importados: resultado.importados,
-            errores: resultado.errores,
-            duracion: `${duration}ms`
-        });
-        
-        if (resultado.erroresDetalle && resultado.erroresDetalle.length > 0) {
-            console.log('⚠️ Errores detallados:');
-            resultado.erroresDetalle.slice(0, 5).forEach((err, idx) => {
-                console.log(`   ${idx + 1}. Fila ${err.fila}: ${err.mensaje || err.error}`);
-            });
-        }
-        
-        // Limpiar archivo temporal
-        try {
-            fs.unlinkSync(req.file.path);
-            console.log('🗑️ Archivo temporal eliminado');
-        } catch (unlinkError) {
-            console.log('⚠️ Error al eliminar archivo temporal:', unlinkError.message);
-        }
-        
-        console.log('📥 ========== FIN IMPORTACIÓN DE COCHES ==========\n');
-        
-        res.json(resultado);
-    } catch (error) {
-        const duration = Date.now() - startTime;
-        console.error('❌ Error importando coches desde Excel:', {
-            error: error.message,
-            stack: error.stack,
-            duration: `${duration}ms`,
-            filename: req.file?.originalname
-        });
-        logger.error('Error importando coches desde Excel', { 
-            error: error.message,
-            stack: error.stack,
-            duration: `${duration}ms`,
-            filename: req.file?.originalname
-        });
-        
-        // Limpiar archivo temporal en caso de error
-        if (req.file?.path) {
-            try {
-                fs.unlinkSync(req.file.path);
-            } catch (unlinkError) {
-                console.log('⚠️ Error al eliminar archivo temporal después de error:', unlinkError.message);
-            }
-        }
-        
-        res.status(500).json({
-            success: false,
-            error: error.message || 'Error interno del servidor'
-        });
-    }
-});
-
-// POST - Importar productos desde Excel
-app.post('/api/importar/productos', upload.single('archivo'), async (req, res) => {
-    const startTime = Date.now();
-    
-    try {
-        if (!req.file) {
-            logger.warn('Intento de importar productos sin archivo', {}, 'operations');
-            return res.status(400).json({
-                success: false,
-                error: 'No se ha proporcionado ningún archivo'
-            });
-        }
-
-        logger.info('Iniciando importación de productos desde Excel', {
-            filename: req.file.originalname,
-            size: req.file.size,
-            mimetype: req.file.mimetype
-        }, 'operations');
-
-        const resultado = await importadorExcel.importarProductos(req.file.path);
-        const duration = Date.now() - startTime;
-        
-        logger.importOperation('productos', req.file.originalname, resultado.total || 0, resultado.success, resultado.errors || []);
-        
-        // Limpiar archivo temporal
-        fs.unlinkSync(req.file.path);
-        logger.debug('Archivo temporal eliminado', { filename: req.file.originalname }, 'operations');
-        
-        res.json(resultado);
-    } catch (error) {
-        const duration = Date.now() - startTime;
-        logger.error('Error importando productos desde Excel', { 
-            error: error.message,
-            stack: error.stack,
-            duration: `${duration}ms`,
-            filename: req.file?.originalname
-        }, 'operations');
-        res.status(500).json({
-            success: false,
-            error: 'Error interno del servidor'
-        });
-    }
-});
-
-// POST - Importar clientes desde Excel
-app.post('/api/importar/clientes', upload.single('archivo'), async (req, res) => {
-    const startTime = Date.now();
-    
-    try {
-        if (!req.file) {
-            logger.warn('Intento de importar clientes sin archivo', {}, 'operations');
-            return res.status(400).json({
-                success: false,
-                error: 'No se ha proporcionado ningún archivo'
-            });
-        }
-
-        logger.info('Iniciando importación de clientes desde Excel', {
-            filename: req.file.originalname,
-            size: req.file.size,
-            mimetype: req.file.mimetype
-        }, 'operations');
-
-        const resultado = await importadorExcel.importarClientes(req.file.path);
-        const duration = Date.now() - startTime;
-        
-        logger.importOperation('clientes', req.file.originalname, resultado.total || 0, resultado.success, resultado.errors || []);
-        
-        // Limpiar archivo temporal
-        fs.unlinkSync(req.file.path);
-        logger.debug('Archivo temporal eliminado', { filename: req.file.originalname }, 'operations');
-        
-        res.json(resultado);
-    } catch (error) {
-        const duration = Date.now() - startTime;
-        logger.error('Error importando clientes desde Excel', { 
-            error: error.message,
-            stack: error.stack,
-            duration: `${duration}ms`,
-            filename: req.file?.originalname
-        }, 'operations');
-        res.status(500).json({
-            success: false,
-            error: 'Error interno del servidor'
-        });
-    }
-});
-
-// GET - Descargar plantilla Excel
-app.get('/api/importar/plantilla/:tipo', (req, res) => {
-    try {
-        const { tipo } = req.params;
-        const tiposValidos = ['coches', 'productos', 'clientes'];
-        
-        if (!tiposValidos.includes(tipo)) {
-            return res.status(400).json({
-                success: false,
-                error: 'Tipo de plantilla no válido'
-            });
-        }
-
-        const fileName = `plantilla_${tipo}.xlsx`;
-        const filePath = path.join(__dirname, 'temp', fileName);
-        
-        // Crear directorio temp si no existe
-        if (!fs.existsSync(path.dirname(filePath))) {
-            fs.mkdirSync(path.dirname(filePath), { recursive: true });
-        }
-        
-        // Generar plantilla
-        importadorExcel.generarPlantilla(tipo, filePath);
-        
-        // Enviar archivo
-        res.download(filePath, fileName, (err) => {
-            if (err) {
-                logger.error('Error enviando plantilla', { error: err.message });
-            }
-            // Limpiar archivo temporal
-            fs.unlinkSync(filePath);
-        });
-        
-    } catch (error) {
-        logger.error('Error generando plantilla', { error: error.message });
-        res.status(500).json({
-            success: false,
-            error: 'Error generando plantilla'
-        });
-    }
-});
-
-// ==================== ENDPOINTS DE EXPORTACIÓN EXCEL ====================
-
-// GET - Exportar coches a Excel
-app.get('/api/exportar/coches', async (req, res) => {
-    try {
-        const timestamp = Date.now();
-        const fileName = `coches_export_${timestamp}.xlsx`;
-        const filePath = path.join(__dirname, 'temp', fileName);
-        
-        // Crear directorio temp si no existe
-        if (!fs.existsSync(path.dirname(filePath))) {
-            fs.mkdirSync(path.dirname(filePath), { recursive: true });
-        }
-        
-        // Obtener filtros de la query string
-        const filtros = {
-            modelo: req.query.modelo,
-            color: req.query.color,
-            kmsMin: req.query.kmsMin ? parseInt(req.query.kmsMin) : null,
-            kmsMax: req.query.kmsMax ? parseInt(req.query.kmsMax) : null
-        };
-        
-        // Exportar datos
-        const resultado = await importadorExcel.exportarCoches(filePath, filtros);
-        
-        if (resultado.success) {
-            // Enviar archivo
-            res.download(filePath, fileName, (err) => {
-                if (err) {
-                    logger.error('Error enviando archivo de exportación', { error: err.message });
-                }
-                // Limpiar archivo temporal después de enviarlo
-                setTimeout(() => {
-                    if (fs.existsSync(filePath)) {
-                        fs.unlinkSync(filePath);
-                    }
-                }, 5000);
-            });
-        } else {
-            res.status(500).json({
-                success: false,
-                error: resultado.error
-            });
-        }
-        
-    } catch (error) {
-        logger.error('Error exportando coches', { error: error.message });
-        res.status(500).json({
-            success: false,
-            error: 'Error interno del servidor'
-        });
-    }
-});
-
-// GET - Exportar productos a Excel
-app.get('/api/exportar/productos', async (req, res) => {
-    try {
-        const timestamp = Date.now();
-        const fileName = `productos_export_${timestamp}.xlsx`;
-        const filePath = path.join(__dirname, 'temp', fileName);
-        
-        // Crear directorio temp si no existe
-        if (!fs.existsSync(path.dirname(filePath))) {
-            fs.mkdirSync(path.dirname(filePath), { recursive: true });
-        }
-        
-        const filtros = {
-            codigo: req.query.codigo,
-            descripcion: req.query.descripcion,
-            precioMin: req.query.precioMin ? parseFloat(req.query.precioMin) : null,
-            precioMax: req.query.precioMax ? parseFloat(req.query.precioMax) : null
-        };
-        
-        const resultado = await importadorExcel.exportarProductos(filePath, filtros);
-        
-        if (resultado.success) {
-            res.download(filePath, fileName, (err) => {
-                if (err) {
-                    logger.error('Error enviando archivo de exportación', { error: err.message });
-                }
-                setTimeout(() => {
-                    if (fs.existsSync(filePath)) {
-                        fs.unlinkSync(filePath);
-                    }
-                }, 5000);
-            });
-        } else {
-            res.status(500).json({
-                success: false,
-                error: resultado.error
-            });
-        }
-        
-    } catch (error) {
-        logger.error('Error exportando productos', { error: error.message });
-        res.status(500).json({
-            success: false,
-            error: 'Error interno del servidor'
-        });
-    }
-});
-
-// GET - Exportar clientes a Excel
-app.get('/api/exportar/clientes', async (req, res) => {
-    try {
-        const timestamp = Date.now();
-        const fileName = `clientes_export_${timestamp}.xlsx`;
-        const filePath = path.join(__dirname, 'temp', fileName);
-        
-        // Crear directorio temp si no existe
-        if (!fs.existsSync(path.dirname(filePath))) {
-            fs.mkdirSync(path.dirname(filePath), { recursive: true });
-        }
-        
-        const filtros = {
-            nombre: req.query.nombre,
-            identificacion: req.query.identificacion,
-            email: req.query.email
-        };
-        
-        const resultado = await importadorExcel.exportarClientes(filePath, filtros);
-        
-        if (resultado.success) {
-            res.download(filePath, fileName, (err) => {
-                if (err) {
-                    logger.error('Error enviando archivo de exportación', { error: err.message });
-                }
-                setTimeout(() => {
-                    if (fs.existsSync(filePath)) {
-                        fs.unlinkSync(filePath);
-                    }
-                }, 5000);
-            });
-        } else {
-            res.status(500).json({
-                success: false,
-                error: resultado.error
-            });
-        }
-        
-    } catch (error) {
-        logger.error('Error exportando clientes', { error: error.message });
-        res.status(500).json({
-            success: false,
-            error: 'Error interno del servidor'
-        });
-    }
-});
-
-// Rutas API
-
-// GET - Obtener todas las empresas (con paginación y caché)
-app.get('/api/empresas', async (req, res) => {
-    try {
-        const { page = 1, limit = 20, search = '' } = req.query;
-        
-        // Usar caché si está disponible
-        const cacheKey = `empresas:page:${page}:limit:${limit}:search:${search}`;
-        const cachedResult = cacheManager.get(cacheKey);
-        
-        if (cachedResult) {
-            return res.json({ success: true, data: cachedResult.data, pagination: cachedResult.pagination, cached: true });
-        }
-        
-        // Construir consulta con búsqueda
-        let whereClause = '';
-        let whereParams = [];
-        
-        if (search) {
-            whereClause = 'WHERE nombre LIKE ? OR cif LIKE ?';
-            whereParams = [`%${search}%`, `%${search}%`];
-        }
-        
-        const result = await paginationManager.getPaginatedData('empresas', {
-            page: parseInt(page),
-            limit: parseInt(limit),
-            where: whereClause,
-            whereParams: whereParams,
-            orderBy: 'nombre',
-            orderDirection: 'ASC'
-        });
-        
-        // Guardar en caché
-        cacheManager.set(cacheKey, result, 300); // 5 minutos TTL
-        
-        res.json({ success: true, data: result.data, pagination: result.pagination, cached: false });
-        
-    } catch (error) {
-        console.error('❌ Error al obtener empresas:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// GET - Obtener empresa por ID
-app.get('/api/empresas/:id', (req, res) => {
-    const { id } = req.params;
-    
-    db.get('SELECT * FROM empresas WHERE id = ?', [id], (err, row) => {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        if (!row) {
-            res.status(404).json({ error: 'Empresa no encontrada' });
-            return;
-        }
-        res.json({ success: true, data: row });
-    });
-});
-
-// POST - Crear nueva empresa
-app.post('/api/empresas', async (req, res) => {
-    try {
-        const { nombre, cif, direccion, telefono, email, firmaDigitalThumbprint } = req.body;
-        
-        console.log('🏢 [POST /api/empresas] Datos recibidos:', { nombre, cif, direccion, telefono, email, firmaDigitalThumbprint });
-        
-        // Validar campos obligatorios
-        if (!nombre || !cif) {
-            return res.status(400).json({ 
-                success: false,
-                error: 'Campos obligatorios faltantes: nombre, cif'
-            });
-        }
-        
-        // Verificar que el CIF no esté duplicado
-        const empresaExistente = await new Promise((resolve, reject) => {
-            db.get('SELECT id FROM empresas WHERE cif = ?', [cif], (err, row) => {
-                if (err) {
-                    reject(err);
-                    return;
-                }
-                resolve(row);
-            });
-        });
-        
-        if (empresaExistente) {
-            return res.status(409).json({ 
-                success: false,
-                error: 'El CIF ya existe',
-                message: `Ya existe una empresa con el CIF: ${cif}`,
-                code: 'DUPLICATE_CIF',
-                field: 'cif'
-            });
-        }
-        
-        // Crear la empresa con el certificado si se proporciona
-        const empresaId = await new Promise((resolve, reject) => {
-            db.run(`
-                INSERT INTO empresas (nombre, cif, direccion, telefono, email, certificado_thumbprint)
-                VALUES (?, ?, ?, ?, ?, ?)
-            `, [nombre, cif, direccion, telefono, email, firmaDigitalThumbprint || null], function(err) {
-                if (err) {
-                    reject(err);
-                } else {
-                    resolve(this.lastID);
-                }
-            });
-        });
-        
-        // Si se especifica una firma digital, asociarla con la empresa
-        if (firmaDigitalThumbprint) {
-            try {
-                const resultadoAsociacion = await sistemaFirmaDigital.asociarCertificadoConEmpresa(empresaId, firmaDigitalThumbprint);
-                
-                if (resultadoAsociacion.success) {
-                    console.log(`✅ Firma digital asociada con nueva empresa ${nombre}: ${resultadoAsociacion.certificado.empresa}`);
-                } else {
-                    console.log(`⚠️ No se pudo asociar firma digital: ${resultadoAsociacion.error}`);
-                }
-            } catch (error) {
-                console.log(`⚠️ Error al asociar firma digital: ${error.message}`);
-            }
-        }
-        
-        // Obtener la empresa creada para devolverla
-        const empresaCreada = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM empresas WHERE id = ?', [empresaId], (err, row) => {
-                if (err) {
-                    reject(err);
-                } else {
-                    resolve(row);
-                }
-            });
-        });
-        
-        // Invalidar caché de empresas después de crear una nueva
-        cacheManager.delPattern('empresas:.*');
-        console.log('🗑️ Caché de empresas invalidado después de crear nueva empresa');
-        
-        res.json({ 
-            success: true, 
-            data: empresaCreada,
-            firmaDigitalAsociada: firmaDigitalThumbprint ? true : false
-        });
-        
-    } catch (error) {
-        console.error('Error al crear empresa:', error);
-        res.status(500).json({ 
-            success: false,
-            error: error.message 
-        });
-    }
-});
-
-// PUT - Actualizar empresa
-app.put('/api/empresas/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const empresaId = parseInt(id, 10);
-        const { nombre, cif, direccion, telefono, email, firmaDigitalThumbprint } = req.body;
-        
-        // Validar ID
-        if (isNaN(empresaId) || empresaId <= 0) {
-            return res.status(400).json({ 
-                success: false,
-                error: 'ID de empresa inválido',
-                received: id
-            });
-        }
-        
-        // Si se está actualizando el CIF, verificar que no esté duplicado
-        if (cif) {
-            const cifDuplicado = await new Promise((resolve, reject) => {
-                db.get('SELECT id FROM empresas WHERE cif = ? AND id != ?', [cif, empresaId], (err, row) => {
-                    if (err) {
-                        reject(err);
-                        return;
-                    }
-                    resolve(!!row);
-                });
-            });
-            
-            if (cifDuplicado) {
-                return res.status(409).json({ 
-                    success: false,
-                    error: 'El CIF ya existe',
-                    message: `Ya existe otra empresa con el CIF: ${cif}`,
-                    code: 'DUPLICATE_CIF',
-                    field: 'cif'
-                });
-            }
-        }
-        
-        // Actualizar datos básicos de la empresa
-        const changes = await new Promise((resolve, reject) => {
-            db.run(`
-                UPDATE empresas 
-                SET nombre = ?, cif = ?, direccion = ?, telefono = ?, email = ?, certificado_thumbprint = ?
-                WHERE id = ?
-            `, [nombre, cif, direccion, telefono, email, firmaDigitalThumbprint || null, empresaId], function(err) {
-                if (err) {
-                    reject(err);
-                } else if (this.changes === 0) {
-                    resolve(null);
-                } else {
-                    resolve(this.changes);
-                }
-            });
-        });
-        
-        // Si no se encontró la empresa, retornar error 404
-        if (changes === null) {
-            return res.status(404).json({ 
-                success: false,
-                error: 'Empresa no encontrada'
-            });
-        }
-        
-        // Si se especifica una firma digital, asociarla con la empresa
-        if (firmaDigitalThumbprint) {
-            try {
-                const resultadoAsociacion = await sistemaFirmaDigital.asociarCertificadoConEmpresa(empresaId, firmaDigitalThumbprint);
-                
-                if (resultadoAsociacion.success) {
-                    console.log(`✅ Firma digital asociada con empresa ${nombre}: ${resultadoAsociacion.certificado.empresa}`);
-                } else {
-                    console.log(`⚠️ No se pudo asociar firma digital: ${resultadoAsociacion.error}`);
-                }
-            } catch (error) {
-                console.log(`⚠️ Error al asociar firma digital: ${error.message}`);
-            }
-        }
-        
-        // Obtener la empresa actualizada para devolverla
-        const empresaActualizada = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM empresas WHERE id = ?', [empresaId], (err, row) => {
-                if (err) {
-                    reject(err);
-                } else {
-                    resolve(row);
-                }
-            });
-        });
-        
-        // Invalidar caché de empresas después de actualizar
-        cacheManager.delPattern('empresas:.*');
-        console.log('🗑️ Caché de empresas invalidado después de actualizar empresa');
-        
-        res.json({ 
-            success: true, 
-            message: 'Empresa actualizada correctamente',
-            data: empresaActualizada,
-            firmaDigitalAsociada: firmaDigitalThumbprint ? true : false
-        });
-        
-    } catch (error) {
-        console.error('Error al actualizar empresa:', error);
-        res.status(500).json({ 
-            success: false,
-            error: error.message 
-        });
-    }
-});
-
-// DELETE - Eliminar empresa (eliminación física)
-app.delete('/api/empresas/:id', (req, res) => {
-    const { id } = req.params;
-    
-    db.run('DELETE FROM empresas WHERE id = ?', [id], function(err) {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        if (this.changes === 0) {
-            res.status(404).json({ error: 'Empresa no encontrada' });
-            return;
-        }
-        
-        // Invalidar caché de empresas después de eliminar
-        cacheManager.delPattern('empresas:.*');
-        console.log('🗑️ Caché de empresas invalidado después de eliminar empresa');
-        
-        res.json({ success: true, message: 'Empresa eliminada correctamente' });
-    });
-});
-
-// POST - Limpiar y recrear datos de ejemplo
-app.post('/api/reset-data', (req, res) => {
-    console.log('🔄 Limpiando y recreando datos de ejemplo...');
-    
-    db.serialize(() => {
-        // Limpiar tablas
-        db.run('DELETE FROM empresas', (err) => {
-            if (err) {
-                console.error('❌ Error al limpiar empresas:', err.message);
-            } else {
-                console.log('✅ Tabla empresas limpiada');
-            }
-        });
-        
-        db.run('DELETE FROM productos', (err) => {
-            if (err) {
-                console.error('❌ Error al limpiar productos:', err.message);
-            } else {
-                console.log('✅ Tabla productos limpiada');
-            }
-        });
-        
-        db.run('DELETE FROM clientes', (err) => {
-            if (err) {
-                console.error('❌ Error al limpiar clientes:', err.message);
-            } else {
-                console.log('✅ Tabla clientes limpiada');
-            }
-        });
-        
-        db.run('DELETE FROM coches', (err) => {
-            if (err) {
-                console.error('❌ Error al limpiar coches:', err.message);
-            } else {
-                console.log('✅ Tabla coches limpiada');
-            }
-        });
-        
-        db.run('DELETE FROM facturas', (err) => {
-            if (err) {
-                console.error('❌ Error al limpiar facturas:', err.message);
-            } else {
-                console.log('✅ Tabla facturas limpiada');
-            }
-        });
-        
-        db.run('DELETE FROM detalles_factura', (err) => {
-            if (err) {
-                console.error('❌ Error al limpiar detalles_factura:', err.message);
-            } else {
-                console.log('✅ Tabla detalles_factura limpiada');
-            }
-        });
-        
-        // Recrear datos de ejemplo
-        setTimeout(() => {
-            insertSampleData();
-            res.json({ success: true, message: 'Datos de ejemplo recreados correctamente' });
-        }, 1000);
-    });
-});
-
-// GET - Obtener todos los clientes
-app.get('/api/clientes', (req, res) => {
-    const startTime = Date.now();
-    logger.operationRead('clientes', null, req.query);
-    
-    // Verificar que la base de datos esté conectada
-    if (!db) {
-        logger.error('Base de datos no inicializada', { endpoint: '/api/clientes' });
-        return res.status(503).json({ 
-            error: 'Servicio no disponible', 
-            message: 'La base de datos no está conectada. Por favor, reinicia el servidor.' 
-        });
-    }
-    
-    db.all('SELECT * FROM clientes ORDER BY fecha_creacion DESC', (err, rows) => {
-        const duration = Date.now() - startTime;
-        
-        if (err) {
-            logger.error('Error obteniendo clientes', { 
-                error: err.message, 
-                duration: `${duration}ms`,
-                query: req.query 
-            }, 'database');
-            logger.databaseQuery('SELECT * FROM clientes', duration, 0);
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        
-        logger.databaseQuery('SELECT * FROM clientes ORDER BY fecha_creacion DESC', duration, rows.length);
-        logger.info(`Clientes obtenidos: ${rows.length} registros`, { 
-            count: rows.length, 
-            duration: `${duration}ms` 
-        }, 'operations');
-        
-        res.json({ success: true, data: rows });
-    });
-});
-
-// POST - Crear nuevo cliente
-app.post('/api/clientes', (req, res) => {
-    (async () => {
-        const startTime = Date.now();
-        try {
-            const { nombre, direccion, codigo_postal, identificacion, email, telefono } = req.body;
-            
-            logger.debug('Creando nuevo cliente', { 
-                nombre, 
-                identificacion,
-                email: email ? '***' : null,
-                telefono: telefono ? '***' : null
-            }, 'operations');
-            
-            // Validar campos obligatorios
-            if (!nombre || !direccion || !identificacion) {
-                logger.warn('Intento de crear cliente sin campos obligatorios', { 
-                    nombre: !!nombre, 
-                    direccion: !!direccion, 
-                    identificacion: !!identificacion 
-                }, 'operations');
-                return res.status(400).json({ 
-                    error: 'Campos obligatorios faltantes: nombre, direccion, identificacion' 
-                });
-            }
-            
-            // Verificar que la identificación no esté duplicada
-            const clienteExistente = await new Promise((resolve, reject) => {
-                db.get('SELECT id FROM clientes WHERE identificacion = ?', [identificacion], (err, row) => {
-                    if (err) {
-                        reject(err);
-                        return;
-                    }
-                    resolve(row);
-                });
-            });
-            
-            if (clienteExistente) {
-                logger.warn('Intento de crear cliente con identificación duplicada', { identificacion }, 'operations');
-                return res.status(409).json({ 
-                    error: 'La identificación ya existe',
-                    message: `Ya existe un cliente con la identificación: ${identificacion}`,
-                    code: 'DUPLICATE_IDENTIFICACION',
-                    field: 'identificacion'
-                });
-            }
-            
-            // Insertar cliente
-            const result = await new Promise((resolve, reject) => {
-                db.run(`
-                    INSERT INTO clientes (nombre, direccion, codigo_postal, identificacion, email, telefono)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                `, [nombre, direccion, codigo_postal, identificacion, email, telefono], function(err) {
-                    if (err) {
-                        reject(err);
-                        return;
-                    }
-                    // this.lastID ahora funciona tanto para SQLite como PostgreSQL gracias al wrapper
-                    resolve({ id: this.lastID });
-                });
-            });
-            
-            // Si el ID no se obtuvo (fallback para PostgreSQL si el wrapper falla)
-            if (!result.id) {
-                const dbType = config.get('database.type') || 'postgresql';
-                if (dbType === 'postgresql') {
-                    try {
-                        const lastCliente = await new Promise((resolve, reject) => {
-                            db.get('SELECT id FROM clientes WHERE identificacion = ? ORDER BY id DESC LIMIT 1', [identificacion], (err, row) => {
-                                if (err) {
-                                    reject(err);
-                                    return;
-                                }
-                                resolve(row);
-                            });
-                        });
-                        if (lastCliente && lastCliente.id) {
-                            result.id = lastCliente.id;
-                        }
-                    } catch (err) {
-                        console.error('Error obteniendo ID del cliente insertado:', err);
-                    }
-                }
-            }
-            
-            const duration = Date.now() - startTime;
-            logger.databaseQuery('INSERT INTO clientes', duration, 1, [nombre, direccion, identificacion]);
-            logger.operationCreate('cliente', result.id, { nombre, identificacion });
-            
-            res.json({ 
-                success: true, 
-                data: { 
-                    id: result.id, 
-                    nombre, 
-                    direccion, 
-                    codigo_postal,
-                    identificacion, 
-                    email, 
-                    telefono 
-                } 
-            });
-            
-        } catch (error) {
-            const duration = Date.now() - startTime;
-            logger.error('Error creando cliente', { 
-                error: error.message, 
-                identificacion: req.body.identificacion,
-                duration: `${duration}ms`
-            }, 'database');
-            
-            if (!res.headersSent) {
-                res.status(500).json({ error: error.message || 'Error interno del servidor' });
-            }
-        }
-    })();
-});
-
-// GET - Obtener cliente por ID
-app.get('/api/clientes/:id', (req, res) => {
-    const { id } = req.params;
-    
-    db.get('SELECT * FROM clientes WHERE id = ?', [id], (err, row) => {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        if (!row) {
-            res.status(404).json({ error: 'Cliente no encontrado' });
-            return;
-        }
-        res.json({ success: true, data: row });
-    });
-});
-
-// PUT - Actualizar cliente
-app.put('/api/clientes/:id', (req, res) => {
-    (async () => {
-        try {
-            const { id } = req.params;
-            const clienteId = parseInt(id, 10);
-            const { nombre, direccion, codigo_postal, identificacion, email, telefono } = req.body;
-            
-            // Validar ID
-            if (isNaN(clienteId) || clienteId <= 0) {
-                return res.status(400).json({ 
-                    error: 'ID de cliente inválido',
-                    received: id
-                });
-            }
-            
-            // Si se está actualizando la identificación, verificar que no esté duplicada
-            if (identificacion) {
-                const identificacionDuplicada = await new Promise((resolve, reject) => {
-                    db.get('SELECT id FROM clientes WHERE identificacion = ? AND id != ?', [identificacion, clienteId], (err, row) => {
-                        if (err) {
-                            console.error('❌ [PUT /api/clientes/:id] Error verificando identificación:', err.message);
-                            reject(err);
-                            return;
-                        }
-                        resolve(!!row);
-                    });
-                });
-                
-                if (identificacionDuplicada) {
-                    console.log('❌ [PUT /api/clientes/:id] Identificación duplicada:', identificacion);
-                    return res.status(409).json({ 
-                        error: 'La identificación ya existe',
-                        message: `Ya existe otro cliente con la identificación: ${identificacion}`,
-                        code: 'DUPLICATE_IDENTIFICACION',
-                        field: 'identificacion'
-                    });
-                }
-            }
-            
-            // Construir UPDATE dinámicamente solo con los campos que se están enviando
-            const updates = [];
-            const values = [];
-            
-            if (nombre !== undefined) {
-                updates.push('nombre = ?');
-                values.push(nombre);
-            }
-            if (direccion !== undefined) {
-                updates.push('direccion = ?');
-                values.push(direccion);
-            }
-            if (codigo_postal !== undefined) {
-                updates.push('codigo_postal = ?');
-                values.push(codigo_postal);
-            }
-            if (identificacion !== undefined) {
-                updates.push('identificacion = ?');
-                values.push(identificacion);
-            }
-            if (email !== undefined) {
-                updates.push('email = ?');
-                values.push(email);
-            }
-            if (telefono !== undefined) {
-                updates.push('telefono = ?');
-                values.push(telefono);
-            }
-            
-            // Si no hay campos para actualizar, retornar error
-            if (updates.length === 0) {
-                return res.status(400).json({ 
-                    error: 'No se proporcionaron campos para actualizar' 
-                });
-            }
-            
-            // Agregar el ID al final para el WHERE
-            values.push(clienteId);
-            
-            // Ejecutar UPDATE
-            const changes = await new Promise((resolve, reject) => {
-                const query = `UPDATE clientes SET ${updates.join(', ')} WHERE id = ?`;
-                console.log('🔍 [PUT /api/clientes/:id] Query:', query);
-                console.log('🔍 [PUT /api/clientes/:id] Values:', values);
-                
-                db.run(query, values, function(err) {
-                    if (err) {
-                        console.error('❌ [PUT /api/clientes/:id] Error en UPDATE:', err.message);
-                        reject(err);
-                        return;
-                    }
-                    console.log('🔍 [PUT /api/clientes/:id] Changes:', this.changes);
-                    if (this.changes === 0) {
-                        resolve(null);
-                        return;
-                    }
-                    resolve(this.changes);
-                });
-            });
-            
-            // Si no se encontró el cliente, retornar error 404
-            if (changes === null) {
-                return res.status(404).json({ error: 'Cliente no encontrado' });
-            }
-            
-            // Obtener el cliente actualizado para devolverlo
-            const clienteActualizado = await new Promise((resolve, reject) => {
-                db.get('SELECT * FROM clientes WHERE id = ?', [clienteId], (err, row) => {
-                    if (err) {
-                        reject(err);
-                        return;
-                    }
-                    resolve(row);
-                });
-            });
-            
-            res.json({ 
-                success: true, 
-                message: 'Cliente actualizado correctamente',
-                data: clienteActualizado
-            });
-            
-        } catch (error) {
-            console.error('❌ [PUT /api/clientes/:id] Error inesperado:', error);
-            if (!res.headersSent) {
-                res.status(500).json({ 
-                    error: 'Error interno del servidor',
-                    details: error.message
-                });
-            }
-        }
-    })();
-});
-
-// DELETE - Desactivar cliente (soft delete)
-app.delete('/api/clientes/:id', (req, res) => {
-    const { id } = req.params;
-    
-    // Como la tabla clientes no tiene campo activo, eliminamos físicamente
-    db.run('DELETE FROM clientes WHERE id = ?', [id], function(err) {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        if (this.changes === 0) {
-            res.status(404).json({ error: 'Cliente no encontrado' });
-            return;
-        }
-        res.json({ success: true, message: 'Cliente eliminado correctamente' });
-    });
-});
-
-// GET - Obtener todos los coches (mantener para compatibilidad)
-app.get('/api/coches', async (req, res) => {
-    try {
-        const dbType = config.get('database.type') || 'postgresql';
-        const activoValue = dbType === 'postgresql' ? 'true' : '1';
-        const vendidoValue = dbType === 'postgresql' ? 'false' : '0';
-        
-        // Verificar consistencia del caché antes de devolver datos
-        if (global.cacheManager) {
-            const cachedData = await global.cacheManager.verifyAndCorrect('coches:all', async () => {
-                return new Promise((resolve, reject) => {
-        db.all(`
-            SELECT c.*,
-                   CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END as vendido,
-                   f.numero_factura,
-                   f.fecha_emision as fecha_venta,
-                   f.total as precio_venta,
-                   cl.nombre as cliente_nombre,
-                   p.numero_proforma,
-                   CASE WHEN p.id IS NOT NULL THEN 1 ELSE 0 END as tiene_proforma
-            FROM coches c
-            LEFT JOIN detalles_factura df ON df.coche_id = c.id
-            LEFT JOIN facturas f ON df.factura_id = f.id AND f.estado IN ('pagada', 'pendiente')
-            LEFT JOIN clientes cl ON f.cliente_id = cl.id
-            LEFT JOIN proformas p ON p.coche_id = c.id AND (p.activo = ${activoValue} OR p.activo IS NULL)
-            WHERE (c.activo = ${activoValue} OR c.activo = ${vendidoValue} OR c.activo IS NULL)
-            ORDER BY c.fecha_creacion DESC
-        `, (err, rows) => {
-                        if (err) reject(err);
-                        else resolve(rows);
-                    });
-                });
-            });
-            
-            if (cachedData !== null) {
-                res.json({ success: true, data: cachedData });
-                return;
-            }
-        }
-        
-        // Si no hay caché o hay error, consultar directamente la BD
-        db.all(`
-            SELECT c.*,
-                   CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END as vendido,
-                   f.numero_factura,
-                   f.fecha_emision as fecha_venta,
-                   f.total as precio_venta,
-                   cl.nombre as cliente_nombre,
-                   p.numero_proforma,
-                   CASE WHEN p.id IS NOT NULL THEN 1 ELSE 0 END as tiene_proforma
-            FROM coches c
-            LEFT JOIN detalles_factura df ON df.coche_id = c.id
-            LEFT JOIN facturas f ON df.factura_id = f.id AND f.estado IN ('pagada', 'pendiente')
-            LEFT JOIN clientes cl ON f.cliente_id = cl.id
-            LEFT JOIN proformas p ON p.coche_id = c.id AND (p.activo = ${activoValue} OR p.activo IS NULL)
-            WHERE (c.activo = ${activoValue} OR c.activo = ${vendidoValue} OR c.activo IS NULL)
-            ORDER BY c.fecha_creacion DESC
-        `, (err, rows) => {
-            if (err) {
-                res.status(500).json({ error: err.message });
-                return;
-            }
-            
-            // Actualizar caché con datos frescos
-            if (global.cacheManager) {
-                global.cacheManager.set('coches:all', rows);
-            }
-            
-            res.json({ success: true, data: rows });
-        });
-    } catch (error) {
-        console.error('Error en GET /api/coches:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// GET - Obtener solo coches disponibles (no vendidos)
-app.get('/api/coches/disponibles', (req, res) => {
-    const dbType = config.get('database.type') || 'postgresql';
-    const activoValue = dbType === 'postgresql' ? 'true' : '1';
-    
-    db.all(`
-        SELECT c.*,
-               0 as vendido,
-               NULL as numero_factura,
-               NULL as fecha_venta,
-               NULL as precio_venta,
-               NULL as cliente_nombre,
-               (SELECT p2.numero_proforma FROM proformas p2 
-                WHERE (p2.coche_id = c.id OR p2.id IN (SELECT dp2.proforma_id FROM detalles_proforma dp2 WHERE dp2.coche_id = c.id))
-                AND (p2.activo = ${activoValue} OR p2.activo IS NULL) LIMIT 1) as numero_proforma,
-               CASE WHEN EXISTS (
-                   SELECT 1 FROM proformas p3 
-                   WHERE (p3.coche_id = c.id OR p3.id IN (SELECT dp3.proforma_id FROM detalles_proforma dp3 WHERE dp3.coche_id = c.id))
-                   AND (p3.activo = ${activoValue} OR p3.activo IS NULL)
-               ) THEN 1 ELSE 0 END as tiene_proforma
-        FROM coches c
-        WHERE c.activo = ${activoValue}
-        ORDER BY c.fecha_creacion DESC
-    `, (err, rows) => {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        res.json({ success: true, data: rows });
-    });
-});
-
-// GET - Obtener solo coches vendidos
-app.get('/api/coches/vendidos', (req, res) => {
-    const dbType = config.get('database.type') || 'postgresql';
-    const vendidoValue = dbType === 'postgresql' ? 'false' : '0';
-    
-    db.all(`
-        SELECT c.*,
-               1 as vendido,
-               f.numero_factura,
-               f.fecha_emision as fecha_venta,
-               f.total as precio_venta,
-               cl.nombre as cliente_nombre
-        FROM coches c
-        LEFT JOIN detalles_factura df ON df.coche_id = c.id
-        LEFT JOIN facturas f ON df.factura_id = f.id AND f.estado IN ('pagada', 'pendiente')
-        LEFT JOIN clientes cl ON f.cliente_id = cl.id
-        WHERE c.activo = ${vendidoValue} OR c.activo IS NULL
-        ORDER BY c.fecha_creacion DESC
-    `, (err, rows) => {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        res.json({ success: true, data: rows });
-    });
-});
-
-// GET - Obtener coches disponibles para productos (con información de productos asociados)
-app.get('/api/coches/productos', (req, res) => {
-    const dbType = config.get('database.type') || 'postgresql';
-    const activoValue = dbType === 'postgresql' ? 'true' : '1';
-    
-    db.all(`
-        SELECT c.*, 
-               CASE WHEN p.id IS NOT NULL THEN 1 ELSE 0 END as tiene_producto,
-               p.precio as precio_producto,
-               p.codigo as codigo_producto
-        FROM coches c
-        LEFT JOIN productos p ON c.matricula = p.codigo
-        WHERE c.activo = ${activoValue} 
-        ORDER BY c.fecha_creacion DESC
-    `, (err, rows) => {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        res.json({ success: true, data: rows });
-    });
-});
-
-// GET - Obtener coche por ID
-app.get('/api/coches/:id', (req, res) => {
-    const { id } = req.params;
-    const dbType = config.get('database.type') || 'postgresql';
-    const activoValue = dbType === 'postgresql' ? 'true' : '1';
-    
-    db.get(`SELECT * FROM coches WHERE id = ? AND activo = ${activoValue}`, [id], (err, row) => {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        if (!row) {
-            res.status(404).json({ error: 'Coche no encontrado' });
-            return;
-        }
-        res.json({ success: true, data: row });
-    });
-});
-
-// POST - Crear nuevo coche
-app.post('/api/coches', (req, res) => {
-    (async () => {
-        try {
-            console.log('🔍 [POST /api/coches] Datos recibidos:', req.body);
-            
-            const { matricula, chasis, color, kms, modelo, marca } = req.body;
-            
-            // Si no se proporciona marca, extraerla del modelo
-            let marcaFinal = marca;
-            let modeloFinal = modelo;
-            if (!marcaFinal && modeloFinal) {
-                const partes = modeloFinal.split(' ');
-                marcaFinal = partes.length > 0 ? partes[0] : '';
-                if (partes.length > 1) {
-                    modeloFinal = partes.slice(1).join(' ');
-                }
-            }
-            
-            // Validar datos requeridos
-            if (!matricula || !chasis || !color || kms === undefined || kms === null || !modeloFinal) {
-                console.log('❌ [POST /api/coches] Datos faltantes:', { matricula, chasis, color, kms, modelo: modeloFinal, marca: marcaFinal });
-                return res.status(400).json({ 
-                    error: 'Faltan datos requeridos',
-                    required: ['matricula', 'chasis', 'color', 'kms', 'modelo'],
-                    received: { matricula, chasis, color, kms, modelo: modeloFinal, marca: marcaFinal }
-                });
-            }
-            
-            // Verificar que la matrícula no esté duplicada
-            const dbType = config.get('database.type') || 'postgresql';
-            const activoValue = dbType === 'postgresql' ? 'true' : '1';
-            const matriculaDuplicada = await new Promise((resolve, reject) => {
-                db.get(`SELECT id FROM coches WHERE matricula = ? AND activo = ${activoValue}`, [matricula], (err, row) => {
-                    if (err) {
-                        console.error('❌ [POST /api/coches] Error verificando matrícula:', err.message);
-                        reject(err);
-                        return;
-                    }
-                    resolve(!!row);
-                });
-            });
-            
-            if (matriculaDuplicada) {
-                console.log('❌ [POST /api/coches] Matrícula duplicada:', matricula);
-                return res.status(409).json({ 
-                    error: 'La matrícula ya existe',
-                    message: `Ya existe un coche activo con la matrícula: ${matricula}`,
-                    code: 'DUPLICATE_MATRICULA',
-                    field: 'matricula'
-                });
-            }
-            
-            console.log('🔍 [POST /api/coches] Ejecutando INSERT con datos:', [matricula, chasis, color, kms, modeloFinal, marcaFinal]);
-            
-            // Insertar coche
-            const result = await new Promise((resolve, reject) => {
-                db.run(`
-                    INSERT INTO coches (matricula, chasis, color, kms, modelo, marca)
-                    VALUES (?, ?, ?, ?, ?, ?)
-                `, [matricula, chasis, color, kms, modeloFinal, marcaFinal || null], function(err) {
-                    if (err) {
-                        reject(err);
-                        return;
-                    }
-                    resolve({ id: this.lastID });
-                });
-            });
-            
-            console.log('✅ [POST /api/coches] Coche creado exitosamente con ID:', result.id);
-            
-            // Invalidar caché de coches
-            if (global.cacheManager) {
-                global.cacheManager.invalidatePattern('coches:*');
-                console.log('🗑️ [POST /api/coches] Caché de coches invalidado');
-            }
-            
-            res.json({ 
-                success: true, 
-                data: { 
-                    id: result.id, 
-                    matricula, 
-                    chasis, 
-                    color, 
-                    kms, 
-                    modelo: modeloFinal,
-                    marca: marcaFinal
-                } 
-            });
-            
-        } catch (error) {
-            console.error('❌ [POST /api/coches] Error inesperado:', error);
-            if (!res.headersSent) {
-                res.status(500).json({ 
-                    error: 'Error interno del servidor',
-                    details: error.message
-                });
-            }
-        }
-    })();
-});
-
-// PUT - Actualizar coche
-app.put('/api/coches/:id', (req, res) => {
-    // Convertir a async para manejar mejor la asincronía
-    (async () => {
-        try {
-            const { id } = req.params;
-            const cocheId = parseInt(id, 10); // Convertir ID a número
-            const { matricula, chasis, color, kms, modelo, marca } = req.body;
-            
-            console.log('🔍 [PUT /api/coches/:id] Actualizando coche ID:', cocheId);
-            console.log('🔍 [PUT /api/coches/:id] Datos recibidos:', req.body);
-            
-            // Validar ID
-            if (isNaN(cocheId) || cocheId <= 0) {
-                return res.status(400).json({ 
-                    error: 'ID de coche inválido',
-                    received: id
-                });
-            }
-            
-            // Si se proporciona modelo pero no marca, extraer marca del modelo
-            let marcaFinal = marca;
-            let modeloFinal = modelo;
-            if (modeloFinal && !marcaFinal) {
-                const partes = modeloFinal.split(' ');
-                marcaFinal = partes.length > 0 ? partes[0] : '';
-                if (partes.length > 1) {
-                    modeloFinal = partes.slice(1).join(' ');
-                }
-            }
-            
-            // Validar que al menos un campo esté presente
-            if (!matricula && !chasis && !color && kms === undefined && !modeloFinal && !marcaFinal) {
-                return res.status(400).json({ 
-                    error: 'Al menos un campo debe ser proporcionado para actualizar',
-                    received: { matricula, chasis, color, kms, modelo: modeloFinal, marca: marcaFinal }
-                });
-            }
-            
-            // Verificar si el coche está vendido (tiene facturas asociadas)
-            // Un coche vendido NO puede ser modificado según la Ley Antifraude
-            const cocheVendido = await new Promise((resolve, reject) => {
-                db.get(`
-                    SELECT c.id, c.matricula,
-                           CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END as vendido,
-                           f.numero_factura,
-                           f.id as factura_id
-                    FROM coches c
-                    LEFT JOIN detalles_factura df ON df.coche_id = c.id
-                    LEFT JOIN facturas f ON df.factura_id = f.id AND f.estado IN ('pagada', 'pendiente')
-                    WHERE c.id = ? AND f.id IS NOT NULL
-                    LIMIT 1
-                `, [cocheId], (err, row) => {
-                    if (err) {
-                        console.error('❌ [PUT /api/coches/:id] Error verificando si coche está vendido:', err.message);
-                        reject(err);
-                        return;
-                    }
-                    resolve(row);
-                });
-            });
-            
-            if (cocheVendido && cocheVendido.vendido === 1) {
-                console.log('❌ [PUT /api/coches/:id] Intento de modificar coche vendido:', {
-                    cocheId,
-                    matricula: cocheVendido.matricula,
-                    facturaId: cocheVendido.factura_id,
-                    numeroFactura: cocheVendido.numero_factura
-                });
-                return res.status(403).json({ 
-                    error: 'No se puede modificar un vehículo vendido',
-                    message: 'Los vehículos vendidos no pueden ser modificados para cumplir con la Ley Antifraude. Los datos deben mantenerse intactos para garantizar la integridad de los documentos fiscales.',
-                    code: 'COCHE_VENDIDO',
-                    factura: cocheVendido.numero_factura || null
-                });
-            }
-            
-            // Si se está actualizando la matrícula, verificar que no esté duplicada
-            if (matricula) {
-                const dbType = config.get('database.type') || 'postgresql';
-                const activoValue = dbType === 'postgresql' ? 'true' : '1';
-                const matriculaDuplicada = await new Promise((resolve, reject) => {
-                    db.get(`SELECT id FROM coches WHERE matricula = ? AND id != ? AND activo = ${activoValue}`, [matricula, cocheId], (err, row) => {
-                        if (err) {
-                            console.error('❌ [PUT /api/coches/:id] Error verificando matrícula:', err.message);
-                            reject(err);
-                            return;
-                        }
-                        
-                        resolve(!!row); // Retornar true si existe, false si no
-                    });
-                });
-                
-                if (matriculaDuplicada) {
-                    console.log('❌ [PUT /api/coches/:id] Matrícula duplicada:', matricula);
-                    return res.status(409).json({ 
-                        error: 'La matrícula ya existe',
-                        message: `Ya existe otro coche con la matrícula: ${matricula}`,
-                        code: 'DUPLICATE_MATRICULA',
-                        field: 'matricula'
-                    });
-                }
-            }
-            
-            // Construir la consulta dinámicamente basada en los campos proporcionados
-            const updates = [];
-            const values = [];
-            
-            if (matricula !== undefined) {
-                updates.push('matricula = ?');
-                values.push(matricula);
-            }
-            if (chasis !== undefined) {
-                updates.push('chasis = ?');
-                values.push(chasis);
-            }
-            if (color !== undefined) {
-                updates.push('color = ?');
-                values.push(color);
-            }
-            if (kms !== undefined) {
-                updates.push('kms = ?');
-                values.push(kms);
-            }
-            if (modeloFinal !== undefined) {
-                updates.push('modelo = ?');
-                values.push(modeloFinal);
-            }
-            if (marcaFinal !== undefined) {
-                updates.push('marca = ?');
-                values.push(marcaFinal || null);
-            }
-            
-            // Validar que haya campos para actualizar
-            if (updates.length === 0) {
-                return res.status(400).json({ 
-                    error: 'No hay campos válidos para actualizar'
-                });
-            }
-            
-            values.push(cocheId); // ID al final para el WHERE
-            
-            // Usar el valor correcto de activo según el tipo de BD
-            const dbType = config.get('database.type') || 'postgresql';
-            const activoValue = dbType === 'postgresql' ? 'true' : '1';
-            const query = `UPDATE coches SET ${updates.join(', ')} WHERE id = ? AND activo = ${activoValue}`;
-            
-            console.log('🔍 [PUT /api/coches/:id] Query:', query);
-            console.log('🔍 [PUT /api/coches/:id] Values:', values);
-            
-            // Ejecutar UPDATE
-            const changes = await new Promise((resolve, reject) => {
-                db.run(query, values, function(err) {
-                    if (err) {
-                        console.error('❌ [PUT /api/coches/:id] Error en UPDATE:', err.message);
-                        console.error('❌ [PUT /api/coches/:id] Error completo:', err);
-                        reject(err);
-                        return;
-                    }
-                    
-                    if (this.changes === 0) {
-                        console.log('❌ [PUT /api/coches/:id] Coche no encontrado o inactivo:', cocheId);
-                        resolve(null); // Retornar null para indicar que no se encontró
-                        return;
-                    }
-                    
-                    console.log('✅ [PUT /api/coches/:id] Coche actualizado exitosamente:', cocheId);
-                    resolve(this.changes);
-                });
-            });
-            
-            // Si no se encontró el coche, retornar error 404
-            if (changes === null) {
-                return res.status(404).json({ error: 'Coche no encontrado o inactivo' });
-            }
-            
-            // Invalidar caché de coches
-            if (global.cacheManager) {
-                global.cacheManager.invalidatePattern('coches:*');
-                console.log('🗑️ [PUT /api/coches/:id] Caché de coches invalidado');
-            }
-            
-            // Obtener el coche actualizado para devolverlo
-            await new Promise((resolve, reject) => {
-                db.get('SELECT * FROM coches WHERE id = ?', [cocheId], (err, row) => {
-                    if (err) {
-                        console.error('❌ [PUT /api/coches/:id] Error obteniendo coche actualizado:', err.message);
-                        // Aún así devolver éxito si la actualización fue exitosa
-                        res.json({ success: true, message: 'Coche actualizado correctamente' });
-                        resolve();
-                        return;
-                    }
-                    
-                    res.json({ 
-                        success: true, 
-                        message: 'Coche actualizado correctamente',
-                        data: row
-                    });
-                    resolve();
-                });
-            });
-            
-        } catch (error) {
-            console.error('❌ [PUT /api/coches/:id] Error inesperado:', error);
-            // Solo enviar respuesta si aún no se ha enviado
-            if (!res.headersSent) {
-                res.status(500).json({ 
-                    error: 'Error interno del servidor',
-                    details: error.message
-                });
-            }
-        }
-    })();
-});
-
-// DELETE - Desactivar coche (soft delete)
-app.delete('/api/coches/:id', (req, res) => {
-    (async () => {
-        const { id } = req.params;
-        const dbType = config.get('database.type') || 'postgresql';
-        const activoValue = dbType === 'postgresql' ? 'false' : '0';
-
-        try {
-            // Verificar si el coche existe y si está vendido
-            const cocheInfo = await new Promise((resolve, reject) => {
-                db.get(`
-                    SELECT c.id, c.matricula,
-                           CASE WHEN f.id IS NOT NULL THEN 1 ELSE 0 END as vendido,
-                           f.numero_factura,
-                           f.id as factura_id
-                    FROM coches c
-                    LEFT JOIN detalles_factura df ON df.coche_id = c.id
-                    LEFT JOIN facturas f ON df.factura_id = f.id AND f.estado IN ('pagada', 'pendiente')
-                    WHERE c.id = ?
-                    LIMIT 1
-                `, [id], (err, row) => {
-                    if (err) {
-                        reject(err);
-                        return;
-                    }
-                    resolve(row);
-                });
-            });
-
-            if (!cocheInfo) {
-                return res.status(404).json({ error: 'Coche no encontrado' });
-            }
-
-            if (cocheInfo.vendido === 1) {
-                console.log('❌ [DELETE /api/coches/:id] Intento de eliminar coche vendido:', {
-                    id,
-                    matricula: cocheInfo.matricula,
-                    facturaId: cocheInfo.factura_id,
-                    numeroFactura: cocheInfo.numero_factura
-                });
-                return res.status(403).json({
-                    error: 'No se puede eliminar un vehículo vendido',
-                    message: 'Los vehículos vendidos deben mantenerse para garantizar la trazabilidad de las facturas según la Ley Antifraude.',
-                    code: 'COCHE_VENDIDO',
-                    factura: cocheInfo.numero_factura || null
-                });
-            }
-
-            const updateResult = await new Promise((resolve, reject) => {
-                db.run(`UPDATE coches SET activo = ? WHERE id = ?`, [activoValue, id], function(err) {
-                    if (err) {
-                        reject(err);
-                        return;
-                    }
-                    if (this.changes === 0) {
-                        resolve({ notFound: true });
-                        return;
-                    }
-                    resolve({ success: true });
-                });
-            });
-
-            if (updateResult?.notFound) {
-                return res.status(404).json({ error: 'Coche no encontrado' });
-            }
-
-            if (global.cacheManager) {
-                global.cacheManager.invalidatePattern('coches:*');
-                console.log('🗑️ [DELETE /api/coches/:id] Caché de coches invalidado');
-            }
-
-            console.log('✅ [DELETE /api/coches/:id] Coche desactivado correctamente:', id);
-            res.json({ success: true, message: 'Coche desactivado correctamente' });
-
-        } catch (error) {
-            console.error('❌ [DELETE /api/coches/:id] Error:', error.message || error);
-            res.status(500).json({ error: error.message || 'Error interno del servidor' });
-        }
-    })();
-});
-
-// GET - Obtener todos los productos
-app.get('/api/productos', (req, res) => {
-    db.all('SELECT * FROM productos WHERE activo = 1 ORDER BY descripcion', (err, rows) => {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        res.json({ success: true, data: rows });
-    });
-});
-
-// POST - Crear nuevo producto
-app.post('/api/productos', (req, res) => {
-    (async () => {
-        try {
-            const { codigo, descripcion, precio, stock, categoria } = req.body;
-            
-            // Validar campos obligatorios
-            if (!codigo || !descripcion || precio === undefined) {
-                return res.status(400).json({ 
-                    error: 'Campos obligatorios faltantes: codigo, descripcion, precio'
-                });
-            }
-            
-            // Verificar que el código no esté duplicado
-            const productoExistente = await new Promise((resolve, reject) => {
-                const dbType = config.get('database.type') || 'postgresql';
-                const activoValue = dbType === 'postgresql' ? 'true' : '1';
-                db.get(`SELECT id FROM productos WHERE codigo = ? AND activo = ${activoValue}`, [codigo], (err, row) => {
-                    if (err) {
-                        reject(err);
-                        return;
-                    }
-                    resolve(row);
-                });
-            });
-            
-            if (productoExistente) {
-                return res.status(409).json({ 
-                    error: 'El código ya existe',
-                    message: `Ya existe un producto activo con el código: ${codigo}`,
-                    code: 'DUPLICATE_CODIGO',
-                    field: 'codigo'
-                });
-            }
-            
-            // Insertar producto
-            const result = await new Promise((resolve, reject) => {
-                db.run(`
-                    INSERT INTO productos (codigo, descripcion, precio, stock, categoria)
-                    VALUES (?, ?, ?, ?, ?)
-                `, [codigo, descripcion, precio, stock, categoria], function(err) {
-                    if (err) {
-                        reject(err);
-                        return;
-                    }
-                    resolve({ id: this.lastID });
-                });
-            });
-            
-            res.json({ 
-                success: true, 
-                data: { 
-                    id: result.id, 
-                    codigo, 
-                    descripcion, 
-                    precio, 
-                    stock, 
-                    categoria 
-                } 
-            });
-            
-        } catch (error) {
-            console.error('❌ [POST /api/productos] Error:', error);
-            if (!res.headersSent) {
-                res.status(500).json({ error: error.message || 'Error interno del servidor' });
-            }
-        }
-    })();
-});
-
-// POST - Crear producto desde coche
-app.post('/api/productos/desde-coche', (req, res) => {
-    (async () => {
-        try {
-            const { coche_id, precio, cantidad = 1 } = req.body;
-            
-            // Validar campos obligatorios
-            if (!coche_id || precio === undefined) {
-                return res.status(400).json({ 
-                    error: 'Campos obligatorios faltantes: coche_id, precio'
-                });
-            }
-            
-            // Obtener los datos del coche
-            const coche = await new Promise((resolve, reject) => {
-                db.get('SELECT * FROM coches WHERE id = ? AND activo = 1', [coche_id], (err, row) => {
-                    if (err) {
-                        reject(err);
-                        return;
-                    }
-                    resolve(row);
-                });
-            });
-            
-            if (!coche) {
-                return res.status(404).json({ error: 'Coche no encontrado o inactivo' });
-            }
-            
-            // Generar código único basado en la matrícula
-            const codigo = coche.matricula; // Usar directamente la matrícula como código
-            
-            // Verificar que el código no esté duplicado
-            const productoExistente = await new Promise((resolve, reject) => {
-                const dbType = config.get('database.type') || 'postgresql';
-                const activoValue = dbType === 'postgresql' ? 'true' : '1';
-                db.get(`SELECT id FROM productos WHERE codigo = ? AND activo = ${activoValue}`, [codigo], (err, row) => {
-                    if (err) {
-                        reject(err);
-                        return;
-                    }
-                    resolve(row);
-                });
-            });
-            
-            if (productoExistente) {
-                return res.status(409).json({ 
-                    error: 'Ya existe un producto para este coche',
-                    message: `Ya existe un producto activo con el código: ${codigo}`,
-                    code: 'DUPLICATE_PRODUCTO_COCHE',
-                    field: 'codigo'
-                });
-            }
-            
-            // Generar descripción automática
-            const descripcion = `${coche.modelo} - ${coche.matricula} - ${coche.color} - ${coche.kms.toLocaleString()} km`;
-            
-            // Crear el producto
-            const result = await new Promise((resolve, reject) => {
-                db.run(`
-                    INSERT INTO productos (codigo, descripcion, precio, stock, categoria)
-                    VALUES (?, ?, ?, ?, ?)
-                `, [codigo, descripcion, precio, cantidad, 'vehiculo'], function(err) {
-                    if (err) {
-                        reject(err);
-                        return;
-                    }
-                    resolve({ id: this.lastID });
-                });
-            });
-            
-            res.json({ 
-                success: true, 
-                data: { 
-                    id: result.id, 
-                    codigo, 
-                    descripcion, 
-                    precio, 
-                    stock: cantidad, 
-                    categoria: 'vehiculo',
-                    coche: coche
-                } 
-            });
-            
-        } catch (error) {
-            console.error('❌ [POST /api/productos/desde-coche] Error:', error);
-            if (!res.headersSent) {
-                res.status(500).json({ error: error.message || 'Error interno del servidor' });
-            }
-        }
-    })();
-});
-
-// GET - Obtener todas las facturas (con paginación y caché)
-app.get('/api/facturas', async (req, res) => {
-    try {
-        const { page = 1, limit = 20, search = '', empresa_id = '', cliente_id = '', fecha_desde = '', fecha_hasta = '', include_detalles = 'false', include_resumen = 'false' } = req.query;
-        const includeDetalles = include_detalles === 'true';
-        const includeResumen = include_resumen === 'true';
-        
-        // Verificar si se debe forzar la recarga sin caché
-        const forceRefresh = req.query.force_refresh === 'true' || req.query.no_cache === 'true';
-        
-        // Usar caché con TTL reducido para información más fluida (30 segundos en lugar de 3 minutos)
-        const cacheKey = `facturas:page:${page}:limit:${limit}:search:${search}:empresa:${empresa_id}:cliente:${cliente_id}:fecha_desde:${fecha_desde}:fecha_hasta:${fecha_hasta}:det:${includeDetalles}:res:${includeResumen}`;
-        const cachedResult = !forceRefresh ? cacheManager.get(cacheKey) : null;
-        
-        // Verificación inteligente: siempre verificar si hay cambios significativos antes de usar caché
-        if (cachedResult && !forceRefresh) {
-            try {
-                // Verificación rápida del total de facturas en BD (con manejo de errores robusto)
-                const quickCheck = await new Promise((resolve) => {
-                    try {
-                        const dbType = config.get('database.type') || 'postgresql';
-                        const activoValue = dbType === 'postgresql' ? 'true' : '1';
-                        db.get(`SELECT COUNT(*) as total FROM facturas WHERE (activo = ${activoValue} OR activo IS NULL)`, [], (err, row) => {
-                            if (err) {
-                                console.debug('Error en verificación rápida de caché:', err.message);
-                                resolve(null); // Si hay error, usar caché
-                            } else {
-                                resolve(row?.total || 0);
-                            }
-                        });
-                    } catch (error) {
-                        console.debug('Error en verificación de caché:', error.message);
-                        resolve(null); // Si hay error, usar caché
-                    }
-                });
-                
-                // Solo verificar si la consulta fue exitosa
-                if (quickCheck !== null) {
-                    const cachedTotal = cachedResult.pagination?.totalCount || cachedResult.data?.length || 0;
-                    
-                    // Si hay diferencia en el total, limpiar caché y recargar
-                    if (quickCheck !== cachedTotal) {
-                        console.log(`🔄 Cambio detectado: BD tiene ${quickCheck} facturas, caché tenía ${cachedTotal} - actualizando`);
-                        cacheManager.delPattern('facturas:*');
-                        // Continuar sin usar caché para obtener datos frescos
-                    } else {
-                        // Usar caché si los totales coinciden
-                        return res.json({ success: true, ...cachedResult, cached: true });
-                    }
-                } else {
-                    // Si hubo error en la verificación, usar caché para no fallar
-                    return res.json({ success: true, ...cachedResult, cached: true });
-                }
-            } catch (error) {
-                // Si hay cualquier error en la verificación, usar caché
-                console.debug('Error en verificación de caché, usando caché:', error.message);
-                return res.json({ success: true, ...cachedResult, cached: true });
-            }
-        }
-        
-        // Construir consulta con filtros y límites de memoria
-        const joins = [
-            { type: 'LEFT', table: 'clientes c', condition: 'f.cliente_id = c.id' },
-            { type: 'LEFT', table: 'empresas e', condition: 'f.empresa_id = e.id' },
-            { type: 'LEFT', table: 'proformas p', condition: 'f.proforma_id = p.id' }
-        ];
-        
-        let whereConditions = [];
-        let whereParams = [];
-        
-        // Límite máximo de resultados para evitar memory leaks
-        const maxLimit = Math.min(parseInt(limit) || 20, 100);
-        
-        // Filtrar solo facturas activas (activo = 1 o true según el tipo de BD)
-        // También incluir facturas con activo IS NULL (facturas antiguas sin este campo)
-        const dbType = config.get('database.type') || 'postgresql';
-        const activoValue = dbType === 'postgresql' ? 'true' : '1';
-        // Incluir facturas activas O facturas sin campo activo (NULL) para compatibilidad con facturas antiguas
-        whereConditions.push(`(f.activo = ${activoValue} OR f.activo IS NULL)`);
-        
-        if (search) {
-            whereConditions.push('(f.numero_factura LIKE ? OR c.nombre LIKE ? OR e.nombre LIKE ?)');
-            whereParams.push(`%${search}%`, `%${search}%`, `%${search}%`);
-        }
-        
-        if (empresa_id) {
-            whereConditions.push('f.empresa_id = ?');
-            whereParams.push(empresa_id);
-        }
-        
-        if (cliente_id) {
-            whereConditions.push('f.cliente_id = ?');
-            whereParams.push(cliente_id);
-        }
-        
-        if (fecha_desde) {
-            whereConditions.push('f.fecha_emision >= ?');
-            whereParams.push(fecha_desde);
-        }
-        
-        if (fecha_hasta) {
-            whereConditions.push('f.fecha_emision <= ?');
-            whereParams.push(fecha_hasta);
-        }
-        
-        const whereClause = whereConditions.length > 0 ? whereConditions.join(' AND ') : null;
-        
-        const result = await paginationManager.getPaginatedDataWithJoins('facturas f', joins, {
-            page: parseInt(page),
-            limit: maxLimit,
-            where: whereClause,
-            whereParams: whereParams,
-            orderBy: 'COALESCE(f.fecha_creacion, f.fecha_emision)',
-            orderDirection: 'DESC',
-            select: `f.*, c.nombre as cliente_nombre, c.identificacion as cliente_identificacion, e.nombre as empresa_nombre, e.cif as empresa_cif, e.direccion as empresa_direccion,
-                     p.id as proforma_id_relacionada, p.numero_proforma as proforma_numero, p.estado as proforma_estado,
-                     (SELECT COUNT(*) FROM detalles_factura df WHERE df.factura_id = f.id AND df.coche_id IS NOT NULL) as coches_count`
-        });
-        
-        let facturas = result.data || [];
-        
-        if (includeDetalles && facturas.length > 0) {
-            const facturaIds = facturas.map(f => f.id).filter(Boolean);
-            if (facturaIds.length > 0) {
-                const placeholders = facturaIds.map(() => '?').join(', ');
-                const detallesQuery = `
-                    SELECT df.*, COALESCE(df.descripcion, p.descripcion) as descripcion,
-                           COALESCE(df.tipo_impuesto, 'igic') as tipo_impuesto,
-                           df.factura_id,
-                           c.matricula as coche_matricula,
-                           c.chasis as coche_chasis,
-                           c.color as coche_color,
-                           c.kms as coche_kms,
-                           c.modelo as coche_modelo
-                    FROM detalles_factura df
-                    LEFT JOIN productos p ON df.producto_id = p.id
-                    LEFT JOIN coches c ON (COALESCE(df.descripcion, p.descripcion) LIKE '%' || c.matricula || '%')
-                    WHERE df.factura_id IN (${placeholders})
-                    ORDER BY df.factura_id, df.id
-                `;
-                
-                const detalles = await new Promise((resolve, reject) => {
-                    db.all(detallesQuery, facturaIds, (err, rows) => {
-                        if (err) reject(err);
-                        else resolve(rows || []);
-                    });
-                });
-                
-                const detalleMap = {};
-                (detalles || []).forEach(detalle => {
-                    if (!detalleMap[detalle.factura_id]) {
-                        detalleMap[detalle.factura_id] = [];
-                    }
-                    detalleMap[detalle.factura_id].push(detalle);
-                });
-                
-                facturas = facturas.map(factura => ({
-                    ...factura,
-                    detalles: detalleMap[factura.id] || []
-                }));
-            }
-        }
-        
-        let resumen = undefined;
-        if (includeResumen) {
-            try {
-                resumen = await fetchFacturaResumen(req.query);
-            } catch (resumenError) {
-                logger.warn('No se pudo calcular el resumen de facturas', { error: resumenError.message });
-            }
-        }
-        
-        const responsePayload = {
-            data: facturas,
-            pagination: result.pagination,
-            resumen
-        };
-        
-        // TTL reducido a 30 segundos para información más fluida y actualizada
-        cacheManager.set(cacheKey, responsePayload, 30);
-        
-        res.json({ success: true, ...responsePayload, cached: false });
-        
-    } catch (error) {
-        console.error('❌ Error al obtener facturas:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// GET - Resumen de facturas (estadísticas)
-app.get('/api/facturas/resumen', async (req, res) => {
-    try {
-        const resumen = await fetchFacturaResumen(req.query);
-        res.json({ success: true, data: resumen });
-    } catch (error) {
-        console.error('❌ Error obteniendo resumen de facturas:', error.message);
-        res.status(500).json({ error: 'Error al obtener resumen' });
-    }
-});
-
-// GET - Años disponibles en facturas
-app.get('/api/facturas/anios', (req, res) => {
-    const dbType = config.get('database.type') || 'postgresql';
-    const query = dbType === 'postgresql'
-        ? 'SELECT DISTINCT EXTRACT(YEAR FROM fecha_emision)::INT AS year FROM facturas ORDER BY year DESC'
-        : 'SELECT DISTINCT CAST(strftime(\'%Y\', fecha_emision) AS INTEGER) as year FROM facturas ORDER BY year DESC';
-    
-    db.all(query, (err, rows) => {
-        if (err) {
-            console.error('❌ Error obteniendo años de facturas:', err.message);
-            res.status(500).json({ error: 'Error al obtener años' });
-            return;
-        }
-        
-        const years = rows.map(r => (r.year || r.YEAR || r.anio).toString());
-        if (years.length === 0) {
-            years.push(new Date().getFullYear().toString());
-        }
-        
-        res.json({ success: true, data: years });
-    });
-});
-
-app.get('/api/metrics/resumen', async (req, res) => {
-    try {
-        const now = new Date();
-        const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1).toISOString().split('T')[0];
-        const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0).toISOString().split('T')[0];
-        const dbType = config.get('database.type') || 'postgresql';
-        const activoValue = dbType === 'postgresql' ? 'true' : '1';
-        
-        const [
-            clientesRow,
-            cochesRow,
-            empresasRow,
-            facturasRow,
-            ingresosRow
-        ] = await Promise.all([
-            runGet('SELECT COUNT(*) as count FROM clientes'),
-            runGet('SELECT COUNT(*) as count FROM coches'),
-            runGet('SELECT COUNT(*) as count FROM empresas'),
-            runGet(`SELECT COUNT(*) as count FROM facturas WHERE (activo = ${activoValue} OR activo IS NULL) AND (estado IS NULL OR estado != 'anulado')`),
-            runGet(
-                `SELECT COALESCE(SUM(total), 0) as total
-                 FROM facturas
-                 WHERE estado = 'pagada'
-                   AND (activo = ${activoValue} OR activo IS NULL)
-                   AND (estado IS NULL OR estado != 'anulado')
-                   AND fecha_emision >= ? AND fecha_emision <= ?`,
-                [startOfMonth, endOfMonth]
-            )
-        ]);
-        
-        res.json({
-            success: true,
-            data: {
-                totalClientes: Number(clientesRow.count || 0),
-                totalCoches: Number(cochesRow.count || 0),
-                totalFacturas: Number(facturasRow.count || 0),
-                totalEmpresas: Number(empresasRow.count || 0),
-                ingresosMes: Number(ingresosRow.total || 0)
-            }
-        });
-    } catch (error) {
-        console.error('❌ Error obteniendo métricas:', error.message);
-        res.status(500).json({ error: 'Error al obtener métricas' });
-    }
-});
-
-// POST - Crear nueva factura (Cumpliendo Ley Antifraude)
-app.post('/api/facturas', async (req, res) => {
-    const startTime = Date.now();
-    
-    try {
-        const { 
-            numero_factura, 
-            empresa_id,
-            cliente_id, 
-            fecha_emision, 
-            fecha_vencimiento, 
-            subtotal, 
-            igic, 
-            total, 
-            notas,
-            productos,
-            proforma_id, // ID de la proforma relacionada
-            // Campos adicionales de Ley Antifraude
-            fecha_operacion,
-            tipo_documento = 'factura',
-            metodo_pago = 'transferencia',
-            referencia_operacion
-        } = req.body;
-        
-        logger.info('Iniciando creación de factura', {
-            numero_factura,
-            empresa_id,
-            cliente_id,
-            total,
-            productos_count: productos?.length || 0
-        }, 'operations');
-        
-        // ==================== VALIDACIONES ESTRICTAS ====================
-        
-        // 1. Validar empresa_id ANTES de cualquier procesamiento
-        if (!empresa_id || empresa_id === null || empresa_id === undefined) {
-            logger.warn('Intento de crear factura sin empresa_id', {
-                body: logger.sanitizeData(req.body)
-            }, 'operations');
-            return res.status(400).json({ 
-                success: false, 
-                error: 'empresa_id es obligatorio para crear una factura' 
-            });
-        }
-        
-        // 2. Verificar que la empresa existe
-        const empresaStartTime = Date.now();
-        const empresaExiste = await new Promise((resolve, reject) => {
-            db.get("SELECT id, nombre FROM empresas WHERE id = ?", [empresa_id], (err, row) => {
-                const duration = Date.now() - empresaStartTime;
-                logger.databaseQuery('SELECT empresas WHERE id', duration, row ? 1 : 0, [empresa_id]);
-                if (err) {
-                    logger.error('Error verificando empresa', { error: err.message, empresa_id }, 'database');
-                    reject(err);
-                } else {
-                    resolve(row);
-                }
-            });
-        });
-                
-        if (!empresaExiste) {
-            logger.warn('Intento de crear factura con empresa inexistente', { empresa_id }, 'operations');
-            return res.status(400).json({ 
-                success: false, 
-                error: `La empresa con ID ${empresa_id} no existe en la base de datos` 
-            });
-        }
-        
-        logger.debug('Empresa validada', { empresa_id, nombre: empresaExiste.nombre }, 'operations');
-        
-        // 3. Validar número de factura único para la empresa
-        if (numero_factura) {
-            const numeroExiste = await new Promise((resolve, reject) => {
-                db.get("SELECT id, numero_factura FROM facturas WHERE numero_factura = ? AND empresa_id = ?", 
-                    [numero_factura, empresa_id], (err, row) => {
-                            if (err) reject(err);
-                            else resolve(row);
-                        });
-                    });
-                    
-            if (numeroExiste) {
-                return res.status(400).json({ 
-                    success: false, 
-                    error: `El número de factura "${numero_factura}" ya existe para la empresa "${empresaExiste.nombre}"` 
-                });
-            }
-        }
-        
-        // 4. Validar cliente_id si se proporciona
-        if (cliente_id) {
-            const clienteExiste = await new Promise((resolve, reject) => {
-                db.get("SELECT id, nombre FROM clientes WHERE id = ?", [cliente_id], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
-        
-            if (!clienteExiste) {
-            return res.status(400).json({ 
-                success: false, 
-                    error: `El cliente con ID ${cliente_id} no existe en la base de datos` 
-                });
-            }
-        }
-        
-        logger.info('Validaciones pasadas - Creando factura', {
-            empresa: empresaExiste.nombre,
-            empresa_id,
-            numero_factura,
-            cliente_id
-        }, 'operations');
-        
-        // ==================== FIN VALIDACIONES ESTRICTAS ====================
-        
-        // Validar y obtener empresa_id válido
-        // Validar y obtener empresa_id válido
-        let empresaIdValido = empresa_id;
-        
-        // Las validaciones estrictas ya verificaron que empresa_id es válido
-        console.log(`✅ Usando empresa validada: ${empresaExiste.nombre} (ID: ${empresaIdValido})`);
-        
-        // Verificar que la empresa existe (ya validado arriba, pero mantener para compatibilidad)
-        const empresaExisteVerificada = empresaExiste;
-        
-        // Generar número de serie único
-        const numero_serie = sistemaIntegridad.generarNumeroSerie(empresaIdValido, numero_factura);
-        
-        // Preparar datos para hash de integridad
-        const datosFactura = {
-            numero_factura,
-            empresa_id: empresaIdValido,
-            cliente_id,
-            fecha_emision,
-            fecha_operacion: fecha_operacion || fecha_emision,
-            subtotal,
-            igic,
-            total,
-            productos: productos || []
-        };
-        
-        // Generar hash de integridad
-        const hash_documento = sistemaIntegridad.generarHashIntegridad(datosFactura);
-        
-        // Generar sellado temporal
-        const selladoTemporal = sistemaIntegridad.generarSelladoTemporal(datosFactura);
-        
-        // Insertar factura con todos los campos de Ley Antifraude
-        // Declarar dbType al principio para que esté disponible en todo el scope
-        const dbType = config.get('database.type') || 'postgresql';
-        const activoValue = dbType === 'postgresql' ? true : 1;
-        
-        // Asegurar que las columnas de Ley Antifraude existan antes de insertar
-        await ensureFacturaLeyAntifraudeColumns(dbType === 'postgresql');
-        
-        // Validar proforma_id si se proporciona
-        if (proforma_id) {
-            const proformaExiste = await new Promise((resolve, reject) => {
-                db.get("SELECT id, numero_proforma FROM proformas WHERE id = ?", [proforma_id], (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                });
-            });
-            
-            if (!proformaExiste) {
-                return res.status(400).json({ 
-                    success: false, 
-                    error: `La proforma con ID ${proforma_id} no existe en la base de datos` 
-                });
-            }
-            
-            logger.debug('Proforma relacionada validada', { proforma_id, numero_proforma: proformaExiste.numero_proforma }, 'operations');
-        }
-        
-        const query = `
-            INSERT INTO facturas (
-                numero_factura, empresa_id, cliente_id, fecha_emision, fecha_vencimiento,
-                subtotal, igic, total, notas, numero_serie, fecha_operacion,
-                tipo_documento, metodo_pago, referencia_operacion, hash_documento,
-                sellado_temporal, estado_fiscal, proforma_id, activo
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `;
-        
-        const params = [
-            numero_factura, empresaIdValido, cliente_id, fecha_emision, fecha_vencimiento,
-            subtotal, igic, total, notas, numero_serie, fecha_operacion || fecha_emision,
-            tipo_documento, metodo_pago, referencia_operacion || '', hash_documento,
-            selladoTemporal.timestamp, 'pendiente', proforma_id || null, activoValue
-        ];
-        
-        // Capturar dbType en una constante para usar dentro del callback
-        const dbTypeForCallback = dbType;
-        
-        db.run(query, params, async function(err) {
-            if (err) {
-                console.error('❌ Error al crear factura:', err.message);
-                console.error('❌ Query:', query);
-                console.error('❌ Params:', params);
-                res.status(500).json({ 
-                    success: false,
-                    error: 'Error al insertar factura en la base de datos',
-                    details: err.message 
-                });
-                return;
-            }
-            
-            const facturaId = this.lastID;
-            
-            try {
-                // Asegurar que las columnas de detalles_factura existan antes de insertar
-                await ensureDetalleFacturaCocheColumn(dbTypeForCallback === 'postgresql');
-                
-                // Insertar detalles de la factura
-                if (productos && productos.length > 0) {
-                    for (const producto of productos) {
-                        const productoId = producto.id && producto.id > 0 ? producto.id : null;
-                        const cocheId = producto.coche_id || producto.cocheId || producto.cocheID || null;
-                        
-                        // Log para depuración
-                        console.log(`🔍 [Factura ${facturaId}] Procesando producto:`, {
-                            descripcion: producto.descripcion,
-                            coche_id: cocheId,
-                            producto_id: productoId
-                        });
-                        
-                        await new Promise((resolve, reject) => {
-                            // Aceptar tanto camelCase como snake_case para compatibilidad
-                            const precioUnitario = producto.precio_unitario || producto.precioUnitario || producto.precio || 0;
-                            const igic = producto.igic !== undefined ? producto.igic : (producto.impuesto !== undefined ? producto.impuesto : 0);
-                            const tipoImpuesto = producto.tipo_impuesto || producto.tipoImpuesto || 'igic';
-                            const cantidad = producto.cantidad || 1;
-                            
-                            db.run(`
-                                INSERT INTO detalles_factura (factura_id, producto_id, coche_id, cantidad, precio_unitario, subtotal, igic, total, descripcion, tipo_impuesto)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            `, [facturaId, productoId, cocheId, cantidad, precioUnitario, producto.subtotal || (precioUnitario * cantidad), igic, producto.total || (precioUnitario * cantidad + igic), producto.descripcion || null, tipoImpuesto], function(err) {
-                                if (err) {
-                                    console.error('❌ Error al insertar detalle de factura:', err.message);
-                                    console.error('❌ Datos del producto:', JSON.stringify(producto, null, 2));
-                                    reject(err);
-                                } else {
-                                    console.log('✅ Detalle de factura insertado:', this.lastID);
-                                    resolve();
-                                }
-                            });
-                        });
-                        
-                        // Marcar coche como vendido si es un coche
-                        // Verificar que cocheId sea un número válido (no null, undefined, 0, o string vacío)
-                        const cocheIdNumero = cocheId ? parseInt(cocheId) : null;
-                        if (cocheIdNumero && cocheIdNumero > 0) {
-                            const inactivoValue = dbTypeForCallback === 'postgresql' ? false : 0;
-                            
-                            console.log(`🔍 [Factura ${facturaId}] Intentando marcar coche ${cocheIdNumero} como vendido...`);
-                            
-                            await new Promise((resolve, reject) => {
-                                db.run(`UPDATE coches SET activo = ? WHERE id = ?`, [inactivoValue, cocheIdNumero], function(err) {
-                                    if (err) {
-                                        console.error(`❌ Error marcando coche ${cocheIdNumero} como vendido:`, err.message);
-                                        reject(err);
-                                    } else {
-                                        if (this.changes > 0) {
-                                            console.log(`✅ [Factura ${facturaId}] Coche ${cocheIdNumero} marcado como vendido (${this.changes} fila(s) actualizada(s))`);
-                                        } else {
-                                            console.warn(`⚠️ [Factura ${facturaId}] Coche ${cocheIdNumero} no encontrado o ya estaba marcado como vendido`);
-                                        }
-                                        resolve();
-                                    }
-                                });
-                            });
-                            
-                            // Actualizar producto asociado si existe (usando matrícula)
-                            const cocheInfo = await runGet('SELECT matricula FROM coches WHERE id = ?', [cocheId]);
-                            if (cocheInfo?.matricula) {
-                                await new Promise((resolve, reject) => {
-                                    db.run(`
-                                        UPDATE productos 
-                                        SET activo = ? 
-                                        WHERE codigo = ?
-                                    `, [inactivoValue, cocheInfo.matricula], function(err) {
-                                        if (err) {
-                                            console.error(`❌ Error marcando producto ${cocheInfo.matricula} como vendido:`, err.message);
-                                            reject(err);
-                                        } else {
-                                            resolve();
-                                        }
-                                    });
-                                });
-                            }
-                        } else if (producto.descripcion && producto.descripcion.includes(' - ')) {
-                            // Extraer matrícula de la descripción (formato: "Modelo - MATRÍCULA - Color")
-                            const partes = producto.descripcion.split(' - ');
-                            if (partes.length >= 2) {
-                                const matricula = partes[1].trim();
-                                
-                                // Verificar si es una matrícula válida (contiene números y letras)
-                                if (/[A-Z0-9]/.test(matricula)) {
-                                    console.log(`🔍 Marcando coche como vendido: ${matricula}`);
-                                    
-                                    // Marcar coche como vendido
-                                    const activoValue = dbTypeForCallback === 'postgresql' ? false : 0;
-                                    await new Promise((resolve, reject) => {
-                                        db.run(`
-                                            UPDATE coches 
-                                            SET activo = ? 
-                                            WHERE matricula = ?
-                                        `, [activoValue, matricula], function(err) {
-                                            if (err) {
-                                                console.error(`❌ Error marcando coche ${matricula} como vendido:`, err.message);
-                                                reject(err);
-                                            } else {
-                                                if (this.changes > 0) {
-                                                    console.log(`✅ Coche ${matricula} marcado como vendido`);
-                                                } else {
-                                                    console.log(`⚠️ Coche ${matricula} no encontrado en la base de datos`);
-                                                }
-                                                resolve();
-                                            }
-                                        });
-                                    });
-                                    
-                                    // Marcar producto asociado como vendido
-                                    const activoValueProducto = dbTypeForCallback === 'postgresql' ? false : 0;
-                                    await new Promise((resolve, reject) => {
-                                        db.run(`
-                                            UPDATE productos 
-                                            SET activo = ? 
-                                            WHERE codigo = ?
-                                        `, [activoValueProducto, matricula], function(err) {
-                                            if (err) {
-                                                console.error(`❌ Error marcando producto ${matricula} como vendido:`, err.message);
-                                                reject(err);
-                                            } else {
-                                                if (this.changes > 0) {
-                                                    console.log(`✅ Producto ${matricula} marcado como vendido`);
-                                                } else {
-                                                    console.log(`⚠️ Producto ${matricula} no encontrado en la base de datos`);
-                                                }
-                                                resolve();
-                                            }
-                                        });
-                                    });
-                                }
-                            }
-                        }
-                    }
-                }
-                
-                // ==================== ACTUALIZAR ESTADO DE PROFORMAS ====================
-                // Obtener todos los coche_id de la factura recién creada
-                let cochesFactura = [];
-                
-                console.log(`🔍 [Factura ${facturaId}] Buscando coches en detalles_factura...`);
-                
-                if (dbTypeForCallback === 'postgresql') {
-                    // Usar método query directamente para PostgreSQL
-                    const result = await db.query(`
-                        SELECT DISTINCT coche_id, factura_id, descripcion
-                        FROM detalles_factura 
-                        WHERE factura_id = $1
-                    `, [facturaId]);
-                    console.log(`🔍 [Factura ${facturaId}] Todos los detalles de factura:`, result.rows);
-                    cochesFactura = result.rows
-                        .map(row => row.coche_id)
-                        .filter(id => id !== null && id !== undefined);
-                } else {
-                    cochesFactura = await new Promise((resolve, reject) => {
-                        db.all(`
-                            SELECT DISTINCT coche_id, factura_id, descripcion
-                            FROM detalles_factura 
-                            WHERE factura_id = ?
-                        `, [facturaId], (err, rows) => {
-                            if (err) {
-                                console.error('❌ Error obteniendo coches de la factura:', err.message);
-                                reject(err);
-                            } else {
-                                console.log(`🔍 [Factura ${facturaId}] Todos los detalles de factura:`, rows);
-                                const cocheIds = rows
-                                    .map(row => row.coche_id)
-                                    .filter(id => id !== null && id !== undefined);
-                                resolve(cocheIds);
-                            }
-                        });
-                    });
-                }
-                
-                console.log(`📋 [Factura ${facturaId}] Coches encontrados en la factura (filtrados):`, cochesFactura);
-                
-                if (cochesFactura && cochesFactura.length > 0) {
-                    console.log(`📋 [Factura ${facturaId}] Buscando proformas con estos coches (sin filtrar por cliente/empresa)...`);
-                    
-                    // Buscar proformas relacionadas (mismo cliente, misma empresa y mismos coches)
-                    let proformasConCoches = [];
-                    
-                    if (dbTypeForCallback === 'postgresql') {
-                        // Construir query con placeholders de PostgreSQL ($1, $2, etc.)
-                        // Buscar proformas que contengan estos coches, sin importar cliente o empresa
-                        const cochesPlaceholders = cochesFactura.map((_, i) => `$${i + 1}`).join(',');
-                        const params = [...cochesFactura];
-                        
-                        const query = `
-                            SELECT DISTINCT p.id, p.numero_proforma, p.estado, p.cliente_id, p.empresa_id,
-                                   -- Contar TODOS los coches de la proforma (no solo los de esta factura)
-                                   (SELECT COUNT(DISTINCT dp2.coche_id) 
-                                    FROM detalles_proforma dp2 
-                                    WHERE dp2.proforma_id = p.id 
-                                      AND dp2.coche_id IS NOT NULL) as total_coches_proforma,
-                                   -- Contar TODOS los coches facturados de la proforma (de cualquier factura)
-                                   (SELECT COUNT(DISTINCT dp3.coche_id)
-                                    FROM detalles_proforma dp3
-                                    WHERE dp3.proforma_id = p.id
-                                      AND dp3.coche_id IS NOT NULL
-                                      AND EXISTS (
-                                          SELECT 1 
-                                          FROM detalles_factura df
-                                          INNER JOIN facturas f ON df.factura_id = f.id
-                                          WHERE df.coche_id = dp3.coche_id
-                                            AND (f.estado IS NULL OR f.estado != 'anulado')
-                                            AND (f.activo = true OR f.activo IS NULL)
-                                      )) as coches_facturados
-                            FROM proformas p
-                            INNER JOIN detalles_proforma dp ON dp.proforma_id = p.id
-                            WHERE dp.coche_id IN (${cochesPlaceholders})
-                              AND dp.coche_id IS NOT NULL
-                              AND p.estado NOT IN ('anulado', 'cancelada')
-                            GROUP BY p.id, p.numero_proforma, p.estado, p.cliente_id, p.empresa_id
-                        `;
-                        
-                        const result = await db.query(query, params);
-                        proformasConCoches = result.rows || [];
-                    } else {
-                        proformasConCoches = await new Promise((resolve, reject) => {
-                            if (cochesFactura.length === 0) {
-                                resolve([]);
-                                return;
-                            }
-                            const placeholders = cochesFactura.map(() => '?').join(',');
-                            // Buscar proformas que contengan estos coches, sin importar cliente o empresa
-                            db.all(`
-                                SELECT DISTINCT p.id, p.numero_proforma, p.estado, p.cliente_id, p.empresa_id,
-                                       -- Contar TODOS los coches de la proforma (no solo los de esta factura)
-                                       (SELECT COUNT(DISTINCT dp2.coche_id) 
-                                        FROM detalles_proforma dp2 
-                                        WHERE dp2.proforma_id = p.id 
-                                          AND dp2.coche_id IS NOT NULL) as total_coches_proforma,
-                                       -- Contar TODOS los coches facturados de la proforma (de cualquier factura)
-                                       (SELECT COUNT(DISTINCT dp3.coche_id)
-                                        FROM detalles_proforma dp3
-                                        WHERE dp3.proforma_id = p.id
-                                          AND dp3.coche_id IS NOT NULL
-                                          AND EXISTS (
-                                              SELECT 1 
-                                              FROM detalles_factura df
-                                              INNER JOIN facturas f ON df.factura_id = f.id
-                                              WHERE df.coche_id = dp3.coche_id
-                                                AND (f.estado IS NULL OR f.estado != 'anulado')
-                                                AND (f.activo = 1 OR f.activo IS NULL)
-                                          )) as coches_facturados
-                                FROM proformas p
-                                INNER JOIN detalles_proforma dp ON dp.proforma_id = p.id
-                                WHERE dp.coche_id IN (${placeholders})
-                                  AND dp.coche_id IS NOT NULL
-                                  AND p.estado NOT IN ('anulado', 'cancelada')
-                                GROUP BY p.id, p.numero_proforma, p.estado, p.cliente_id, p.empresa_id
-                            `, cochesFactura, (err, rows) => {
-                                if (err) {
-                                    console.error('❌ Error buscando proformas relacionadas:', err.message);
-                                    reject(err);
-                                } else {
-                                    resolve(rows || []);
-                                }
-                            });
-                        });
-                    }
-                    
-                    console.log(`📋 [Factura ${facturaId}] Proformas relacionadas encontradas:`, proformasConCoches.length);
-                    if (proformasConCoches.length > 0) {
-                        console.log(`📋 [Factura ${facturaId}] Detalles de proformas encontradas:`, JSON.stringify(proformasConCoches, null, 2));
-                    }
-                    
-                    // Actualizar estado de proformas según cuántos coches estén facturados
-                    for (const proforma of proformasConCoches) {
-                        console.log(`🔍 [Factura ${facturaId}] Evaluando proforma ${proforma.numero_proforma}:`);
-                        console.log(`   - Total coches en proforma: ${proforma.total_coches_proforma}`);
-                        console.log(`   - Coches facturados: ${proforma.coches_facturados}`);
-                        console.log(`   - ¿Todos facturados?: ${proforma.coches_facturados === proforma.total_coches_proforma}`);
-                        
-                        const totalCoches = parseInt(proforma.total_coches_proforma) || 0;
-                        const cochesFacturados = parseInt(proforma.coches_facturados) || 0;
-                        
-                        if (totalCoches > 0) {
-                            let nuevoEstado = null;
-                            let notaEstado = '';
-                            
-                            if (cochesFacturados === totalCoches) {
-                                // Todos los coches están facturados (puede ser en la misma factura o en facturas diferentes)
-                                nuevoEstado = 'facturada';
-                                notaEstado = `Facturada completamente: ${cochesFacturados}/${totalCoches} coches`;
-                                console.log(`✅ [Factura ${facturaId}] Actualizando proforma ${proforma.numero_proforma} (ID: ${proforma.id}) a estado 'facturada'`);
-                            } else if (cochesFacturados > 0 && cochesFacturados < totalCoches) {
-                                // Solo algunos coches están facturados
-                                nuevoEstado = 'semifacturado';
-                                notaEstado = `Parcialmente facturada: ${cochesFacturados}/${totalCoches} coches en factura ${numero_factura}`;
-                                console.log(`🟡 [Factura ${facturaId}] Actualizando proforma ${proforma.numero_proforma} (ID: ${proforma.id}) a estado 'semifacturado'`);
-                            } else {
-                                // Ningún coche está facturado (no debería pasar si se crea desde la proforma)
-                                console.log(`ℹ️ [Factura ${facturaId}] Proforma ${proforma.numero_proforma} tiene ${cochesFacturados}/${totalCoches} coches facturados, no se actualiza`);
-                                continue;
-                            }
-                            
-                            if (nuevoEstado) {
-                                if (dbTypeForCallback === 'postgresql') {
-                                    const updateResult = await db.query(`
-                                        UPDATE proformas 
-                                        SET estado = $1,
-                                            notas = CASE 
-                                                WHEN notas IS NULL OR notas = '' THEN $2
-                                                ELSE notas || ' | ' || $2
-                                            END
-                                        WHERE id = $3
-                                        RETURNING id, numero_proforma, estado
-                                    `, [nuevoEstado, notaEstado, proforma.id]);
-                                    
-                                    if (updateResult.rows && updateResult.rows.length > 0) {
-                                        console.log(`✅ Proforma ${proforma.numero_proforma} actualizada a '${nuevoEstado}'`);
-                                        // Invalidar caché de proformas
-                                        if (cacheManager) {
-                                            cacheManager.invalidatePattern('proformas:*');
-                                            console.log(`🔄 Caché de proformas invalidado`);
-                                        }
-                                    }
-                                } else {
-                                    await new Promise((resolve, reject) => {
-                                        db.run(`
-                                            UPDATE proformas 
-                                            SET estado = ?,
-                                                notas = CASE 
-                                                    WHEN notas IS NULL OR notas = '' THEN ?
-                                                    ELSE notas || ' | ' || ?
-                                                END
-                                            WHERE id = ?
-                                        `, [nuevoEstado, notaEstado, notaEstado, proforma.id], function(err) {
-                                            if (err) {
-                                                console.error(`❌ Error actualizando proforma ${proforma.id}:`, err.message);
-                                                reject(err);
-                                            } else {
-                                                console.log(`✅ Proforma ${proforma.numero_proforma} actualizada a '${nuevoEstado}'`);
-                                                // Invalidar caché de proformas
-                                                if (cacheManager) {
-                                                    cacheManager.invalidatePattern('proformas:*');
-                                                    console.log(`🔄 Caché de proformas invalidado`);
-                                                }
-                                                resolve();
-                                            }
-                                        });
-                                    });
-                                }
-                            }
-                        }
-                    }
-                } else {
-                    console.log(`⚠️ [Factura ${facturaId}] No se encontraron coche_id en detalles_factura. Esto puede indicar que los coches no se están guardando correctamente.`);
-                    console.log(`   - Verificar que los productos incluyan coche_id al crear la factura`);
-                    console.log(`   - Cliente ID: ${cliente_id}, Empresa ID: ${empresaIdValido}`);
-                }
-                // ==================== FIN ACTUALIZACIÓN DE PROFORMAS ====================
-                
-                // Invalidar caché de facturas y proformas después de crear factura
-                if (cacheManager) {
-                    cacheManager.invalidatePattern('facturas:*');
-                    cacheManager.invalidatePattern('proformas:*');
-                    cacheManager.invalidateByTableChange('facturas', 'insert');
-                    console.log(`🔄 Caché invalidado después de crear factura ${facturaId}`);
-                }
-                
-                // Registrar en auditoría
-                const datosCompletosFactura = {
-                    id: facturaId,
-                    numero_factura,
-                    numero_serie,
-                    empresa_id,
-                    cliente_id,
-                    fecha_emision,
-                    fecha_operacion: fecha_operacion || fecha_emision,
-                    subtotal,
-                    igic,
-                    total,
-                    hash_documento,
-                    sellado_temporal: selladoTemporal.timestamp
-                };
-                
-                await sistemaAuditoria.registrarCreacionFactura(datosCompletosFactura);
-                logger.debug('Factura registrada en auditoría', { facturaId, numero_factura }, 'operations');
-                
-                // Generar código VeriFactu
-                const codigoVeriFactu = sistemaIntegridad.generarCodigoVeriFactu(datosCompletosFactura);
-                logger.debug('Código VeriFactu generado', { facturaId, codigoVeriFactu }, 'operations');
-                
-                // Actualizar factura con código VeriFactu
-                const updateStartTime = Date.now();
-                db.run('UPDATE facturas SET codigo_verifactu = ? WHERE id = ?', [codigoVeriFactu, facturaId], function(err) {
-                    const duration = Date.now() - updateStartTime;
-                    if (err) {
-                        logger.error('Error actualizando código VeriFactu', { error: err.message, facturaId }, 'database');
-                    } else {
-                        logger.databaseQuery('UPDATE facturas SET codigo_verifactu', duration, this.changes, [facturaId]);
-                    }
-                });
-                
-                // Generar firma digital de la factura con certificado de empresa
-                const datosFacturaParaFirma = {
-                    ...datosCompletosFactura,
-                    codigo_verifactu: codigoVeriFactu,
-                    productos: productos || []
-                };
-                
-                const resultadoFirma = await sistemaFirmaDigital.firmarDocumentoConEmpresa(empresa_id, datosFacturaParaFirma);
-                
-                if (resultadoFirma.success) {
-                    const firmaDigital = {
-                        firma: resultadoFirma.firma,
-                        archivo: resultadoFirma.firma.archivo,
-                        certificado: resultadoFirma.firma.certificado
-                    };
-                    
-                    // Actualizar factura con información de firma digital
-                    const firmaStartTime = Date.now();
-                    db.run('UPDATE facturas SET respuesta_aeat = ? WHERE id = ?', 
-                        [JSON.stringify({ firma_digital: firmaDigital.firma, archivo_firma: firmaDigital.archivo }), facturaId], function(err) {
-                            const duration = Date.now() - firmaStartTime;
-                            if (err) {
-                                logger.error('Error actualizando firma digital', { error: err.message, facturaId }, 'database');
-                            } else {
-                                logger.databaseQuery('UPDATE facturas SET respuesta_aeat', duration, this.changes, [facturaId]);
-                            }
-                        });
-                    
-                    logger.info('Factura firmada digitalmente', { 
-                        facturaId, 
-                        archivo: firmaDigital.archivo 
-                    }, 'operations');
-                } else {
-                    logger.warn('No se pudo firmar la factura', { 
-                        facturaId, 
-                        error: resultadoFirma.error 
-                    }, 'operations');
-                }
-                
-                const totalDuration = Date.now() - startTime;
-                logger.invoiceCreated(facturaId, numero_factura, total, cliente_id);
-                logger.info('Factura creada exitosamente con cumplimiento de Ley Antifraude', {
-                    facturaId,
-                    numero_factura,
-                    numero_serie,
-                    empresa_id,
-                    cliente_id,
-                    total,
-                    duration: `${totalDuration}ms`,
-                    productos_count: productos?.length || 0
-                }, 'operations');
-                
-                // Limpiar caché de facturas para que se actualice el historial
-                if (global.cacheManager) {
-                    try {
-                        const deletedCount = global.cacheManager.delPattern('facturas:*');
-                        logger.debug('Caché de facturas limpiado después de crear factura', { deletedCount, facturaId });
-                        console.log(`🗑️ Caché de facturas limpiado: ${deletedCount} entradas eliminadas`);
-                    } catch (cacheError) {
-                        logger.warn('Error al limpiar caché de facturas', { error: cacheError.message });
-                        console.error('❌ Error al limpiar caché de facturas:', cacheError.message);
-                    }
-                }
-                
-                res.json({ 
-                    success: true, 
-                    data: { 
-                        id: facturaId, 
-                        numero_factura,
-                        numero_serie,
-                        hash_documento,
-                        sellado_temporal: selladoTemporal.timestamp,
-                        codigo_verifactu: codigoVeriFactu,
-                        total 
-                    } 
-                });
-                
-            } catch (error) {
-                const totalDuration = Date.now() - startTime;
-                logger.error('Error en proceso de creación de factura', {
-                    error: error.message,
-                    stack: error.stack,
-                    empresa_id,
-                    cliente_id,
-                    numero_factura,
-                    duration: `${totalDuration}ms`
-                }, 'operations');
-                res.status(500).json({ 
-                    success: false,
-                    error: 'Error en el proceso de creación de factura',
-                    details: error.message 
-                });
-            }
-        });
-        
-    } catch (error) {
-        console.error('❌ Error general en creación de factura:', error);
-        console.error('❌ Stack trace:', error.stack);
-        res.status(500).json({ 
-            success: false,
-            error: 'Error interno del servidor',
-            details: error.message 
-        });
-    }
-});
-
-// GET - Generar siguiente número de factura por empresa
-app.get('/api/facturas/siguiente-numero/:empresaId', (req, res) => {
-    const empresaId = req.params.empresaId;
-    const año = new Date().getFullYear();
-    
-    // ==================== VALIDACIONES ESTRICTAS ====================
-    
-    // 1. Validar que empresaId es un número válido
-    if (!empresaId || isNaN(empresaId) || parseInt(empresaId) <= 0) {
-        return res.status(400).json({ 
-            success: false, 
-            error: 'ID de empresa inválido. Debe ser un número positivo.' 
-        });
-    }
-    
-    const empresaIdNumero = parseInt(empresaId);
-    
-    // 2. Verificar que la empresa existe
-    db.get("SELECT id, nombre FROM empresas WHERE id = ?", [empresaIdNumero], (err, empresa) => {
-        if (err) {
-            console.error('❌ Error consultando empresa:', err);
-            return res.status(500).json({ 
-                success: false, 
-                error: 'Error interno al consultar la empresa' 
-            });
-        }
-        
-        if (!empresa) {
-            return res.status(404).json({ 
-                success: false, 
-                error: `La empresa con ID ${empresaIdNumero} no existe en la base de datos` 
-            });
-        }
-        
-        console.log(`✅ Generando número para empresa válida: ${empresa.nombre} (ID: ${empresaIdNumero})`);
-        
-        // ==================== FIN VALIDACIONES ESTRICTAS ====================
-        
-        // Generar prefijo basado en nombre y ubicación
-        const prefijo = generarPrefijoEmpresa(empresa.nombre, empresa.direccion);
-        
-        // Buscar el último número de factura para esta empresa
-        db.get(`
-            SELECT MAX(CAST(SUBSTR(numero_factura, ${prefijo.length + 1}, 3) AS INTEGER)) as ultimo_numero
-            FROM facturas 
-            WHERE empresa_id = ? AND numero_factura LIKE '${prefijo}%/${año}'
-        `, [empresaIdNumero], (err, row) => {
-            if (err) {
-                console.error('❌ Error consultando último número:', err);
-                return res.status(500).json({ 
-                    success: false, 
-                    error: 'Error interno al consultar números de factura existentes' 
-                });
-            }
-            
-            const siguienteNumero = (row.ultimo_numero || 0) + 1;
-            const numeroFormateado = `${prefijo}${siguienteNumero.toString().padStart(3, '0')}/${año}`;
-            
-            // Verificar que el número generado no existe (doble verificación)
-            db.get("SELECT id FROM facturas WHERE numero_factura = ? AND empresa_id = ?", 
-                [numeroFormateado, empresaIdNumero], (err, existe) => {
-                if (err) {
-                    console.error('❌ Error verificando número único:', err);
-                    return res.status(500).json({ 
-                        success: false, 
-                        error: 'Error interno al verificar número único' 
-                    });
-                }
-                
-                if (existe) {
-                    console.error(`❌ Número duplicado detectado: ${numeroFormateado}`);
-                    return res.status(500).json({ 
-                        success: false, 
-                        error: `Error: El número ${numeroFormateado} ya existe. Contacte al administrador.` 
-                    });
-                }
-                
-                console.log(`✅ Número único generado: ${numeroFormateado}`);
-            
-            res.json({ 
-                success: true, 
-                data: { 
-                    numero_factura: numeroFormateado,
-                        empresa_id: empresaIdNumero,
-                    prefijo: prefijo,
-                    empresa_nombre: empresa.nombre,
-                        empresa_ubicacion: empresa.direccion,
-                        siguiente_numero: siguienteNumero
-                } 
-                });
-            });
-        });
-    });
-});
-
-// Función para generar prefijo único por empresa y ubicación
-function generarPrefijoEmpresa(nombre, direccion) {
-    // Extraer palabras clave del nombre
-    const palabrasNombre = nombre.toLowerCase()
-        .replace(/[^a-z\s]/g, '') // Solo letras y espacios
-        .split(' ')
-        .filter(palabra => palabra.length > 2); // Palabras de más de 2 caracteres
-    
-    // Extraer código postal o ciudad de la dirección
-    const codigoPostal = direccion ? direccion.match(/\d{5}/)?.[0] || '' : '';
-    const ciudad = direccion ? extraerCiudad(direccion) : '';
-    
-    // Generar prefijo basado en nombre y ubicación
-    let prefijo = '';
-    
-    if (palabrasNombre.length >= 2) {
-        // Usar primeras letras de las dos primeras palabras
-        prefijo = palabrasNombre[0].substring(0, 2) + palabrasNombre[1].substring(0, 1);
-    } else if (palabrasNombre.length === 1) {
-        // Usar primeras 3 letras de la palabra
-        prefijo = palabrasNombre[0].substring(0, 3);
-    } else {
-        // Fallback: usar primeras 3 letras del nombre completo
-        prefijo = nombre.toLowerCase().replace(/[^a-z]/g, '').substring(0, 3);
-    }
-    
-    // Agregar identificador de ubicación si es necesario
-    if (ciudad) {
-        const ciudadCode = ciudad.substring(0, 2).toUpperCase();
-        prefijo += ciudadCode;
-    } else if (codigoPostal) {
-        // Usar últimos 2 dígitos del código postal
-        prefijo += codigoPostal.substring(3, 5);
-    }
-    
-    return prefijo.toUpperCase();
-}
-
-// Función para extraer ciudad de la dirección
-function extraerCiudad(direccion) {
-    const ciudadesComunes = [
-        'madrid', 'barcelona', 'valencia', 'sevilla', 'zaragoza', 'málaga', 'murcia',
-        'palma', 'las palmas', 'bilbao', 'alicante', 'córdoba', 'valladolid', 'vigo',
-        'gijón', 'hospitalet', 'coruña', 'granada', 'elche', 'santa cruz', 'oviedo',
-        'badalona', 'cartagena', 'terrassa', 'jerez', 'sabadell', 'móstoles', 'alcalá',
-        'pamplona', 'fuenlabrada', 'almería', 'leganés', 'santander', 'castellón',
-        'burgos', 'albacete', 'getafe', 'salamanca', 'huelva', 'marbella', 'logroño',
-        'badajoz', 'san sebastián', 'león', 'cádiz', 'tarragona', 'lérida', 'mataró',
-        'santa coloma', 'algeciras', 'jaén', 'ourense', 'reus', 'torrelavega', 'el ejido',
-        'lugo', 'santiago', 'ceuta', 'melilla', 'canarias', 'baleares', 'andalucía',
-        'cataluña', 'galicia', 'castilla', 'aragón', 'extremadura', 'navarra', 'rioja'
-    ];
-    
-    const direccionLower = direccion.toLowerCase();
-    
-    for (const ciudad of ciudadesComunes) {
-        if (direccionLower.includes(ciudad)) {
-            return ciudad;
-        }
-    }
-    
-    return null;
-}
-
-// ==================== ENDPOINTS DE PROFORMAS ====================
-
-// GET - Obtener todas las proformas (con paginación)
-app.get('/api/proformas', async (req, res) => {
-    try {
-        const { page = 1, limit = 20, search = '', empresa_id = '', cliente_id = '', coche_id = '' } = req.query;
-        const maxLimit = Math.min(parseInt(limit) || 20, 100);
-        
-        const dbType = config.get('database.type') || 'postgresql';
-        const activoValue = dbType === 'postgresql' ? 'true' : '1';
-        
-        let whereConditions = [`(p.activo = ${activoValue} OR p.activo IS NULL)`];
-        let whereParams = [];
-        
-        if (search) {
-            whereConditions.push('(p.numero_proforma LIKE ? OR c.nombre LIKE ? OR e.nombre LIKE ?)');
-            whereParams.push(`%${search}%`, `%${search}%`, `%${search}%`);
-        }
-        
-        if (empresa_id) {
-            whereConditions.push('p.empresa_id = ?');
-            whereParams.push(empresa_id);
-        }
-        
-        if (cliente_id) {
-            whereConditions.push('p.cliente_id = ?');
-            whereParams.push(cliente_id);
-        }
-        
-        if (coche_id) {
-            whereConditions.push('p.coche_id = ?');
-            whereParams.push(coche_id);
-        }
-        
-        const whereClause = whereConditions.join(' AND ');
-        
-        // Verificar caché con validación inteligente (similar a facturas)
-        const cacheKey = `proformas:page:${page}:limit:${maxLimit}:search:${search}:empresa:${empresa_id}:cliente:${cliente_id}:coche:${coche_id}`;
-        const cachedResult = cacheManager.get(cacheKey);
-        
-        if (cachedResult) {
-            try {
-                // Verificación rápida del total de proformas en BD (con manejo de errores robusto)
-                const quickCheck = await new Promise((resolve) => {
-                    try {
-                        db.get(`SELECT COUNT(*) as total FROM proformas WHERE (activo = ${activoValue} OR activo IS NULL)`, [], (err, row) => {
-                            if (err) {
-                                console.debug('Error en verificación rápida de caché de proformas:', err.message);
-                                resolve(null); // Si hay error, usar caché
-                            } else {
-                                resolve(row?.total || 0);
-                            }
-                        });
-                    } catch (error) {
-                        console.debug('Error en verificación de caché de proformas:', error.message);
-                        resolve(null); // Si hay error, usar caché
-                    }
-                });
-                
-                // Solo verificar si la consulta fue exitosa
-                if (quickCheck !== null) {
-                    const cachedTotal = cachedResult.pagination?.totalCount || cachedResult.data?.length || 0;
-                    
-                    // Si hay diferencia en el total, limpiar caché y recargar
-                    if (quickCheck !== cachedTotal) {
-                        console.log(`🔄 Cambio detectado en proformas: BD tiene ${quickCheck}, caché tenía ${cachedTotal} - actualizando`);
-                        cacheManager.delPattern('proformas:*');
-                        // Continuar sin usar caché
-                    } else {
-                        // Usar caché solo si los totales coinciden
-                        return res.json({ success: true, ...cachedResult, cached: true });
-                    }
-                } else {
-                    // Si hubo error en la verificación, usar caché para no fallar
-                    return res.json({ success: true, ...cachedResult, cached: true });
-                }
-            } catch (error) {
-                // Si hay cualquier error en la verificación, usar caché
-                console.debug('Error en verificación de caché de proformas, usando caché:', error.message);
-                return res.json({ success: true, ...cachedResult, cached: true });
-            }
-        }
-        
-        const joins = [
-            { type: 'LEFT', table: 'clientes c', condition: 'p.cliente_id = c.id' },
-            { type: 'LEFT', table: 'empresas e', condition: 'p.empresa_id = e.id' },
-            { type: 'LEFT', table: 'coches co', condition: 'p.coche_id = co.id' }
-        ];
-        
-        const result = await paginationManager.getPaginatedDataWithJoins('proformas p', joins, {
-            page: parseInt(page),
-            limit: maxLimit,
-            where: whereClause,
-            whereParams: whereParams,
-            orderBy: 'COALESCE(p.fecha_creacion, p.fecha_emision)',
-            orderDirection: 'DESC',
-            select: `p.*, c.nombre as cliente_nombre, c.identificacion as cliente_identificacion, e.nombre as empresa_nombre, e.cif as empresa_cif, co.matricula as coche_matricula, co.modelo as coche_modelo, co.marca as coche_marca,
-                     (SELECT COUNT(*) FROM detalles_proforma dp WHERE dp.proforma_id = p.id AND dp.coche_id IS NOT NULL) as coches_count`
-        });
-        
-        // Guardar en caché con TTL reducido (30 segundos)
-        const responsePayload = {
-            data: result.data || [],
-            pagination: result.pagination
-        };
-        cacheManager.set(cacheKey, responsePayload, 30);
-        
-        res.json({ success: true, ...responsePayload, cached: false });
-    } catch (error) {
-        console.error('❌ Error al obtener proformas:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// GET - Obtener proforma por ID con detalles
-app.get('/api/proformas/:id', (req, res) => {
-    const proformaId = req.params.id;
-    
-    db.get(`
-        SELECT p.*, c.nombre as cliente_nombre, c.direccion as cliente_direccion, c.identificacion as cliente_identificacion,
-               e.nombre as empresa_nombre, e.cif as empresa_cif, e.direccion as empresa_direccion,
-               co.matricula as coche_matricula, co.modelo as coche_modelo, co.marca as coche_marca, co.color as coche_color, co.kms as coche_kms, co.chasis as coche_chasis
-        FROM proformas p 
-        LEFT JOIN clientes c ON p.cliente_id = c.id 
-        LEFT JOIN empresas e ON p.empresa_id = e.id
-        LEFT JOIN coches co ON p.coche_id = co.id
-        WHERE p.id = ?
-    `, [proformaId], (err, proforma) => {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        
-        if (!proforma) {
-            res.status(404).json({ error: 'Proforma no encontrada' });
-            return;
-        }
-        
-        // Obtener detalles de la proforma
-        db.all(`
-            SELECT dp.*, COALESCE(dp.descripcion, pr.descripcion) as descripcion, COALESCE(dp.tipo_impuesto, 'igic') as tipo_impuesto,
-                   co.matricula as coche_matricula, co.chasis as coche_chasis, co.color as coche_color, 
-                   co.kms as coche_kms, co.modelo as coche_modelo, co.marca as coche_marca
-            FROM detalles_proforma dp
-            LEFT JOIN productos pr ON dp.producto_id = pr.id
-            LEFT JOIN coches co ON dp.coche_id = co.id
-            WHERE dp.proforma_id = ?
-        `, [proformaId], (err, detalles) => {
-            if (err) {
-                res.status(500).json({ error: err.message });
-                return;
-            }
-            
-            proforma.detalles = detalles;
-            res.json({ success: true, data: proforma });
-        });
-    });
-});
-
-// POST - Crear nueva proforma
-app.post('/api/proformas', async (req, res) => {
-    const startTime = Date.now();
-    
-    try {
-        const { 
-            numero_proforma, 
-            empresa_id,
-            cliente_id, 
-            coche_id,
-            fecha_emision, 
-            fecha_validez, 
-            subtotal, 
-            igic, 
-            total, 
-            notas,
-            productos
-        } = req.body;
-        
-        logger.info('Iniciando creación de proforma', {
-            numero_proforma,
-            empresa_id,
-            cliente_id,
-            coche_id,
-            total,
-            productos_count: productos?.length || 0
-        }, 'operations');
-        
-        // Validar empresa_id
-        if (!empresa_id || empresa_id === null || empresa_id === undefined) {
-            return res.status(400).json({ 
-                success: false, 
-                error: 'empresa_id es obligatorio para crear una proforma' 
-            });
-        }
-        
-        // Verificar que la empresa existe
-        const empresaExiste = await new Promise((resolve, reject) => {
-            db.get("SELECT id, nombre FROM empresas WHERE id = ?", [empresa_id], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
-        
-        if (!empresaExiste) {
-            return res.status(400).json({ 
-                success: false, 
-                error: `La empresa con ID ${empresa_id} no existe en la base de datos` 
-            });
-        }
-        
-        // Validar número de proforma único para la empresa
-        if (numero_proforma) {
-            const numeroExiste = await new Promise((resolve, reject) => {
-                db.get("SELECT id, numero_proforma FROM proformas WHERE numero_proforma = ? AND empresa_id = ?", 
-                    [numero_proforma, empresa_id], (err, row) => {
-                        if (err) reject(err);
-                        else resolve(row);
-                    });
-            });
-            
-            if (numeroExiste) {
-                return res.status(400).json({ 
-                    success: false, 
-                    error: `El número de proforma "${numero_proforma}" ya existe para la empresa "${empresaExiste.nombre}"` 
-                });
-            }
-        }
-        
-        // Validar cliente_id si se proporciona
-        if (cliente_id) {
-            const clienteExiste = await new Promise((resolve, reject) => {
-                db.get("SELECT id, nombre FROM clientes WHERE id = ?", [cliente_id], (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                });
-            });
-            
-            if (!clienteExiste) {
-                return res.status(400).json({ 
-                    success: false, 
-                    error: `El cliente con ID ${cliente_id} no existe en la base de datos` 
-                });
-            }
-        }
-        
-        // Validar coche_id si se proporciona
-        if (coche_id) {
-            const cocheExiste = await new Promise((resolve, reject) => {
-                db.get("SELECT id, matricula FROM coches WHERE id = ?", [coche_id], (err, row) => {
-                    if (err) reject(err);
-                    else resolve(row);
-                });
-            });
-            
-            if (!cocheExiste) {
-                return res.status(400).json({ 
-                    success: false, 
-                    error: `El coche con ID ${coche_id} no existe en la base de datos` 
-                });
-            }
-        }
-        
-        // Insertar proforma
-        const dbType = config.get('database.type') || 'postgresql';
-        const activoValue = dbType === 'postgresql' ? true : 1;
-        
-        const query = `
-            INSERT INTO proformas (
-                numero_proforma, empresa_id, cliente_id, coche_id, fecha_emision, fecha_validez,
-                subtotal, igic, total, notas, activo
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-        `;
-        
-        const params = [
-            numero_proforma, empresa_id, cliente_id || null, coche_id || null, fecha_emision, fecha_validez || null,
-            subtotal, igic, total, notas || null, activoValue
-        ];
-        
-        db.run(query, params, async function(err) {
-            if (err) {
-                console.error('❌ Error al crear proforma:', err.message);
-                res.status(500).json({ 
-                    success: false,
-                    error: 'Error al insertar proforma en la base de datos',
-                    details: err.message 
-                });
-                return;
-            }
-            
-            const proformaId = this.lastID;
-            
-            try {
-                // Insertar detalles de la proforma
-                if (productos && productos.length > 0) {
-                    for (const producto of productos) {
-                        const productoId = producto.id && producto.id > 0 ? producto.id : null;
-                        const cocheIdDetalle = producto.coche_id || producto.cocheId || producto.cocheID || coche_id || null;
-                        
-                        await new Promise((resolve, reject) => {
-                            const precioUnitario = producto.precio_unitario || producto.precioUnitario || producto.precio || 0;
-                            const igic = producto.igic !== undefined ? producto.igic : (producto.impuesto !== undefined ? producto.impuesto : 0);
-                            const tipoImpuesto = producto.tipo_impuesto || producto.tipoImpuesto || 'igic';
-                            const cantidad = producto.cantidad || 1;
-                            
-                            db.run(`
-                                INSERT INTO detalles_proforma (proforma_id, producto_id, coche_id, cantidad, precio_unitario, subtotal, igic, total, descripcion, tipo_impuesto)
-                                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                            `, [proformaId, productoId, cocheIdDetalle, cantidad, precioUnitario, producto.subtotal || (precioUnitario * cantidad), igic, producto.total || (precioUnitario * cantidad + igic), producto.descripcion || null, tipoImpuesto], function(err) {
-                                if (err) {
-                                    console.error('❌ Error al insertar detalle de proforma:', err.message);
-                                    reject(err);
-                                } else {
-                                    resolve();
-                                }
-                            });
-                        });
-                    }
-                }
-                
-                const totalDuration = Date.now() - startTime;
-                logger.info('Proforma creada exitosamente', {
-                    proformaId,
-                    numero_proforma,
-                    empresa_id,
-                    cliente_id,
-                    coche_id,
-                    total,
-                    duration: `${totalDuration}ms`,
-                    productos_count: productos?.length || 0
-                }, 'operations');
-                
-                // Invalidar caché de proformas después de crear
-                if (cacheManager) {
-                    cacheManager.invalidatePattern('proformas:*');
-                    cacheManager.invalidateByTableChange('proformas', 'insert');
-                    console.log(`🔄 Caché invalidado después de crear proforma ${proformaId}`);
-                }
-                
-                res.json({ 
-                    success: true, 
-                    data: { 
-                        id: proformaId, 
-                        numero_proforma,
-                        total 
-                    } 
-                });
-                
-            } catch (error) {
-                const totalDuration = Date.now() - startTime;
-                logger.error('Error en proceso de creación de proforma', {
-                    error: error.message,
-                    stack: error.stack,
-                    empresa_id,
-                    cliente_id,
-                    coche_id,
-                    numero_proforma,
-                    duration: `${totalDuration}ms`
-                }, 'operations');
-                res.status(500).json({ 
-                    success: false,
-                    error: 'Error en el proceso de creación de proforma',
-                    details: error.message 
-                });
-            }
-        });
-        
-    } catch (error) {
-        console.error('❌ Error general en creación de proforma:', error);
-        res.status(500).json({ 
-            success: false,
-            error: 'Error interno del servidor',
-            details: error.message 
-        });
-    }
-});
-
-// PUT - Actualizar proforma
-app.put('/api/proformas/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const proformaId = parseInt(id, 10);
-        const { 
-            numero_proforma, 
-            empresa_id,
-            cliente_id, 
-            coche_id,
-            fecha_emision, 
-            fecha_validez, 
-            subtotal, 
-            igic, 
-            total, 
-            notas,
-            estado,
-            productos
-        } = req.body;
-        
-        // Validar ID
-        if (isNaN(proformaId) || proformaId <= 0) {
-            return res.status(400).json({ 
-                success: false,
-                error: 'ID de proforma inválido',
-                received: id
-            });
-        }
-        
-        // Verificar que la proforma existe
-        const proformaExiste = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM proformas WHERE id = ?', [proformaId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
-        
-        if (!proformaExiste) {
-            return res.status(404).json({ 
-                success: false,
-                error: 'Proforma no encontrada' 
-            });
-        }
-        
-        // Construir actualización
-        const updates = [];
-        const values = [];
-        
-        if (numero_proforma !== undefined) {
-            updates.push('numero_proforma = ?');
-            values.push(numero_proforma);
-        }
-        if (empresa_id !== undefined) {
-            updates.push('empresa_id = ?');
-            values.push(empresa_id);
-        }
-        if (cliente_id !== undefined) {
-            updates.push('cliente_id = ?');
-            values.push(cliente_id);
-        }
-        if (coche_id !== undefined) {
-            updates.push('coche_id = ?');
-            values.push(coche_id);
-        }
-        if (fecha_emision !== undefined) {
-            updates.push('fecha_emision = ?');
-            values.push(fecha_emision);
-        }
-        if (fecha_validez !== undefined) {
-            updates.push('fecha_validez = ?');
-            values.push(fecha_validez);
-        }
-        if (subtotal !== undefined) {
-            updates.push('subtotal = ?');
-            values.push(subtotal);
-        }
-        if (igic !== undefined) {
-            updates.push('igic = ?');
-            values.push(igic);
-        }
-        if (total !== undefined) {
-            updates.push('total = ?');
-            values.push(total);
-        }
-        if (notas !== undefined) {
-            updates.push('notas = ?');
-            values.push(notas);
-        }
-        if (estado !== undefined) {
-            updates.push('estado = ?');
-            values.push(estado);
-        }
-        
-        if (updates.length === 0) {
-            return res.status(400).json({ 
-                success: false,
-                error: 'No hay campos para actualizar'
-            });
-        }
-        
-        values.push(proformaId);
-        
-        // Actualizar proforma
-        const changes = await new Promise((resolve, reject) => {
-            db.run(`UPDATE proformas SET ${updates.join(', ')} WHERE id = ?`, values, function(err) {
-                if (err) reject(err);
-                else resolve(this.changes);
-            });
-        });
-        
-        // Si se proporcionan productos, actualizar detalles
-        if (productos && Array.isArray(productos)) {
-            // Eliminar detalles existentes
-            await new Promise((resolve, reject) => {
-                db.run('DELETE FROM detalles_proforma WHERE proforma_id = ?', [proformaId], (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                });
-            });
-            
-            // Insertar nuevos detalles
-            for (const producto of productos) {
-                const productoId = producto.id && producto.id > 0 ? producto.id : null;
-                const cocheIdDetalle = producto.coche_id || producto.cocheId || producto.cocheID || coche_id || null;
-                
-                await new Promise((resolve, reject) => {
-                    const precioUnitario = producto.precio_unitario || producto.precioUnitario || producto.precio || 0;
-                    const igic = producto.igic !== undefined ? producto.igic : (producto.impuesto !== undefined ? producto.impuesto : 0);
-                    const tipoImpuesto = producto.tipo_impuesto || producto.tipoImpuesto || 'igic';
-                    const cantidad = producto.cantidad || 1;
-                    
-                    db.run(`
-                        INSERT INTO detalles_proforma (proforma_id, producto_id, coche_id, cantidad, precio_unitario, subtotal, igic, total, descripcion, tipo_impuesto)
-                        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                    `, [proformaId, productoId, cocheIdDetalle, cantidad, precioUnitario, producto.subtotal || (precioUnitario * cantidad), igic, producto.total || (precioUnitario * cantidad + igic), producto.descripcion || null, tipoImpuesto], (err) => {
-                        if (err) reject(err);
-                        else resolve();
-                    });
-                });
-            }
-        }
-        
-        // Obtener proforma actualizada
-        const proformaActualizada = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM proformas WHERE id = ?', [proformaId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
-        
-        // Invalidar caché de proformas después de actualizar
-        if (cacheManager) {
-            cacheManager.invalidatePattern('proformas:*');
-            cacheManager.invalidateByTableChange('proformas', 'update');
-            console.log(`🔄 Caché invalidado después de actualizar proforma ${proformaId}`);
-        }
-        
-        res.json({ 
-            success: true,
-            message: 'Proforma actualizada correctamente',
-            data: proformaActualizada
-        });
-        
-    } catch (error) {
-        console.error('❌ Error al actualizar proforma:', error);
-        res.status(500).json({ 
-            success: false,
-            error: 'Error interno del servidor',
-            details: error.message
-        });
-    }
-});
-
-// DELETE - Eliminar proforma
-app.delete('/api/proformas/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const proformaId = parseInt(id, 10);
-        
-        // Validar ID
-        if (isNaN(proformaId) || proformaId <= 0) {
-            return res.status(400).json({ 
-                success: false,
-                error: 'ID de proforma inválido',
-                received: id
-            });
-        }
-        
-        // Eliminar detalles primero
-        await new Promise((resolve, reject) => {
-            db.run('DELETE FROM detalles_proforma WHERE proforma_id = ?', [proformaId], (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });
-        
-        // Eliminar proforma
-        const changes = await new Promise((resolve, reject) => {
-            db.run('DELETE FROM proformas WHERE id = ?', [proformaId], function(err) {
-                if (err) reject(err);
-                else resolve(this.changes);
-            });
-        });
-        
-        if (changes === 0) {
-            return res.status(404).json({ 
-                success: false,
-                error: 'Proforma no encontrada' 
-            });
-        }
-        
-        // Invalidar caché de proformas
-        if (global.cacheManager) {
-            try {
-                const deletedCount = global.cacheManager.delPattern('proformas:*');
-                logger.debug('Caché de proformas limpiado después de eliminar proforma', { deletedCount, proformaId });
-                console.log(`🗑️ Caché de proformas limpiado: ${deletedCount} entradas eliminadas`);
-            } catch (cacheError) {
-                logger.warn('Error al limpiar caché de proformas', { error: cacheError.message });
-            }
-        }
-        
-        res.json({ 
-            success: true, 
-            message: 'Proforma eliminada correctamente'
-        });
-        
-    } catch (error) {
-        console.error('❌ Error al eliminar proforma:', error);
-        res.status(500).json({ 
-            success: false,
-            error: 'Error interno del servidor',
-            details: error.message
-        });
-    }
-});
-
-// DELETE - Eliminar todas las proformas (para limpieza)
-app.delete('/api/proformas/todas', async (req, res) => {
-    try {
-        // Eliminar todos los detalles de proforma primero
-        await new Promise((resolve, reject) => {
-            db.run('DELETE FROM detalles_proforma', (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });
-
-        // Eliminar todas las proformas
-        const changes = await new Promise((resolve, reject) => {
-            db.run('DELETE FROM proformas', function(err) {
-                if (err) reject(err);
-                else resolve(this.changes);
-            });
-        });
-
-        // Invalidar caché de proformas
-        if (global.cacheManager) {
-            try {
-                const deletedCount = global.cacheManager.delPattern('proformas:*');
-                console.log(`🗑️ Caché de proformas limpiado: ${deletedCount} entradas eliminadas`);
-            } catch (cacheError) {
-                console.error('❌ Error al limpiar caché de proformas:', cacheError.message);
-            }
-        }
-        
-        logger.info('Todas las proformas eliminadas', {
-            proformasEliminadas: changes
-        });
-        
-        res.json({
-            success: true, 
-            message: `Se eliminaron ${changes} proformas`,
-            eliminadas: changes
-        });
-        
-    } catch (error) {
-        console.error('❌ Error al eliminar todas las proformas:', error);
-        res.status(500).json({ 
-            success: false,
-            error: 'Error interno del servidor',
-            details: error.message
-        });
-    }
-});
-
-// POST - Dividir proforma en proformas individuales (una por cada coche)
-app.post('/api/proformas/:id/dividir', async (req, res) => {
-    const startTime = Date.now();
-    
-    try {
-        const { id } = req.params;
-        const proformaId = parseInt(id, 10);
-        
-        if (isNaN(proformaId)) {
-            return res.status(400).json({ 
-                success: false,
-                error: 'ID de proforma inválido' 
-            });
-        }
-
-        const dbType = config.get('database.type') || 'postgresql';
-        const activoValue = dbType === 'postgresql' ? 'true' : '1';
-
-        // Obtener la proforma original con sus detalles
-        const proformaOriginal = await new Promise((resolve, reject) => {
-            db.get(`
-                SELECT p.*, e.nombre as empresa_nombre, e.direccion as empresa_direccion
-                FROM proformas p
-                LEFT JOIN empresas e ON p.empresa_id = e.id
-                WHERE p.id = ?
-            `, [proformaId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
-
-        if (!proformaOriginal) {
-            return res.status(404).json({ 
-                success: false,
-                error: 'Proforma no encontrada' 
-            });
-        }
-
-        // Obtener detalles de la proforma que tengan coche_id
-        const detalles = await new Promise((resolve, reject) => {
-            db.all(`
-                SELECT dp.*, c.marca, c.modelo, c.matricula, c.color
-                FROM detalles_proforma dp
-                LEFT JOIN coches c ON dp.coche_id = c.id
-                WHERE dp.proforma_id = ? AND dp.coche_id IS NOT NULL
-            `, [proformaId], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
-
-        if (!detalles || detalles.length === 0) {
-            return res.status(400).json({ 
-                success: false,
-                error: 'La proforma no tiene coches asociados para dividir' 
-            });
-        }
-
-        if (detalles.length === 1) {
-            return res.status(400).json({ 
-                success: false,
-                error: 'La proforma ya tiene un solo coche. No es necesario dividirla' 
-            });
-        }
-
-        const proformasCreadas = [];
-        const tipoImpuesto = detalles[0].tipo_impuesto || 'igic';
-        const porcentajeImpuesto = tipoImpuesto === 'igic' ? 9.5 : 21;
-
-        // Extraer el prefijo de la proforma original
-        // Formato esperado: PRO-PREFIJO001/2025
-        const numeroOriginal = proformaOriginal.numero_proforma || '';
-        const año = new Date().getFullYear();
-        
-        // Extraer el prefijo hasta el número (ej: "PRO-TEC" de "PRO-TEC001/2025")
-        // Buscar el patrón: PRO- seguido de letras/números, luego 3 dígitos, luego /año
-        let prefijoProforma = '';
-        const partes = numeroOriginal.split('/');
-        if (partes.length === 2) {
-            const parteNumero = partes[0]; // Ej: "PRO-TEC001"
-            // Buscar los últimos 3 dígitos y extraer todo lo anterior
-            const matchNumero = parteNumero.match(/(\d{3})$/);
-            if (matchNumero) {
-                // Extraer todo excepto los últimos 3 dígitos
-                prefijoProforma = parteNumero.substring(0, parteNumero.length - 3);
-            } else {
-                // Si no hay 3 dígitos al final, usar todo como prefijo
-                prefijoProforma = parteNumero;
-            }
-        } else {
-            // Si no tiene el formato esperado, intentar extraer PRO- seguido de letras
-            const matchPrefijo = numeroOriginal.match(/^(PRO-[A-Z0-9]+)/);
-            if (matchPrefijo) {
-                prefijoProforma = matchPrefijo[1];
-            } else {
-                // Fallback: usar el número original completo
-                prefijoProforma = numeroOriginal;
-            }
-        }
-
-        // Obtener el último número UNA SOLA VEZ antes del loop usando el mismo prefijo
-        const ultimoNumeroResult = await new Promise((resolve, reject) => {
-            db.get(`
-                SELECT MAX(CAST(SUBSTR(numero_proforma, ${prefijoProforma.length + 1}, 3) AS INTEGER)) as ultimo_numero
-                FROM proformas 
-                WHERE empresa_id = ? AND numero_proforma LIKE ? || '%' AND numero_proforma LIKE '%/' || ?
-            `, [proformaOriginal.empresa_id, prefijoProforma, año], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
-
-        // Empezar desde el siguiente número disponible
-        let numeroActual = (ultimoNumeroResult?.ultimo_numero || 0) + 1;
-
-        // Marcar la proforma original como "anulado" antes de crear las nuevas
-        await new Promise((resolve, reject) => {
-            db.run('UPDATE proformas SET estado = ? WHERE id = ?', ['anulado', proformaId], (err) => {
-                if (err) reject(err);
-                else resolve();
-            });
-        });
-
-        // Crear una proforma individual por cada coche
-        for (const detalle of detalles) {
-            const precioUnitario = detalle.precio_unitario || 0;
-            const cantidad = detalle.cantidad || 1;
-            const subtotal = precioUnitario * cantidad;
-            const impuesto = subtotal * (porcentajeImpuesto / 100);
-            const total = subtotal + impuesto;
-
-            // Generar número secuencial
-            const nuevoNumero = `${prefijoProforma}${String(numeroActual).padStart(3, '0')}/${año}`;
-            
-            // Incrementar para la siguiente proforma
-            numeroActual++;
-
-            // Crear nueva proforma
-            const nuevaProformaId = await new Promise((resolve, reject) => {
-                db.run(`
-                    INSERT INTO proformas (
-                        numero_proforma, empresa_id, cliente_id, coche_id,
-                        fecha_emision, fecha_validez, subtotal, igic, total,
-                        estado, notas, activo
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                `, [
-                    nuevoNumero,
-                    proformaOriginal.empresa_id,
-                    proformaOriginal.cliente_id,
-                    detalle.coche_id,
-                    proformaOriginal.fecha_emision,
-                    proformaOriginal.fecha_validez,
-                    subtotal,
-                    impuesto,
-                    total,
-                    proformaOriginal.estado || 'pendiente',
-                    `Dividida de ${proformaOriginal.numero_proforma}. ${proformaOriginal.notas || ''}`.trim(),
-                    activoValue
-                ], function(err) {
-                    if (err) reject(err);
-                    else resolve(this.lastID);
-                });
-            });
-
-            // Crear detalle de la nueva proforma
-            await new Promise((resolve, reject) => {
-                db.run(`
-                    INSERT INTO detalles_proforma (
-                        proforma_id, producto_id, coche_id, cantidad,
-                        precio_unitario, subtotal, igic, total, descripcion, tipo_impuesto
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                `, [
-                    nuevaProformaId,
-                    detalle.producto_id,
-                    detalle.coche_id,
-                    cantidad,
-                    precioUnitario,
-                    subtotal,
-                    impuesto,
-                    total,
-                    detalle.descripcion || `${detalle.marca || ''} ${detalle.modelo || ''} - Matrícula: ${detalle.matricula || ''} - ${detalle.color || ''}`.trim(),
-                    tipoImpuesto
-                ], (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                });
-            });
-
-            proformasCreadas.push({
-                id: nuevaProformaId,
-                numero_proforma: nuevoNumero,
-                coche_matricula: detalle.matricula
-            });
-        }
-
-        const totalDuration = Date.now() - startTime;
-        logger.info('Proforma dividida exitosamente', {
-            proformaOriginalId: proformaId,
-            numeroOriginal: proformaOriginal.numero_proforma,
-            proformasCreadas: proformasCreadas.length,
-            duration: totalDuration
-        });
-
-        // Invalidar caché de proformas después de dividir
-        if (cacheManager) {
-            cacheManager.invalidatePattern('proformas:*');
-            cacheManager.invalidateByTableChange('proformas', 'update');
-            console.log(`🔄 Caché invalidado después de dividir proforma ${proformaId}`);
-        }
-        
-        res.json({ 
-            success: true, 
-            message: `Proforma dividida en ${proformasCreadas.length} proformas individuales`,
-            data: {
-                proforma_original_id: proformaId,
-                proformas_creadas: proformasCreadas
-            }
-        });
-        
-    } catch (error) {
-        console.error('❌ Error al dividir proforma:', error);
-        res.status(500).json({ 
-            success: false,
-            error: 'Error interno del servidor',
-            details: error.message
-        });
-    }
-});
-
-// POST - Dividir factura en facturas individuales (una por cada coche)
-app.post('/api/facturas/:id/dividir', async (req, res) => {
-    const startTime = Date.now();
-    
-    try {
-        const { id } = req.params;
-        const facturaId = parseInt(id, 10);
-        
-        if (isNaN(facturaId) || facturaId <= 0) {
-            return res.status(400).json({ 
-                success: false,
-                error: 'ID de factura inválido' 
-            });
-        }
-
-        const dbType = config.get('database.type') || 'postgresql';
-        const activoValue = dbType === 'postgresql' ? 'true' : '1';
-
-        // Obtener la factura original con sus detalles
-        const facturaOriginal = await new Promise((resolve, reject) => {
-            db.get(`
-                SELECT f.*, e.nombre as empresa_nombre, e.direccion as empresa_direccion
-                FROM facturas f
-                LEFT JOIN empresas e ON f.empresa_id = e.id
-                WHERE f.id = ?
-            `, [facturaId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
-
-        if (!facturaOriginal) {
-            return res.status(404).json({ 
-                success: false,
-                error: 'Factura no encontrada' 
-            });
-        }
-
-        // Obtener detalles de la factura que tengan coche_id
-        const detalles = await new Promise((resolve, reject) => {
-            db.all(`
-                SELECT df.*, c.marca, c.modelo, c.matricula, c.color
-                FROM detalles_factura df
-                LEFT JOIN coches c ON df.coche_id = c.id
-                WHERE df.factura_id = ? AND df.coche_id IS NOT NULL
-            `, [facturaId], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
-
-        if (!detalles || detalles.length === 0) {
-            return res.status(400).json({ 
-                success: false,
-                error: 'La factura no tiene coches asociados para dividir' 
-            });
-        }
-
-        if (detalles.length === 1) {
-            return res.status(400).json({ 
-                success: false,
-                error: 'La factura ya tiene un solo coche. No es necesario dividirla' 
-            });
-        }
-
-        const facturasCreadas = [];
-        const tipoImpuesto = detalles[0].tipo_impuesto || 'igic';
-        const porcentajeImpuesto = tipoImpuesto === 'igic' ? 9.5 : 21;
-
-        // Extraer el prefijo de la factura original
-        const numeroOriginal = facturaOriginal.numero_factura || '';
-        const año = new Date().getFullYear();
-        
-        // Extraer el prefijo hasta el número (ej: "TEC" de "TEC001/2025")
-        let prefijoFactura = '';
-        const partes = numeroOriginal.split('/');
-        if (partes.length === 2) {
-            const parteNumero = partes[0]; // Ej: "TEC001"
-            // Buscar los últimos 3 dígitos y extraer todo lo anterior
-            const matchNumero = parteNumero.match(/(\d{3})$/);
-            if (matchNumero) {
-                prefijoFactura = parteNumero.substring(0, parteNumero.length - 3);
-            } else {
-                prefijoFactura = parteNumero;
-            }
-        } else {
-            const matchPrefijo = numeroOriginal.match(/^([A-Z0-9]+)/);
-            if (matchPrefijo) {
-                prefijoFactura = matchPrefijo[1];
-            } else {
-                prefijoFactura = numeroOriginal;
-            }
-        }
-
-        // Obtener el último número UNA SOLA VEZ antes del loop usando el mismo prefijo
-        const ultimoNumeroResult = await new Promise((resolve, reject) => {
-            db.get(`
-                SELECT MAX(CAST(SUBSTR(numero_factura, ${prefijoFactura.length + 1}, 3) AS INTEGER)) as ultimo_numero
-                FROM facturas 
-                WHERE empresa_id = ? AND numero_factura LIKE ? || '%' AND numero_factura LIKE '%/' || ?
-            `, [facturaOriginal.empresa_id, prefijoFactura, año], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
-
-        // Empezar desde el siguiente número disponible
-        let numeroActual = (ultimoNumeroResult?.ultimo_numero || 0) + 1;
-
-        // Marcar la factura original como "anulado" antes de crear las nuevas
-        console.log(`🔄 [Dividir Factura] Marcando factura ${facturaId} (${facturaOriginal.numero_factura}) como anulada...`);
-        await new Promise((resolve, reject) => {
-            db.run('UPDATE facturas SET estado = ? WHERE id = ?', ['anulado', facturaId], (err) => {
-                if (err) {
-                    console.error(`❌ [Dividir Factura] Error al anular factura ${facturaId}:`, err);
-                    reject(err);
-                } else {
-                    console.log(`✅ [Dividir Factura] Factura ${facturaId} marcada como anulada correctamente`);
-                    resolve();
-                }
-            });
-        });
-        
-        // Invalidar caché de facturas para reflejar el cambio de estado
-        cacheManager.delPattern('facturas:*');
-        cacheManager.delPattern('stats:*');
-
-        // Crear una factura individual por cada coche
-        for (const detalle of detalles) {
-            const precioUnitario = detalle.precio_unitario || 0;
-            const cantidad = detalle.cantidad || 1;
-            const subtotal = precioUnitario * cantidad;
-            const impuesto = subtotal * (porcentajeImpuesto / 100);
-            const total = subtotal + impuesto;
-
-            // Generar número secuencial
-            const nuevoNumero = `${prefijoFactura}${String(numeroActual).padStart(3, '0')}/${año}`;
-            
-            // Incrementar para la siguiente factura
-            numeroActual++;
-
-            // Crear nueva factura (heredando proforma_id de la factura original)
-            const nuevaFacturaId = await new Promise((resolve, reject) => {
-                db.run(`
-                    INSERT INTO facturas (
-                        numero_factura, empresa_id, cliente_id,
-                        fecha_emision, fecha_vencimiento, subtotal, igic, total,
-                        estado, notas, proforma_id, activo
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                `, [
-                    nuevoNumero,
-                    facturaOriginal.empresa_id,
-                    facturaOriginal.cliente_id,
-                    facturaOriginal.fecha_emision,
-                    facturaOriginal.fecha_vencimiento,
-                    subtotal,
-                    impuesto,
-                    total,
-                    facturaOriginal.estado || 'pendiente',
-                    `Dividida de ${facturaOriginal.numero_factura}. ${facturaOriginal.notas || ''}`.trim(),
-                    facturaOriginal.proforma_id || null, // Heredar proforma_id de la factura original
-                    activoValue
-                ], function(err) {
-                    if (err) reject(err);
-                    else resolve(this.lastID);
-                });
-            });
-
-            // Crear detalle de la nueva factura
-            await new Promise((resolve, reject) => {
-                db.run(`
-                    INSERT INTO detalles_factura (
-                        factura_id, producto_id, coche_id, cantidad,
-                        precio_unitario, subtotal, igic, total, descripcion, tipo_impuesto
-                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                `, [
-                    nuevaFacturaId,
-                    detalle.producto_id,
-                    detalle.coche_id,
-                    cantidad,
-                    precioUnitario,
-                    subtotal,
-                    impuesto,
-                    total,
-                    detalle.descripcion || `${detalle.marca || ''} ${detalle.modelo || ''} - Matrícula: ${detalle.matricula || ''} - ${detalle.color || ''}`.trim(),
-                    tipoImpuesto
-                ], (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                });
-            });
-
-            facturasCreadas.push({
-                id: nuevaFacturaId,
-                numero_factura: nuevoNumero,
-                coche_matricula: detalle.matricula
-            });
-        }
-
-        const totalDuration = Date.now() - startTime;
-        logger.info('Factura dividida exitosamente', {
-            facturaOriginalId: facturaId,
-            numeroOriginal: facturaOriginal.numero_factura,
-            facturasCreadas: facturasCreadas.length,
-            duration: totalDuration
-        });
-
-        res.json({ 
-            success: true, 
-            message: `Factura dividida en ${facturasCreadas.length} facturas individuales`,
-            data: {
-                factura_original_id: facturaId,
-                facturas_creadas: facturasCreadas
-            }
-        });
-        
-    } catch (error) {
-        console.error('❌ Error al dividir factura:', error);
-        res.status(500).json({ 
-            success: false,
-            error: 'Error interno del servidor',
-            details: error.message
-        });
-    }
-});
-
-// GET - Generar siguiente número de proforma por empresa
-app.get('/api/proformas/siguiente-numero/:empresaId', (req, res) => {
-    const empresaId = req.params.empresaId;
-    const año = new Date().getFullYear();
-    
-    // Validar que empresaId es un número válido
-    if (!empresaId || isNaN(empresaId) || parseInt(empresaId) <= 0) {
-        return res.status(400).json({ 
-            success: false, 
-            error: 'ID de empresa inválido. Debe ser un número positivo.' 
-        });
-    }
-    
-    const empresaIdNumero = parseInt(empresaId);
-    
-    // Verificar que la empresa existe
-    db.get("SELECT id, nombre FROM empresas WHERE id = ?", [empresaIdNumero], (err, empresa) => {
-        if (err) {
-            console.error('❌ Error consultando empresa:', err);
-            return res.status(500).json({ 
-                success: false, 
-                error: 'Error interno al consultar la empresa' 
-            });
-        }
-        
-        if (!empresa) {
-            return res.status(404).json({ 
-                success: false, 
-                error: `La empresa con ID ${empresaIdNumero} no existe en la base de datos` 
-            });
-        }
-        
-        // Generar prefijo basado en nombre y ubicación
-        const prefijo = generarPrefijoEmpresa(empresa.nombre, empresa.direccion);
-        const prefijoProforma = `PRO-${prefijo}`;
-        
-        // Buscar el último número de proforma para esta empresa
-        db.get(`
-            SELECT MAX(CAST(SUBSTR(numero_proforma, ${prefijoProforma.length + 1}, 3) AS INTEGER)) as ultimo_numero
-            FROM proformas 
-            WHERE empresa_id = ? AND numero_proforma LIKE '${prefijoProforma}%/${año}'
-        `, [empresaIdNumero], (err, row) => {
-            if (err) {
-                console.error('❌ Error consultando último número:', err);
-                return res.status(500).json({ 
-                    success: false, 
-                    error: 'Error interno al consultar números de proforma existentes' 
-                });
-            }
-            
-            const siguienteNumero = (row.ultimo_numero || 0) + 1;
-            const numeroFormateado = `${prefijoProforma}${siguienteNumero.toString().padStart(3, '0')}/${año}`;
-            
-            // Verificar que el número generado no existe
-            db.get("SELECT id FROM proformas WHERE numero_proforma = ? AND empresa_id = ?", 
-                [numeroFormateado, empresaIdNumero], (err, existe) => {
-                if (err) {
-                    console.error('❌ Error verificando número único:', err);
-                    return res.status(500).json({ 
-                        success: false, 
-                        error: 'Error interno al verificar número único' 
-                    });
-                }
-                
-                if (existe) {
-                    console.error(`❌ Número duplicado detectado: ${numeroFormateado}`);
-                    return res.status(500).json({ 
-                        success: false, 
-                        error: `Error: El número ${numeroFormateado} ya existe. Contacte al administrador.` 
-                    });
-                }
-                
-                res.json({ 
-                    success: true, 
-                    data: { 
-                        numero_proforma: numeroFormateado,
-                        empresa_id: empresaIdNumero,
-                        prefijo: prefijoProforma,
-                        empresa_nombre: empresa.nombre,
-                        siguiente_numero: siguienteNumero
-                    } 
-                });
-            });
-        });
-    });
-});
-
-// GET - Debug: Verificar relación entre productos y coches
-app.get('/api/debug/productos-coches', (req, res) => {
-    db.all(`
-        SELECT 
-            p.id as producto_id,
-            p.descripcion as producto_descripcion,
-            c.id as coche_id,
-            c.matricula as coche_matricula,
-            c.modelo as coche_modelo,
-            c.color as coche_color,
-            c.kms as coche_kms,
-            c.chasis as coche_chasis,
-            CASE WHEN c.id IS NOT NULL THEN 'SÍ' ELSE 'NO' END as tiene_coche
-        FROM productos p
-        LEFT JOIN coches c ON (p.descripcion LIKE '%' || c.matricula || '%')
-        ORDER BY p.id
-    `, (err, rows) => {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        res.json({ success: true, data: rows });
-    });
-});
-
-// GET - Debug: Verificar relación entre facturas y coches
-app.get('/api/debug/facturas-coches', (req, res) => {
-    db.all(`
-        SELECT 
-            f.id as factura_id,
-            f.numero_factura,
-            f.fecha_emision,
-            df.id as detalle_id,
-            df.descripcion as detalle_descripcion,
-            p.id as producto_id,
-            p.descripcion as producto_descripcion,
-            c.id as coche_id,
-            c.matricula as coche_matricula,
-            c.modelo as coche_modelo,
-            CASE WHEN c.id IS NOT NULL THEN 'SÍ' ELSE 'NO' END as tiene_coche_relacionado
-        FROM facturas f
-        LEFT JOIN detalles_factura df ON f.id = df.factura_id
-        LEFT JOIN productos p ON df.producto_id = p.id
-        LEFT JOIN coches c ON (COALESCE(df.descripcion, p.descripcion) LIKE '%' || c.matricula || '%')
-        ORDER BY f.id, df.id
-    `, (err, rows) => {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        res.json({ success: true, data: rows });
-    });
-});
-
-// GET - Obtener factura por ID con detalles
-app.get('/api/facturas/:id', (req, res) => {
-    const facturaId = req.params.id;
-    
-    db.get(`
-        SELECT f.*, c.nombre as cliente_nombre, c.direccion as cliente_direccion, c.identificacion as cliente_identificacion,
-               e.nombre as empresa_nombre, e.cif as empresa_cif, e.direccion as empresa_direccion,
-               p.id as proforma_id_relacionada, p.numero_proforma as proforma_numero, p.estado as proforma_estado, p.fecha_emision as proforma_fecha_emision
-        FROM facturas f 
-        LEFT JOIN clientes c ON f.cliente_id = c.id 
-        LEFT JOIN empresas e ON f.empresa_id = e.id
-        LEFT JOIN proformas p ON f.proforma_id = p.id
-        WHERE f.id = ?
-    `, [facturaId], (err, factura) => {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        
-        if (!factura) {
-            res.status(404).json({ error: 'Factura no encontrada' });
-            return;
-        }
-        
-        // Obtener detalles de la factura con datos del coche
-        db.all(`
-            SELECT df.*, COALESCE(df.descripcion, p.descripcion) as descripcion, COALESCE(df.tipo_impuesto, 'igic') as tipo_impuesto,
-                   c.matricula as coche_matricula, c.chasis as coche_chasis, c.color as coche_color, 
-                   c.kms as coche_kms, c.modelo as coche_modelo
-            FROM detalles_factura df
-            LEFT JOIN productos p ON df.producto_id = p.id
-            LEFT JOIN coches c ON df.coche_id = c.id
-            WHERE df.factura_id = ?
-        `, [facturaId], (err, detalles) => {
-            if (err) {
-                res.status(500).json({ error: err.message });
-                return;
-            }
-            
-            factura.detalles = detalles;
-            res.json({ success: true, data: factura });
-        });
-    });
-});
-
-// GET - Generar XML VeriFactu para una factura
-app.get('/api/facturas/:id/verifactu', async (req, res) => {
-    try {
-        const facturaId = req.params.id;
-        
-        // Obtener datos completos de la factura
-        const factura = await new Promise((resolve, reject) => {
-            db.get(`
-                SELECT f.*, c.nombre as cliente_nombre, c.identificacion as cliente_identificacion,
-                       c.direccion as cliente_direccion, c.codigo_postal as cliente_codigo_postal,
-                       c.provincia as cliente_provincia, c.pais as cliente_pais,
-                       c.codigo_pais as cliente_codigo_pais, c.regimen_fiscal as cliente_regimen_fiscal,
-                       e.nombre as empresa_nombre, e.cif as empresa_cif, e.direccion as empresa_direccion,
-                       e.codigo_postal as empresa_codigo_postal, e.provincia as empresa_provincia,
-                       e.pais as empresa_pais, e.codigo_pais as empresa_codigo_pais,
-                       e.regimen_fiscal as empresa_regimen_fiscal
-                FROM facturas f 
-                LEFT JOIN clientes c ON f.cliente_id = c.id 
-                LEFT JOIN empresas e ON f.empresa_id = e.id
-                WHERE f.id = ?
-            `, [facturaId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
-        
-        if (!factura) {
-            return res.status(404).json({ error: 'Factura no encontrada' });
-        }
-        
-        // Obtener detalles de la factura
-        const detalles = await new Promise((resolve, reject) => {
-            db.all(`
-                SELECT df.*, p.codigo, COALESCE(df.descripcion, p.descripcion) as descripcion, COALESCE(df.tipo_impuesto, 'igic') as tipo_impuesto
-                FROM detalles_factura df
-                LEFT JOIN productos p ON df.producto_id = p.id
-                WHERE df.factura_id = ?
-            `, [facturaId], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows);
-            });
-        });
-        
-        factura.detalles = detalles;
-        
-        // Generar XML VeriFactu
-        const xmlVeriFactu = generadorVeriFactu.generarXMLVeriFactu(factura);
-        
-        // Validar XML
-        const validacion = generadorVeriFactu.validarXMLVeriFactu(xmlVeriFactu);
-        
-        if (!validacion.valido) {
-            return res.status(400).json({ 
-                error: 'XML VeriFactu inválido', 
-                detalles: validacion.errores 
-            });
-        }
-        
-        res.json({
-            success: true,
-            data: {
-                xml: xmlVeriFactu,
-                validacion: validacion,
-                factura_id: facturaId,
-                numero_serie: factura.numero_serie
-            }
-        });
-        
-    } catch (error) {
-        console.error('❌ Error al generar XML VeriFactu:', error);
-        res.status(500).json({ error: 'Error al generar XML VeriFactu' });
-    }
-});
-
-// POST - Enviar factura a VeriFactu (simulado)
-app.post('/api/facturas/:id/enviar-verifactu', async (req, res) => {
-    try {
-        const facturaId = req.params.id;
-        
-        // Obtener datos de la factura
-        const factura = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM facturas WHERE id = ?', [facturaId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
-        
-        if (!factura) {
-            return res.status(404).json({ error: 'Factura no encontrada' });
-        }
-        
-        // Generar XML VeriFactu
-        const xmlVeriFactu = generadorVeriFactu.generarXMLVeriFactu(factura);
-        
-        // Simular envío a AEAT
-        const respuestaAEAT = generadorVeriFactu.generarRespuestaAEAT(xmlVeriFactu);
-        
-        // Actualizar factura con respuesta de AEAT
-        db.run('UPDATE facturas SET respuesta_aeat = ?, estado_fiscal = ? WHERE id = ?', 
-            [JSON.stringify(respuestaAEAT), respuestaAEAT.valido ? 'enviada' : 'error'], facturaId);
-        
-        // Registrar en auditoría
-        await sistemaAuditoria.registrarOperacion(
-            'facturas',
-            facturaId,
-            'UPDATE',
-            { estado_fiscal: factura.estado_fiscal },
-            { estado_fiscal: respuestaAEAT.valido ? 'enviada' : 'error', respuesta_aeat: respuestaAEAT },
-            'sistema'
-        );
-        
-        res.json({
-            success: true,
-            data: {
-                factura_id: facturaId,
-                respuesta_aeat: respuestaAEAT,
-                xml_enviado: xmlVeriFactu
-            }
-        });
-        
-    } catch (error) {
-        console.error('❌ Error al enviar a VeriFactu:', error);
-        res.status(500).json({ error: 'Error al enviar a VeriFactu' });
-    }
-});
-
-// GET - Obtener historial de auditoría de una factura
-app.get('/api/facturas/:id/auditoria', async (req, res) => {
-    try {
-        const facturaId = req.params.id;
-        
-        const historial = await sistemaAuditoria.obtenerHistorialAuditoria('facturas', facturaId);
-        
-        res.json({
-            success: true,
-            data: historial
-        });
-        
-    } catch (error) {
-        console.error('❌ Error al obtener historial de auditoría:', error);
-        res.status(500).json({ error: 'Error al obtener historial de auditoría' });
-    }
-});
-
-// PUT - Marcar factura como pagada
-app.put('/api/facturas/:id/marcar-pagada', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const facturaId = parseInt(id, 10);
-        const { metodo_pago, referencia_operacion, fecha_pago } = req.body;
-        
-        // Validar ID
-        if (isNaN(facturaId) || facturaId <= 0) {
-            return res.status(400).json({ 
-                success: false,
-                error: 'ID de factura inválido',
-                received: id
-            });
-        }
-        
-        // Obtener factura actual
-        const factura = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM facturas WHERE id = ?', [facturaId], (err, row) => {
-                if (err) {
-                    reject(err);
-                    return;
-                }
-                resolve(row);
-            });
-        });
-        
-        if (!factura) {
-            return res.status(404).json({ 
-                success: false,
-                error: 'Factura no encontrada' 
-            });
-        }
-        
-        // Actualizar factura como pagada
-        const fechaPago = fecha_pago || new Date().toISOString().split('T')[0];
-        const metodoPago = metodo_pago || 'transferencia';
-        const referenciaOperacion = referencia_operacion || '';
-        
-        const changes = await new Promise((resolve, reject) => {
-            db.run(`
-                UPDATE facturas 
-                SET estado = 'pagada', 
-                    estado_fiscal = 'pagada',
-                    metodo_pago = ?,
-                    referencia_operacion = ?,
-                    fecha_operacion = ?
-                WHERE id = ?
-            `, [metodoPago, referenciaOperacion, fechaPago, facturaId], function(err) {
-                if (err) {
-                    reject(err);
-                    return;
-                }
-                if (this.changes === 0) {
-                    resolve(null);
-                    return;
-                }
-                resolve(this.changes);
-            });
-        });
-        
-        if (changes === null) {
-            return res.status(404).json({ 
-                success: false,
-                error: 'Factura no encontrada o no se pudo actualizar' 
-            });
-        }
-        
-        // Registrar en auditoría (no bloqueante)
-        try {
-            await sistemaAuditoria.registrarOperacion(
-                'facturas',
-                facturaId,
-                'UPDATE',
-                { estado: factura.estado, estado_fiscal: factura.estado_fiscal },
-                { estado: 'pagada', estado_fiscal: 'pagada', metodo_pago: metodoPago, referencia_operacion: referenciaOperacion, fecha_operacion: fechaPago },
-                'sistema'
-            );
-        } catch (auditError) {
-            console.warn('⚠️ Error al registrar en auditoría (no crítico):', auditError.message);
-        }
-        
-        console.log('✅ Factura marcada como pagada:', facturaId);
-        res.json({ 
-            success: true, 
-            message: 'Factura marcada como pagada exitosamente',
-            data: {
-                id: facturaId,
-                estado: 'pagada',
-                fecha_pago: fechaPago,
-                metodo_pago: metodoPago
-            }
-        });
-        
-    } catch (error) {
-        console.error('❌ Error al marcar factura como pagada:', error);
-        if (!res.headersSent) {
-            res.status(500).json({ 
-                success: false,
-                error: 'Error interno del servidor',
-                details: error.message
-            });
-        }
-    }
-});
-
-// PUT - Marcar factura como pendiente (revertir pago)
-app.put('/api/facturas/:id/marcar-pendiente', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const facturaId = parseInt(id, 10);
-        
-        // Validar ID
-        if (isNaN(facturaId) || facturaId <= 0) {
-            return res.status(400).json({ 
-                success: false,
-                error: 'ID de factura inválido',
-                received: id
-            });
-        }
-        
-        // Obtener factura actual
-        const factura = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM facturas WHERE id = ?', [facturaId], (err, row) => {
-                if (err) {
-                    reject(err);
-                    return;
-                }
-                resolve(row);
-            });
-        });
-        
-        if (!factura) {
-            return res.status(404).json({ 
-                success: false,
-                error: 'Factura no encontrada' 
-            });
-        }
-        
-        // Actualizar factura como pendiente
-        const changes = await new Promise((resolve, reject) => {
-            db.run(`
-                UPDATE facturas 
-                SET estado = 'pendiente', 
-                    estado_fiscal = 'pendiente'
-                WHERE id = ?
-            `, [facturaId], function(err) {
-                if (err) {
-                    reject(err);
-                    return;
-                }
-                if (this.changes === 0) {
-                    resolve(null);
-                    return;
-                }
-                resolve(this.changes);
-            });
-        });
-        
-        if (changes === null) {
-            return res.status(404).json({ 
-                success: false,
-                error: 'Factura no encontrada o no se pudo actualizar' 
-            });
-        }
-        
-        // Registrar en auditoría (no bloqueante)
-        try {
-            await sistemaAuditoria.registrarOperacion(
-                'facturas',
-                facturaId,
-                'UPDATE',
-                { estado: factura.estado, estado_fiscal: factura.estado_fiscal },
-                { estado: 'pendiente', estado_fiscal: 'pendiente' },
-                'sistema'
-            );
-        } catch (auditError) {
-            console.warn('⚠️ Error al registrar en auditoría (no crítico):', auditError.message);
-        }
-        
-        console.log('✅ Factura marcada como pendiente:', facturaId);
-        res.json({ 
-            success: true, 
-            message: 'Factura marcada como pendiente exitosamente',
-            data: {
-                id: facturaId,
-                estado: 'pendiente'
-            }
-        });
-        
-    } catch (error) {
-        console.error('❌ Error al marcar factura como pendiente:', error);
-        if (!res.headersSent) {
-            res.status(500).json({ 
-                success: false,
-                error: 'Error interno del servidor',
-                details: error.message
-            });
-        }
-    }
-});
-
-// PUT - Anular factura y crear abono automáticamente
-app.put('/api/facturas/:id/anular', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const facturaId = parseInt(id, 10);
-        
-        // Validar ID
-        if (isNaN(facturaId) || facturaId <= 0) {
-            return res.status(400).json({ 
-                success: false,
-                error: 'ID de factura inválido',
-                received: id
-            });
-        }
-        
-        // Obtener factura actual con todos sus detalles
-        const factura = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM facturas WHERE id = ?', [facturaId], (err, row) => {
-                if (err) {
-                    reject(err);
-                    return;
-                }
-                resolve(row);
-            });
-        });
-        
-        if (!factura) {
-            return res.status(404).json({ 
-                success: false,
-                error: 'Factura no encontrada' 
-            });
-        }
-        
-        // Verificar si ya está anulada
-        if (factura.estado === 'anulado' || factura.estado === 'anulada') {
-            return res.status(400).json({ 
-                success: false,
-                error: 'La factura ya está anulada' 
-            });
-        }
-        
-        // Obtener detalles de la factura
-        const detallesFactura = await new Promise((resolve, reject) => {
-            db.all('SELECT * FROM detalles_factura WHERE factura_id = ?', [facturaId], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows || []);
-            });
-        });
-        
-        // Obtener información de la empresa para generar número de abono
-        const empresa = await new Promise((resolve, reject) => {
-            db.get('SELECT * FROM empresas WHERE id = ?', [factura.empresa_id], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
-        
-        if (!empresa) {
-            return res.status(404).json({ 
-                success: false,
-                error: 'Empresa no encontrada' 
-            });
-        }
-        
-        // Generar número de abono (formato: ABO-XXX/YYYY)
-        const año = new Date().getFullYear();
-        const prefijo = 'ABO';
-        
-        // Obtener el último número de abono para esta empresa y año
-        const ultimoAbono = await new Promise((resolve, reject) => {
-            const dbType = config.get('database.type') || 'postgresql';
-            // Formato: ABO-001/2025, necesitamos extraer el número entre "ABO-" y "/"
-            // Usar método simple: extraer los 3 dígitos después del guion
-            const query = dbType === 'postgresql' 
-                ? `SELECT MAX(CAST(SUBSTRING(numero_abono FROM POSITION('-' IN numero_abono) + 1 FOR 3) AS INTEGER)) as ultimo_numero
-                   FROM abonos 
-                   WHERE empresa_id = $1 AND numero_abono LIKE $2 || '-%' AND numero_abono LIKE '%/' || $3`
-                : `SELECT MAX(CAST(SUBSTR(numero_abono, ${prefijo.length + 2}, 3) AS INTEGER)) as ultimo_numero
-                   FROM abonos 
-                   WHERE empresa_id = ? AND numero_abono LIKE ? || '-%' AND numero_abono LIKE '%/' || ?`;
-            
-            const params = [factura.empresa_id, prefijo, año.toString()];
-            
-            db.get(query, params, (err, row) => {
-                if (err) {
-                    console.error('❌ Error al obtener último número de abono:', err);
-                    // Si hay error, retornar 0 para empezar desde el principio
-                    resolve({ ultimo_numero: 0 });
-                } else {
-                    resolve(row || { ultimo_numero: 0 });
-                }
-            });
-        });
-        
-        const siguienteNumero = ((ultimoAbono?.ultimo_numero || 0) + 1).toString().padStart(3, '0');
-        const numeroAbono = `${prefijo}-${siguienteNumero}/${año}`;
-        
-        // Crear el abono (valores negativos)
-        const abonoData = {
-            numero_abono: numeroAbono,
-            factura_id: facturaId,
-            empresa_id: factura.empresa_id,
-            cliente_id: factura.cliente_id,
-            fecha_emision: new Date().toISOString().split('T')[0],
-            subtotal: -Math.abs(factura.subtotal), // Negativo
-            igic: -Math.abs(factura.igic), // Negativo
-            total: -Math.abs(factura.total), // Negativo
-            estado: 'pendiente',
-            notas: `Abono generado automáticamente por anulación de factura ${factura.numero_factura}`,
-            tipo_documento: 'abono',
-            estado_fiscal: 'pendiente'
-        };
-        
-        // Insertar abono
-        const abonoId = await new Promise((resolve, reject) => {
-            const dbType = config.get('database.type') || 'postgresql';
-            const activoValue = dbType === 'postgresql' ? 'true' : '1';
-            
-            const query = dbType === 'postgresql'
-                ? `INSERT INTO abonos (
-                    numero_abono, factura_id, empresa_id, cliente_id, fecha_emision,
-                    subtotal, igic, total, estado, notas, tipo_documento, estado_fiscal, activo
-                ) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13) RETURNING id`
-                : `INSERT INTO abonos (
-                    numero_abono, factura_id, empresa_id, cliente_id, fecha_emision,
-                    subtotal, igic, total, estado, notas, tipo_documento, estado_fiscal, activo
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ${activoValue})`;
-            
-            const params = [
-                abonoData.numero_abono,
-                abonoData.factura_id,
-                abonoData.empresa_id,
-                abonoData.cliente_id,
-                abonoData.fecha_emision,
-                abonoData.subtotal,
-                abonoData.igic,
-                abonoData.total,
-                abonoData.estado,
-                abonoData.notas,
-                abonoData.tipo_documento,
-                abonoData.estado_fiscal
-            ];
-            
-            // Agregar activo como parámetro para PostgreSQL
-            if (dbType === 'postgresql') {
-                params.push(true); // activo = true
-                db.query(query, params)
-                    .then(result => {
-                        resolve(result.rows[0].id);
-                    })
-                    .catch(err => {
-                        reject(err);
-                    });
-            } else {
-                db.run(query, params, function(err) {
-                    if (err) reject(err);
-                    else resolve(this.lastID);
-                });
-            }
-        });
-        
-        // Crear detalles del abono (valores negativos)
-        for (const detalle of detallesFactura) {
-            await new Promise((resolve, reject) => {
-                const query = `INSERT INTO detalles_abono (
-                    abono_id, producto_id, coche_id, cantidad, precio_unitario,
-                    subtotal, igic, total, descripcion, tipo_impuesto
-                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`;
-                
-                const params = [
-                    abonoId,
-                    detalle.producto_id,
-                    detalle.coche_id,
-                    detalle.cantidad,
-                    -Math.abs(detalle.precio_unitario), // Negativo
-                    -Math.abs(detalle.subtotal), // Negativo
-                    -Math.abs(detalle.igic), // Negativo
-                    -Math.abs(detalle.total), // Negativo
-                    detalle.descripcion,
-                    detalle.tipo_impuesto || 'igic'
-                ];
-                
-                db.run(query, params, (err) => {
-                    if (err) reject(err);
-                    else resolve();
-                });
-            });
-        }
-        
-        // Marcar la factura como anulada
-        const changes = await new Promise((resolve, reject) => {
-            db.run(`
-                UPDATE facturas 
-                SET estado = 'anulado', 
-                    estado_fiscal = 'anulado'
-                WHERE id = ?
-            `, [facturaId], function(err) {
-                if (err) {
-                    reject(err);
-                    return;
-                }
-                if (this.changes === 0) {
-                    resolve(null);
-                    return;
-                }
-                resolve(this.changes);
-            });
-        });
-        
-        if (changes === null) {
-            return res.status(404).json({ 
-                success: false,
-                error: 'Factura no encontrada o no se pudo actualizar' 
-            });
-        }
-        
-        // Invalidar caché de facturas, abonos y proformas (porque el estado puede afectar proformas relacionadas)
-        if (cacheManager) {
-            cacheManager.invalidatePattern('facturas:*');
-            cacheManager.invalidatePattern('abonos:*');
-            cacheManager.invalidatePattern('proformas:*');
-            cacheManager.invalidateByTableChange('facturas', 'update');
-            cacheManager.invalidateByTableChange('abonos', 'insert');
-            console.log(`🔄 Caché invalidado después de anular factura ${facturaId}`);
-        }
-        
-        // Registrar en auditoría (no bloqueante)
-        try {
-            await sistemaAuditoria.registrarOperacion(
-                'facturas',
-                facturaId,
-                'UPDATE',
-                { estado: factura.estado },
-                { estado: 'anulado' },
-                'sistema'
-            );
-            
-            await sistemaAuditoria.registrarOperacion(
-                'abonos',
-                abonoId,
-                'INSERT',
-                null,
-                abonoData,
-                'sistema'
-            );
-        } catch (auditError) {
-            console.warn('⚠️ Error al registrar en auditoría (no crítico):', auditError.message);
-        }
-        
-        console.log(`✅ Factura ${facturaId} anulada y abono ${numeroAbono} creado automáticamente`);
-        res.json({ 
-            success: true, 
-            message: 'Factura anulada y abono creado exitosamente',
-            data: {
-                factura: {
-                    id: facturaId,
-                    estado: 'anulado'
-                },
-                abono: {
-                    id: abonoId,
-                    numero_abono: numeroAbono,
-                    total: abonoData.total
-                }
-            }
-        });
-        
-    } catch (error) {
-        console.error('❌ Error al anular factura y crear abono:', error);
-        if (!res.headersSent) {
-            res.status(500).json({ 
-                success: false,
-                error: 'Error interno del servidor',
-                details: error.message
-            });
-        }
-    }
-});
-
-// ==================== ENDPOINTS DE ABONOS ====================
-
-// GET - Obtener todos los abonos con paginación
-app.get('/api/abonos', async (req, res) => {
-    try {
-        const { page = 1, limit = 20, search = '', empresa_id = '', cliente_id = '', fecha_desde = '', fecha_hasta = '', include_detalles = 'false' } = req.query;
-        const includeDetalles = include_detalles === 'true';
-        const pageNum = parseInt(page, 10);
-        const limitNum = parseInt(limit, 10);
-        const offset = (pageNum - 1) * limitNum;
-        
-        const dbType = config.get('database.type') || 'postgresql';
-        const activoValue = dbType === 'postgresql' ? 'true' : '1';
-        const likeOperator = dbType === 'postgresql' ? 'ILIKE' : 'LIKE';
-        
-        // Construir condiciones WHERE
-        const conditions = [`(a.activo = ${activoValue} OR a.activo IS NULL)`];
-        const params = [];
-        let paramIndex = 1;
-        
-        if (search) {
-            const likeValue = `%${search}%`;
-            conditions.push(`(a.numero_abono ${likeOperator} ${dbType === 'postgresql' ? '$' + paramIndex : '?'} OR c.nombre ${likeOperator} ${dbType === 'postgresql' ? '$' + (paramIndex + 1) : '?'} OR e.nombre ${likeOperator} ${dbType === 'postgresql' ? '$' + (paramIndex + 2) : '?'})`);
-            params.push(likeValue, likeValue, likeValue);
-            paramIndex += 3;
-        }
-        
-        if (empresa_id) {
-            conditions.push(`a.empresa_id = ${dbType === 'postgresql' ? '$' + paramIndex : '?'}`);
-            params.push(empresa_id);
-            paramIndex++;
-        }
-        
-        if (cliente_id) {
-            conditions.push(`a.cliente_id = ${dbType === 'postgresql' ? '$' + paramIndex : '?'}`);
-            params.push(cliente_id);
-            paramIndex++;
-        }
-        
-        if (fecha_desde) {
-            conditions.push(`a.fecha_emision >= ${dbType === 'postgresql' ? '$' + paramIndex : '?'}`);
-            params.push(fecha_desde);
-            paramIndex++;
-        }
-        
-        if (fecha_hasta) {
-            conditions.push(`a.fecha_emision <= ${dbType === 'postgresql' ? '$' + paramIndex : '?'}`);
-            params.push(fecha_hasta);
-            paramIndex++;
-        }
-        
-        const whereClause = conditions.length > 0 ? 'WHERE ' + conditions.join(' AND ') : '';
-        
-        // Consulta principal con JOINs
-        let query = `
-            SELECT 
-                a.*,
-                c.nombre as cliente_nombre,
-                e.nombre as empresa_nombre,
-                f.numero_factura as factura_numero
-            FROM abonos a
-            LEFT JOIN clientes c ON a.cliente_id = c.id
-            LEFT JOIN empresas e ON a.empresa_id = e.id
-            LEFT JOIN facturas f ON a.factura_id = f.id
-            ${whereClause}
-            ORDER BY a.fecha_emision DESC, a.id DESC
-            LIMIT ${dbType === 'postgresql' ? '$' + paramIndex : '?'} OFFSET ${dbType === 'postgresql' ? '$' + (paramIndex + 1) : '?'}
-        `;
-        
-        params.push(limitNum, offset);
-        
-        // Obtener abonos
-        const abonos = await new Promise((resolve, reject) => {
-            db.all(query, params, (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows || []);
-            });
-        });
-        
-        // Obtener total de abonos
-        const countQuery = `
-            SELECT COUNT(*) as total
-            FROM abonos a
-            LEFT JOIN clientes c ON a.cliente_id = c.id
-            LEFT JOIN empresas e ON a.empresa_id = e.id
-            ${whereClause}
-        `;
-        
-        const totalResult = await new Promise((resolve, reject) => {
-            db.get(countQuery, params.slice(0, -2), (err, row) => {
-                if (err) reject(err);
-                else resolve(row?.total || 0);
-            });
-        });
-        
-        const total = Number(totalResult);
-        const totalPages = Math.ceil(total / limitNum);
-        
-        // Si se solicitan detalles, obtenerlos para cada abono
-        if (includeDetalles) {
-            for (const abono of abonos) {
-                const detalles = await new Promise((resolve, reject) => {
-                    db.all(`
-                        SELECT da.*, 
-                               p.descripcion as producto_descripcion,
-                               co.matricula as coche_matricula,
-                               co.modelo as coche_modelo,
-                               co.color as coche_color,
-                               co.kms as coche_kms,
-                               co.chasis as coche_chasis
-                        FROM detalles_abono da
-                        LEFT JOIN productos p ON da.producto_id = p.id
-                        LEFT JOIN coches co ON da.coche_id = co.id
-                        WHERE da.abono_id = ?
-                    `, [abono.id], (err, rows) => {
-                        if (err) reject(err);
-                        else resolve(rows || []);
-                    });
-                });
-                abono.detalles = detalles;
-            }
-        }
-        
-        res.json({
-            success: true,
-            data: abonos,
-            pagination: {
-                page: pageNum,
-                limit: limitNum,
-                total: total,
-                totalPages: totalPages
-            }
-        });
-        
-    } catch (error) {
-        console.error('❌ Error al obtener abonos:', error);
-        res.status(500).json({ 
-            success: false,
-            error: 'Error al obtener abonos',
-            details: error.message
-        });
-    }
-});
-
-// GET - Obtener abono por ID
-app.get('/api/abonos/:id', async (req, res) => {
-    try {
-        const { id } = req.params;
-        const abonoId = parseInt(id, 10);
-        
-        if (isNaN(abonoId) || abonoId <= 0) {
-            return res.status(400).json({ 
-                success: false,
-                error: 'ID de abono inválido' 
-            });
-        }
-        
-        // Obtener abono con información relacionada
-        const abono = await new Promise((resolve, reject) => {
-            db.get(`
-                SELECT 
-                    a.*,
-                    c.nombre as cliente_nombre,
-                    c.direccion as cliente_direccion,
-                    c.identificacion as cliente_identificacion,
-                    e.nombre as empresa_nombre,
-                    e.cif as empresa_cif,
-                    e.direccion as empresa_direccion,
-                    f.numero_factura as factura_numero
-                FROM abonos a
-                LEFT JOIN clientes c ON a.cliente_id = c.id
-                LEFT JOIN empresas e ON a.empresa_id = e.id
-                LEFT JOIN facturas f ON a.factura_id = f.id
-                WHERE a.id = ?
-            `, [abonoId], (err, row) => {
-                if (err) reject(err);
-                else resolve(row);
-            });
-        });
-        
-        if (!abono) {
-            return res.status(404).json({ 
-                success: false,
-                error: 'Abono no encontrado' 
-            });
-        }
-        
-        // Obtener detalles del abono
-        const detalles = await new Promise((resolve, reject) => {
-            db.all(`
-                SELECT da.*, 
-                       p.descripcion as producto_descripcion,
-                       co.matricula as coche_matricula,
-                       co.modelo as coche_modelo,
-                       co.color as coche_color,
-                       co.kms as coche_kms,
-                       co.chasis as coche_chasis
-                FROM detalles_abono da
-                LEFT JOIN productos p ON da.producto_id = p.id
-                LEFT JOIN coches co ON da.coche_id = co.id
-                WHERE da.abono_id = ?
-            `, [abonoId], (err, rows) => {
-                if (err) reject(err);
-                else resolve(rows || []);
-            });
-        });
-        
-        abono.detalles = detalles || [];
-        
-        res.json({
-            success: true,
-            data: abono
-        });
-        
-    } catch (error) {
-        console.error('❌ Error al obtener abono:', error);
-        res.status(500).json({ 
-            success: false,
-            error: 'Error al obtener abono',
-            details: error.message
-        });
-    }
-});
-
-// GET - Verificar integridad de auditoría
-app.get('/api/auditoria/verificar-integridad', async (req, res) => {
-    try {
-        const resultado = await sistemaAuditoria.verificarIntegridadAuditoria();
-        
-        res.json({
-            success: true,
-            data: resultado
-        });
-        
-    } catch (error) {
-        console.error('❌ Error al verificar integridad:', error);
-        res.status(500).json({ error: 'Error al verificar integridad' });
-    }
-});
-
-// GET - Listar backups disponibles
-app.get('/api/backup/listar', (req, res) => {
-    try {
-        const backups = sistemaBackup.listarBackups();
-        
-        res.json({
-            success: true,
-            data: backups
-        });
-        
-    } catch (error) {
-        console.error('❌ Error al listar backups:', error);
-        res.status(500).json({ error: 'Error al listar backups' });
-    }
-});
-
-// POST - Realizar backup manual
-app.post('/api/backup/realizar', async (req, res) => {
-    try {
-        const resultado = await sistemaBackup.realizarBackup();
-        
-        res.json({
-            success: true,
-            data: resultado
-        });
-        
-    } catch (error) {
-        console.error('❌ Error al realizar backup:', error);
-        res.status(500).json({ error: 'Error al realizar backup' });
-    }
-});
-
-// POST - Restaurar desde backup
-app.post('/api/backup/restaurar', async (req, res) => {
-    try {
-        const { archivo } = req.body;
-        
-        if (!archivo) {
-            return res.status(400).json({ error: 'Archivo de backup requerido' });
-        }
-        
-        const resultado = await sistemaBackup.restaurarBackup(archivo);
-        
-        res.json({
-            success: true,
-            data: { restaurado: resultado, archivo }
-        });
-        
-    } catch (error) {
-        console.error('❌ Error al restaurar backup:', error);
-        res.status(500).json({ error: 'Error al restaurar backup' });
-    }
-});
-
-// GET - Verificar integridad de backup
-app.get('/api/backup/verificar/:archivo', async (req, res) => {
-    try {
-        const { archivo } = req.params;
-        const integridadValida = await sistemaBackup.verificarIntegridadBackup(
-            path.join('./backups', archivo)
-        );
-        
-        res.json({
-            success: true,
-            data: { 
-                archivo, 
-                integridad_valida: integridadValida 
-            }
-        });
-        
-    } catch (error) {
-        console.error('❌ Error al verificar integridad del backup:', error);
-        res.status(500).json({ error: 'Error al verificar integridad del backup' });
-    }
-});
-
-// GET - Buscar cliente por identificación
-app.get('/api/clientes/buscar/:identificacion', (req, res) => {
-    const identificacion = req.params.identificacion;
-    
-    db.get('SELECT * FROM clientes WHERE identificacion = ?', [identificacion], (err, row) => {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        
-        if (!row) {
-            res.status(404).json({ error: 'Cliente no encontrado' });
-            return;
-        }
-        
-        res.json({ success: true, data: row });
-    });
-});
-
-// GET - Buscar producto por código
-app.get('/api/productos/buscar/:codigo', (req, res) => {
-    const codigo = req.params.codigo;
-    
-    db.get('SELECT * FROM productos WHERE codigo = ? AND activo = 1', [codigo], (err, row) => {
-        if (err) {
-            res.status(500).json({ error: err.message });
-            return;
-        }
-        
-        if (!row) {
-            res.status(404).json({ error: 'Producto no encontrado' });
-            return;
-        }
-        
-        res.json({ success: true, data: row });
-    });
-});
-
-// Endpoints de rendimiento y estadísticas
-app.get('/api/performance/stats', (req, res) => {
-    try {
-        const cacheStats = cacheManager.getStats();
-        const memoryUsage = process.memoryUsage();
-        
-        res.json({
-            success: true,
-            data: {
-                cache: cacheStats,
-                memory: {
-                    rss: Math.round(memoryUsage.rss / 1024 / 1024) + ' MB',
-                    heapTotal: Math.round(memoryUsage.heapTotal / 1024 / 1024) + ' MB',
-                    heapUsed: Math.round(memoryUsage.heapUsed / 1024 / 1024) + ' MB',
-                    external: Math.round(memoryUsage.external / 1024 / 1024) + ' MB'
-                },
-                uptime: Math.round(process.uptime()) + ' seconds',
-                nodeVersion: process.version,
-                platform: process.platform
-            }
-        });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-app.post('/api/performance/cache/clear', (req, res) => {
-    try {
-        const { pattern } = req.body;
-        
-        if (pattern) {
-            const deletedCount = cacheManager.delPattern(pattern);
-            res.json({ success: true, message: `Cache cleared for pattern: ${pattern}`, deletedCount });
-        } else {
-            cacheManager.flush();
-            res.json({ success: true, message: 'All cache cleared' });
-        }
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// POST - Limpiar caché específico de coches
-app.post('/api/coches/cache/clear', (req, res) => {
-    try {
-        if (global.cacheManager) {
-            const deletedCount = global.cacheManager.delPattern('coches:*');
-            console.log('🗑️ Caché de coches limpiado manualmente');
-            res.json({ 
-                success: true, 
-                message: 'Caché de coches limpiado correctamente',
-                deletedCount: deletedCount
-            });
-        } else {
-            res.status(500).json({ error: 'Cache manager no disponible' });
-        }
-    } catch (error) {
-        console.error('Error limpiando caché de coches:', error);
-        res.status(500).json({ error: error.message });
-    }
-});
-
-app.get('/api/performance/cache/stats', (req, res) => {
-    try {
-        const stats = cacheManager.getStats();
-        res.json({ success: true, data: stats });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-app.post('/api/performance/cache/preheat', async (req, res) => {
-    try {
-        await preheatCache();
-        res.json({ success: true, message: 'Cache preheated successfully' });
-    } catch (error) {
-        res.status(500).json({ error: error.message });
-    }
-});
-
-// Endpoint para analizar rendimiento de consultas (SOLO DESARROLLO)
-if (config.get('server.environment') === 'development') {
-    app.post('/api/performance/analyze-query', async (req, res) => {
-        try {
-            const { query, params = [] } = req.body;
-            
-            if (!query) {
-                return res.status(400).json({ error: 'Query is required' });
-            }
-            
-            // Validar que la query no contenga comandos peligrosos
-            const dangerousCommands = ['DROP', 'DELETE', 'UPDATE', 'INSERT', 'ALTER', 'CREATE', 'EXEC', 'EXECUTE'];
-            const queryUpper = query.toUpperCase();
-            
-            if (dangerousCommands.some(cmd => queryUpper.includes(cmd))) {
-                return res.status(400).json({ error: 'Query contains dangerous commands' });
-            }
-            
-            const analysis = await paginationManager.analyzeQueryPerformance(query, params);
-            res.json({ success: true, data: analysis });
-        } catch (error) {
-            res.status(500).json({ error: error.message });
-        }
-    });
-}
-
-// Función para configurar endpoints de seguridad después de la inicialización
+// FunciÃ³n para configurar endpoints de seguridad despuÃ©s de la inicializaciÃ³n
 function configurarEndpointsSeguridad() {
-    // ========================================
-    // ENDPOINTS DE SEGURIDAD Y VALIDACIÓN FISCAL
-    // ========================================
-
-    // Endpoints de autenticación
-    app.post('/api/auth/login', async (req, res) => {
-        try {
-            const { username, password } = req.body;
-            const ipAddress = req.ip || req.connection.remoteAddress;
-            const userAgent = req.get('User-Agent');
-
-            // Validar entrada
-            if (!username || !password) {
-                return res.status(400).json({
-                    success: false,
-                    error: 'Username y password son requeridos'
-                });
-            }
-
-            // Autenticar usuario con JWT real
-            const resultado = await authService.authenticateUser(username, password, db);
-            
-            // Actualizar último acceso
-            db.run('UPDATE usuarios SET ultimo_acceso = ? WHERE id = ?', 
-                [new Date().toISOString(), resultado.user.id]);
-
-            // Registrar evento de login exitoso
-            if (sistemaLogsSeguridad) {
-                await sistemaLogsSeguridad.registrarLogin(
-                    resultado.user.id,
-                    resultado.user.username,
-                    ipAddress,
-                    userAgent,
-                    true
-                );
-            }
-
-            res.json({
-                success: true,
-                data: resultado
-            });
-        } catch (error) {
-            // Registrar intento fallido en monitoreo de seguridad
-            securityMonitor.logFailedLogin(username, ipAddress, userAgent);
-            
-            // Registrar intento fallido
-            if (sistemaLogsSeguridad) {
-                await sistemaLogsSeguridad.registrarLogin(
-                    null,
-                    username,
-                    ipAddress,
-                    userAgent,
-                    false
-                );
-            }
-
-            res.status(401).json({
-                success: false,
-                error: error.message
-            });
-        }
-    });
-
-    // Endpoint para refrescar token
-    app.post('/api/auth/refresh', requireAuth, (req, res) => {
-        try {
-            const authHeader = req.headers.authorization;
-            const token = authHeader.substring(7);
-            
-            const newToken = authService.refreshToken(token);
-            
-            res.json({
-                success: true,
-                data: {
-                    token: newToken,
-                    expiresIn: authService.parseExpiration(config.get('security.jwt.expiresIn'))
-                }
-            });
-        } catch (error) {
-            res.status(401).json({
-                success: false,
-                error: error.message
-            });
-        }
-    });
-
-    // Endpoint para obtener información del usuario actual
-    app.get('/api/auth/me', requireAuth, (req, res) => {
-        res.json({
-            success: true,
-            data: {
-                user: req.user,
-                permissions: roleManager.getRolePermissions(req.user.role),
-                roleInfo: roleManager.getRoleInfo(req.user.role)
-            }
-        });
-    });
-
-    // Endpoint para obtener roles disponibles
-    app.get('/api/auth/roles', requireAuth, requireRole(['admin']), (req, res) => {
-        res.json({
-            success: true,
-            data: roleManager.getAllRoles()
-        });
-    });
-
-    // Endpoint para verificar permisos
-    app.post('/api/auth/check-permission', requireAuth, (req, res) => {
-        const { resource, action } = req.body;
-        
-        if (!resource || !action) {
-            return res.status(400).json({
-                success: false,
-                error: 'Resource y action son requeridos'
-            });
-        }
-
-        const hasPermission = roleManager.canAccess(req.user.role, resource, action);
-        
-        res.json({
-            success: true,
-            data: {
-                hasPermission,
-                resource,
-                action,
-                userRole: req.user.role
-            }
-        });
-    });
-
-    // Endpoint para obtener estadísticas de seguridad
-    app.get('/api/security/stats', requireAuth, requireRole(['admin']), (req, res) => {
-        res.json({
-            success: true,
-            data: securityMonitor.getStats()
-        });
-    });
-
-    // Endpoint para obtener reporte de seguridad
-    app.get('/api/security/report', requireAuth, requireRole(['admin']), (req, res) => {
-        res.json({
-            success: true,
-            data: securityMonitor.generateSecurityReport()
-        });
-    });
-
-    // Endpoint para obtener alertas recientes
-    app.get('/api/security/alerts', requireAuth, requireRole(['admin']), (req, res) => {
-        const limit = parseInt(req.query.limit) || 10;
-        res.json({
-            success: true,
-            data: securityMonitor.getRecentAlerts(limit)
-        });
-    });
-
-app.post('/api/auth/logout', sistemaControlAcceso.middlewareAutenticacion(), async (req, res) => {
-    try {
-        const token = req.headers.authorization?.replace('Bearer ', '');
-        await sistemaControlAcceso.cerrarSesion(token);
-        
-        // Registrar evento de logout
-        await sistemaLogsSeguridad.registrarLogout(
-            req.usuario.id,
-            req.usuario.username,
-            req.ip || req.connection.remoteAddress
-        );
-
-        res.json({ success: true, message: 'Sesión cerrada correctamente' });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// Endpoints de cifrado
-app.post('/api/cifrado/cifrar', sistemaControlAcceso.middlewareAutenticacion(), 
-         sistemaControlAcceso.middlewarePermisos('facturas:crear'), async (req, res) => {
-    try {
-        const { datos } = req.body;
-        const resultado = sistemaCifrado.cifrar(datos);
-        
-        // Registrar evento de cifrado
-        await sistemaLogsSeguridad.registrarCifrado(
-            req.usuario.id,
-            req.usuario.username,
-            'cifrar',
-            'datos_sensibles',
-            req.ip || req.connection.remoteAddress
-        );
-
-        res.json({ success: true, data: resultado });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-app.post('/api/cifrado/descifrar', sistemaControlAcceso.middlewareAutenticacion(), 
-         sistemaControlAcceso.middlewarePermisos('facturas:leer'), async (req, res) => {
-    try {
-        const { datosCifrados } = req.body;
-        const resultado = sistemaCifrado.descifrar(datosCifrados);
-        
-        // Registrar evento de descifrado
-        await sistemaLogsSeguridad.registrarCifrado(
-            req.usuario.id,
-            req.usuario.username,
-            'descifrar',
-            'datos_sensibles',
-            req.ip || req.connection.remoteAddress
-        );
-
-        res.json({ success: true, data: resultado });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// Endpoints de validación fiscal
-app.post('/api/validacion/nif', async (req, res) => {
-    try {
-        const { nif } = req.body;
-        const resultado = sistemaValidacionFiscal.validarNIF(nif);
-        res.json({ success: true, data: resultado });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-app.post('/api/validacion/cif', async (req, res) => {
-    try {
-        const { cif } = req.body;
-        const resultado = sistemaValidacionFiscal.validarCIF(cif);
-        res.json({ success: true, data: resultado });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-app.post('/api/validacion/nie', async (req, res) => {
-    try {
-        const { nie } = req.body;
-        const resultado = sistemaValidacionFiscal.validarNIE(nie);
-        res.json({ success: true, data: resultado });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-app.post('/api/validacion/identificacion', async (req, res) => {
-    try {
-        const { identificacion } = req.body;
-        const resultado = sistemaValidacionFiscal.validarIdentificacionFiscal(identificacion);
-        res.json({ success: true, data: resultado });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-app.post('/api/validacion/pais', async (req, res) => {
-    try {
-        const { codigo } = req.body;
-        const resultado = sistemaValidacionFiscal.validarCodigoPais(codigo);
-        res.json({ success: true, data: resultado });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-app.post('/api/validacion/provincia', async (req, res) => {
-    try {
-        const { provincia } = req.body;
-        const resultado = sistemaValidacionFiscal.validarProvincia(provincia);
-        res.json({ success: true, data: resultado });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-app.post('/api/validacion/cliente', async (req, res) => {
-    try {
-        const datos = req.body;
-        const resultado = sistemaValidacionFiscal.validarDatosFiscalesCliente(datos);
-        res.json({ success: true, data: resultado });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-app.post('/api/validacion/empresa', async (req, res) => {
-    try {
-        const datos = req.body;
-        const resultado = sistemaValidacionFiscal.validarDatosFiscalesEmpresa(datos);
-        res.json({ success: true, data: resultado });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// Endpoints de información de validación
-app.get('/api/validacion/paises', (req, res) => {
-    res.json({
-        success: true,
-        data: sistemaValidacionFiscal.obtenerPaises()
-    });
-});
-
-app.get('/api/validacion/provincias', (req, res) => {
-    res.json({
-        success: true,
-        data: sistemaValidacionFiscal.obtenerProvinciasEspana()
-    });
-});
-
-app.get('/api/validacion/regimenes', (req, res) => {
-    res.json({
-        success: true,
-        data: sistemaValidacionFiscal.obtenerRegimenesFiscales()
-    });
-});
-
-// Endpoints de logs de seguridad
-app.get('/api/logs-seguridad', sistemaControlAcceso.middlewareAutenticacion(), 
-        sistemaControlAcceso.middlewarePermisos('auditoria:leer'), async (req, res) => {
-    try {
-        const filtros = req.query;
-        const logs = await sistemaLogsSeguridad.obtenerLogs(filtros);
-        res.json({ success: true, data: logs });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-app.get('/api/logs-seguridad/estadisticas', sistemaControlAcceso.middlewareAutenticacion(), 
-        sistemaControlAcceso.middlewarePermisos('auditoria:leer'), async (req, res) => {
-    try {
-        const { fechaDesde, fechaHasta } = req.query;
-        const estadisticas = await sistemaLogsSeguridad.obtenerEstadisticas(fechaDesde, fechaHasta);
-        res.json({ success: true, data: estadisticas });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-app.get('/api/logs-seguridad/verificar-integridad', sistemaControlAcceso.middlewareAutenticacion(), 
-        sistemaControlAcceso.middlewarePermisos('auditoria:verificar'), async (req, res) => {
-    try {
-        const resultado = await sistemaLogsSeguridad.verificarIntegridadLogs();
-        res.json({ success: true, data: resultado });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-// Endpoints de gestión de usuarios
-app.get('/api/usuarios', sistemaControlAcceso.middlewareAutenticacion(), 
-        sistemaControlAcceso.middlewarePermisos('usuarios:leer'), async (req, res) => {
-    try {
-        const query = 'SELECT id, username, rol, nombre, email, activo, ultimo_acceso FROM usuarios WHERE activo = 1';
-        db.all(query, [], (err, rows) => {
-            if (err) {
-                res.status(500).json({ success: false, error: err.message });
-                return;
-            }
-            res.json({ success: true, data: rows });
-        });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-app.post('/api/usuarios', sistemaControlAcceso.middlewareAutenticacion(), 
-         sistemaControlAcceso.middlewarePermisos('usuarios:crear'), async (req, res) => {
-    try {
-        const datosUsuario = req.body;
-        const resultado = await sistemaControlAcceso.crearUsuario(datosUsuario);
-        
-        // Registrar evento de creación de usuario
-        await sistemaLogsSeguridad.registrarGestionUsuario(
-            req.usuario.id,
-            req.usuario.username,
-            'crear',
-            datosUsuario.username,
-            req.ip || req.connection.remoteAddress
-        );
-
-        res.json({ success: true, data: resultado });
-    } catch (error) {
-        res.status(500).json({
-            success: false,
-            error: error.message
-        });
-    }
-});
-
-    app.get('/api/roles', (req, res) => {
-        res.json({
-            success: true,
-            data: sistemaControlAcceso.obtenerRoles()
-        });
-    });
-
+    // Rutas de autenticaciÃ³n, cifrado, seguridad, logs-seguridad, usuarios y roles
+    // migradas a: routes/authRoutes.js, cifradoRoutes.js, securityRoutes.js, etc.
+    
     // ========================================
     // ENDPOINTS DE FIRMA DIGITAL
     // ========================================
 
-    // Información del certificado
+    // InformaciÃ³n del certificado
     app.get('/api/firma-digital/certificado', async (req, res) => {
         try {
             const info = await sistemaFirmaDigital.obtenerInformacionCertificado();
@@ -7273,7 +1687,7 @@ app.post('/api/usuarios', sistemaControlAcceso.middlewareAutenticacion(),
         }
     });
 
-    // Obtener firmas disponibles para asignar a una empresa específica
+    // Obtener firmas disponibles para asignar a una empresa especÃ­fica
     app.get('/api/firma-digital/firmas-para-asignar/:empresaId?', async (req, res) => {
         try {
             const empresaId = req.params.empresaId ? parseInt(req.params.empresaId) : null;
@@ -7288,7 +1702,7 @@ app.post('/api/usuarios', sistemaControlAcceso.middlewareAutenticacion(),
         }
     });
 
-    // Verificar alertas de certificados próximos a caducar
+    // Verificar alertas de certificados prÃ³ximos a caducar
     app.get('/api/firma-digital/alertas-certificados', async (req, res) => {
         try {
             const resultado = await sistemaFirmaDigital.verificarAlertasCertificados();
@@ -7353,7 +1767,7 @@ app.post('/api/usuarios', sistemaControlAcceso.middlewareAutenticacion(),
         }
     });
 
-    // Firmar factura específica
+    // Firmar factura especÃ­fica
     app.post('/api/facturas/:id/firmar', async (req, res) => {
         try {
             const facturaId = req.params.id;
@@ -7415,7 +1829,7 @@ app.post('/api/usuarios', sistemaControlAcceso.middlewareAutenticacion(),
                 certificado: resultadoFirma.firma.certificado
             };
 
-            // Actualizar factura con información de firma
+            // Actualizar factura con informaciÃ³n de firma
             await new Promise((resolve, reject) => {
                 db.run('UPDATE facturas SET respuesta_aeat = ? WHERE id = ?', 
                     [JSON.stringify({ firma_digital: firmaDigital.firma, archivo_firma: firmaDigital.archivo }), facturaId], 
@@ -7483,7 +1897,7 @@ app.post('/api/usuarios', sistemaControlAcceso.middlewareAutenticacion(),
                 });
             });
 
-            // Preparar datos para verificación
+            // Preparar datos para verificaciÃ³n
             const datosFactura = {
                 ...factura,
                 productos: productos
@@ -7498,7 +1912,7 @@ app.post('/api/usuarios', sistemaControlAcceso.middlewareAutenticacion(),
                         firmaCompleta = respuestaAEAT.firma_digital;
                     }
                 } catch (error) {
-                    console.warn('⚠️ Error al parsear respuesta AEAT:', error.message);
+                    console.warn('âš ï¸ Error al parsear respuesta AEAT:', error.message);
                 }
             }
 
@@ -7542,7 +1956,7 @@ app.post('/api/usuarios', sistemaControlAcceso.middlewareAutenticacion(),
         }
     });
 
-    // Cargar firma específica
+    // Cargar firma especÃ­fica
     app.get('/api/firma-digital/firmas/:archivo', (req, res) => {
         try {
             const archivo = req.params.archivo;
@@ -7556,7 +1970,7 @@ app.post('/api/usuarios', sistemaControlAcceso.middlewareAutenticacion(),
         }
     });
 
-    // Generar certificado de producción
+    // Generar certificado de producciÃ³n
     app.post('/api/firma-digital/certificado-produccion', async (req, res) => {
         try {
             const datosEmpresa = req.body;
@@ -7571,35 +1985,25 @@ app.post('/api/usuarios', sistemaControlAcceso.middlewareAutenticacion(),
     });
 }
 
-// Endpoint para obtener estadísticas de logs
-app.get('/api/logs/stats', requireAuth, requireRole(['admin']), (req, res) => {
-    try {
-        const stats = logger.getStats();
-        res.json({
-            success: true,
-            data: stats
-        });
-    } catch (error) {
-        logger.error('Error obteniendo estadísticas de logs', { error: error.message }, 'operations');
-        res.status(500).json({
-            success: false,
-            error: 'Error obteniendo estadísticas de logs'
-        });
-    }
-});
+// Endpoint para obtener estadÃ­sticas de logs (fuera de configurarEndpointsSeguridad)
+// ========================================
+// RUTAS DE LOGS - MIGRADAS A MÃ“DULOS
+// Estas rutas ahora estÃ¡n en: routes/logsRoutes.js
+// ========================================
+// CÃ³digo comentado eliminado - rutas migradas a mÃ³dulos
 
 // Manejo de errores
 app.use((err, req, res, next) => {
-    logger.error('Error no manejado en la aplicación', { 
+    logger.error('Error no manejado en la aplicaciÃ³n', { 
         error: err.message, 
         stack: err.stack,
         url: req.url,
         method: req.method
     }, 'error');
-    res.status(500).json({ error: 'Algo salió mal!' });
+    res.status(500).json({ error: 'Algo saliÃ³ mal!' });
 });
 
-// Función para obtener IPs locales
+// FunciÃ³n para obtener IPs locales
 function getLocalIPs() {
     const os = require('os');
     const interfaces = os.networkInterfaces();
@@ -7617,12 +2021,12 @@ function getLocalIPs() {
     return ips;
 }
 
-// Función para configurar firewall automáticamente (Windows)
+// FunciÃ³n para configurar firewall automÃ¡ticamente (Windows)
 function configureFirewall(port) {
     // Verificar si la regla ya existe
     exec(`netsh advfirewall firewall show rule name="Node.js Backend - Puerto ${port}"`, (error, stdout) => {
         if (stdout && stdout.includes('Node.js Backend')) {
-            logger.info(`✅ Regla del firewall ya existe para puerto ${port}`, {}, 'general');
+            logger.info(`âœ… Regla del firewall ya existe para puerto ${port}`, {}, 'general');
             return;
         }
         
@@ -7632,12 +2036,12 @@ function configureFirewall(port) {
         exec(command, (error, stdout, stderr) => {
             if (error) {
                 // Si falla, probablemente no tiene permisos de administrador
-                logger.warn(`⚠️  No se pudo configurar el firewall automáticamente.`, {}, 'general');
+                logger.warn(`âš ï¸  No se pudo configurar el firewall automÃ¡ticamente.`, {}, 'general');
                 logger.warn(`   Ejecuta como Administrador: .\\configurar-firewall.ps1`, {}, 'general');
                 logger.warn(`   O configura manualmente el puerto ${port} en el Firewall de Windows`, {}, 'general');
             } else {
-                logger.info(`✅ Regla del firewall creada para puerto ${port}`, {}, 'general');
-                console.log(`✅ Firewall configurado: puerto ${port} permitido`);
+                logger.info(`âœ… Regla del firewall creada para puerto ${port}`, {}, 'general');
+                console.log(`âœ… Firewall configurado: puerto ${port} permitido`);
             }
         });
     });
@@ -7654,37 +2058,37 @@ const server = app.listen(PORT, HOST, () => {
     });
     
     // Logs con URLs completas
-    logger.info(`📡 API disponible localmente: http://localhost:${PORT}`, {}, 'general');
-    logger.info(`📋 Documentación: http://localhost:${PORT}/`, {}, 'general');
+    logger.info(`ðŸ“¡ API disponible localmente: http://localhost:${PORT}`, {}, 'general');
+    logger.info(`ðŸ“‹ DocumentaciÃ³n: http://localhost:${PORT}/`, {}, 'general');
     
     // Mostrar URLs para acceso desde otros ordenadores
     if (localIPs.length > 0) {
-        logger.info(`🌐 URLs para acceso desde otros ordenadores:`, {}, 'general');
+        logger.info(`ðŸŒ URLs para acceso desde otros ordenadores:`, {}, 'general');
         localIPs.forEach(ip => {
-            logger.info(`   • http://${ip}:${PORT}`, {}, 'general');
-            logger.info(`   • http://${ip}:${PORT}/api/clientes`, {}, 'general');
+            logger.info(`   â€¢ http://${ip}:${PORT}`, {}, 'general');
+            logger.info(`   â€¢ http://${ip}:${PORT}/api/clientes`, {}, 'general');
         });
     } else {
-        logger.warn('⚠️  No se detectaron IPs de red local', {}, 'general');
+        logger.warn('âš ï¸  No se detectaron IPs de red local', {}, 'general');
     }
     
     // Programar limpieza de logs antiguos cada 24 horas
     setInterval(() => {
-        logger.cleanupOldLogs(30); // Mantener logs de 30 días
+        logger.cleanupOldLogs(30); // Mantener logs de 30 dÃ­as
     }, 24 * 60 * 60 * 1000);
     
-    console.log(`🚀 Servidor HTTP ejecutándose en http://${HOST}:${PORT}`);
-    console.log(`📱 Aplicación de escritorio puede conectarse desde Electron`);
+    console.log(`ðŸš€ Servidor HTTP ejecutÃ¡ndose en http://${HOST}:${PORT}`);
+    console.log(`ðŸ“± AplicaciÃ³n de escritorio puede conectarse desde Electron`);
     
-    // Mostrar URLs en consola también
+    // Mostrar URLs en consola tambiÃ©n
     if (localIPs.length > 0) {
-        console.log(`\n🌐 URLs para acceso desde otros ordenadores:`);
+        console.log(`\nðŸŒ URLs para acceso desde otros ordenadores:`);
         localIPs.forEach(ip => {
-            console.log(`   • http://${ip}:${PORT}`);
+            console.log(`   â€¢ http://${ip}:${PORT}`);
         });
     }
     
-    // Intentar configurar firewall automáticamente (solo Windows)
+    // Intentar configurar firewall automÃ¡ticamente (solo Windows)
     if (process.platform === 'win32') {
         configureFirewall(PORT);
     }
@@ -7697,7 +2101,7 @@ const server = app.listen(PORT, HOST, () => {
         try {
             const httpsServer = httpsManager.createHTTPSServer(app, HTTPS_PORT);
             if (httpsServer) {
-                logger.info(`🔒 Servidor HTTPS iniciado en puerto ${HTTPS_PORT}`, {}, 'general');
+                logger.info(`ðŸ”’ Servidor HTTPS iniciado en puerto ${HTTPS_PORT}`, {}, 'general');
                 
                 // Configurar firewall para HTTPS
                 if (process.platform === 'win32') {
@@ -7706,34 +2110,34 @@ const server = app.listen(PORT, HOST, () => {
                 
                 // Mostrar URLs HTTPS
                 if (localIPs.length > 0) {
-                    logger.info(`🔒 URLs HTTPS para acceso desde Internet:`, {}, 'general');
+                    logger.info(`ðŸ”’ URLs HTTPS para acceso desde Internet:`, {}, 'general');
                     localIPs.forEach(ip => {
-                        logger.info(`   • https://${ip}:${HTTPS_PORT}`, {}, 'general');
+                        logger.info(`   â€¢ https://${ip}:${HTTPS_PORT}`, {}, 'general');
                     });
-                    console.log(`\n🔒 URLs HTTPS:`);
+                    console.log(`\nðŸ”’ URLs HTTPS:`);
                     localIPs.forEach(ip => {
-                        console.log(`   • https://${ip}:${HTTPS_PORT}`);
+                        console.log(`   â€¢ https://${ip}:${HTTPS_PORT}`);
                     });
                 }
                 
-                // Mostrar IP pública HTTPS
+                // Mostrar IP pÃºblica HTTPS
                 try {
                     const { execSync } = require('child_process');
                     const publicIP = execSync('powershell -Command "(Invoke-WebRequest -Uri https://api.ipify.org -UseBasicParsing).Content"', { encoding: 'utf8' }).trim();
-                    console.log(`   • https://${publicIP}:${HTTPS_PORT}`);
-                    logger.info(`   • https://${publicIP}:${HTTPS_PORT}`, {}, 'general');
+                    console.log(`   â€¢ https://${publicIP}:${HTTPS_PORT}`);
+                    logger.info(`   â€¢ https://${publicIP}:${HTTPS_PORT}`, {}, 'general');
                 } catch (e) {
-                    console.log(`   • https://92.186.17.227:${HTTPS_PORT}`);
-                    logger.info(`   • https://92.186.17.227:${HTTPS_PORT}`, {}, 'general');
+                    console.log(`   â€¢ https://92.186.17.227:${HTTPS_PORT}`);
+                    logger.info(`   â€¢ https://92.186.17.227:${HTTPS_PORT}`, {}, 'general');
                 }
             }
         } catch (error) {
             logger.error('Error iniciando servidor HTTPS', { error: error.message }, 'general');
-            console.error('⚠️  No se pudo iniciar servidor HTTPS, continuando solo con HTTP');
+            console.error('âš ï¸  No se pudo iniciar servidor HTTPS, continuando solo con HTTP');
         }
     }
     
-    // Configurar HTTPS para aplicación de escritorio (modo Electron)
+    // Configurar HTTPS para aplicaciÃ³n de escritorio (modo Electron)
     if (config.get('electron.electronMode')) {
         httpsManager.setupHTTPSForDesktop(app, 3443);
     }
@@ -7741,18 +2145,18 @@ const server = app.listen(PORT, HOST, () => {
     // Inicializar sistemas de rendimiento
     initPerformanceSystems();
     
-    // Los módulos de Ley Antifraude se inicializan desde initDatabase()
-    // No es necesario llamarlos aquí ya que initDatabase() se ejecuta antes
-    // de que el servidor esté listo
+    // Los mÃ³dulos de Ley Antifraude se inicializan desde initDatabase()
+    // No es necesario llamarlos aquÃ­ ya que initDatabase() se ejecuta antes
+    // de que el servidor estÃ© listo
 });
 
 // Configurar manejo de errores del servidor
 server.on('error', (error) => {
     if (error.code === 'EADDRINUSE') {
-        console.error(`❌ Puerto ${PORT} ya está en uso`);
+        console.error(`âŒ Puerto ${PORT} ya estÃ¡ en uso`);
         process.exit(1);
     } else {
-        console.error('❌ Error en servidor:', error);
+        console.error('âŒ Error en servidor:', error);
     }
 });
 
@@ -7760,7 +2164,7 @@ server.on('error', (error) => {
 app.get('/', (req, res) => {
     const nombreEmpresa = configuracionEmpresa ? configuracionEmpresa.nombre : 'Generador de Facturas';
     res.json({ 
-        message: `🚗 API del ${nombreEmpresa}`,
+        message: `ðŸš— API del ${nombreEmpresa}`,
         version: '2.0.0',
         empresa: configuracionEmpresa,
         features: {
@@ -7790,51 +2194,51 @@ app.get('/', (req, res) => {
     });
 });
 
-// Función para cerrar conexiones de forma segura
+// FunciÃ³n para cerrar conexiones de forma segura
 function gracefulShutdown() {
-    console.log('🔄 Iniciando cierre graceful del servidor...');
+    console.log('ðŸ”„ Iniciando cierre graceful del servidor...');
     
-    // Cerrar conexión de base de datos
+    // Cerrar conexiÃ³n de base de datos
     if (db) {
         db.close((err) => {
             if (err) {
-                console.error('❌ Error al cerrar base de datos:', err.message);
+                console.error('âŒ Error al cerrar base de datos:', err.message);
             } else {
-                console.log('✅ Base de datos cerrada correctamente');
+                console.log('âœ… Base de datos cerrada correctamente');
             }
         });
     }
     
-    // Limpiar caché
+    // Limpiar cachÃ©
     if (cacheManager) {
         cacheManager.flush();
-        console.log('✅ Caché limpiado');
+        console.log('âœ… CachÃ© limpiado');
     }
     
     // Cerrar servidor HTTP
     if (server) {
         server.close(() => {
-            console.log('✅ Servidor HTTP cerrado');
+            console.log('âœ… Servidor HTTP cerrado');
             process.exit(0);
         });
     }
 }
 
-// Manejar señales de cierre
+// Manejar seÃ±ales de cierre
 process.on('SIGTERM', gracefulShutdown);
 process.on('SIGINT', gracefulShutdown);
 process.on('SIGUSR2', gracefulShutdown); // Para nodemon
 
 // Manejar errores no capturados
 process.on('uncaughtException', (error) => {
-    console.error('❌ Error no capturado:', error);
+    console.error('âŒ Error no capturado:', error);
     gracefulShutdown();
 });
 
 process.on('unhandledRejection', (reason, promise) => {
-    console.error('❌ Promise rechazada no manejada:', reason);
+    console.error('âŒ Promise rechazada no manejada:', reason);
     gracefulShutdown();
 });
 
-// Exportar la instancia de la base de datos para uso en otros módulos
+// Exportar la instancia de la base de datos para uso en otros mÃ³dulos
 module.exports = { db };

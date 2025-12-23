@@ -44,9 +44,13 @@ class CocheService {
   }
 
   // Obtener coches disponibles
-  async getDisponibles(): Promise<Coche[]> {
+  // excluirProformados: true para inventario (excluye proformados), false para crear proformas/facturas (incluye proformados)
+  async getDisponibles(excluirProformados: boolean = true): Promise<Coche[]> {
     try {
-      const response = await apiClient.get('/api/coches/disponibles');
+      const url = excluirProformados 
+        ? '/api/coches/disponibles' 
+        : '/api/coches/disponibles?excluir_proformados=false';
+      const response = await apiClient.get(url);
       return handleApiResponse(response);
     } catch (error) {
       console.error('Error al obtener coches disponibles:', error);
